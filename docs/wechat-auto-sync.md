@@ -1,5 +1,7 @@
 # WeChat Auto-Sync
 
+[English](wechat-auto-sync.md) | [中文](wechat-auto-sync.zh-CN.md)
+
 ## Why this exists
 
 WeChat's DataCube API (`getarticletotaldetail`) retains per-article engagement
@@ -44,8 +46,8 @@ WECHAT_AUTO_SYNC_ENABLED=true
 ```
 
 The scheduler uses the same `WECHAT_APP_ID_N` / `WECHAT_APP_SECRET_N`
-credentials as the manual sync.  See `docs/credentials.md` for credential
-setup.
+credentials as the manual sync — see the numbered-account block in
+`.env.example` and [Architecture → Configuration reference](architecture.md#configuration-reference).
 
 ## First-time setup on a new server
 

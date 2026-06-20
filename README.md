@@ -1,5 +1,7 @@
 # OmniPanel
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 A self-hosted analytics platform for Chinese e-commerce and self-media data —
 built on the **official data exports** each platform already gives you, with no
 scraping involved.
@@ -97,6 +99,14 @@ MINIMAX_API_KEY=...                # or ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / .
 
 With no key configured, the feature simply returns 503 and nothing else is
 affected.
+
+## Documentation
+
+- [Getting started](docs/getting-started.md) — install, configure, run, first admin user
+- [Architecture](docs/architecture.md) — components, data model, ETL pipeline, roles, API surface
+- [中文问数据 (NL-to-SQL)](docs/nl-to-sql.md) — how it works, the provider registry, adding a provider
+- [Testing](docs/testing.md) — running the suite, the synthetic dataset, real-file smoke tests
+- [WeChat auto-sync](docs/wechat-auto-sync.md) — daily background sync for official-account metrics
 
 ## Testing
 
