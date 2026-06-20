@@ -1,5 +1,9 @@
 # OmniPanel
 
+[![CI](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Nanboy-Ronan/OmniPanel)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.13%2B-blue)](https://www.python.org/)
+
 [English](README.md) | [中文](README.zh-CN.md)
 
 A self-hosted analytics platform for Chinese e-commerce and self-media data —
@@ -129,6 +133,10 @@ make db-upgrade                          # apply all pending migrations
 make db-new-migration msg="add table x"  # autogenerate from ORM changes
 make db-check                            # verify DB is at head
 ```
+
+## Contributing
+
+Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
