@@ -77,19 +77,19 @@ def test_allowed_origins_default(monkeypatch):
 
 
 def test_allowed_origins_from_env(monkeypatch):
-    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://data.example.net")
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://data.example.com")
     monkeypatch.delenv("APP_URL", raising=False)
     monkeypatch.delenv("STREAMLIT_URL", raising=False)
     m = _wecom_module()
-    assert "https://data.example.net" in m._allowed_redirect_origins()
+    assert "https://data.example.com" in m._allowed_redirect_origins()
 
 
 def test_allowed_origins_strips_trailing_slash(monkeypatch):
-    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://data.example.net/")
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://data.example.com/")
     monkeypatch.delenv("APP_URL", raising=False)
     monkeypatch.delenv("STREAMLIT_URL", raising=False)
     m = _wecom_module()
-    assert "https://data.example.net" in m._allowed_redirect_origins()
+    assert "https://data.example.com" in m._allowed_redirect_origins()
 
 
 # ── Synthetic email ───────────────────────────────────────────────────────────
@@ -211,7 +211,7 @@ def test_authorize_url_missing_corp_id(wecom_client, monkeypatch):
 
 def test_authorize_url_blocked_redirect_uri(wecom_client, monkeypatch):
     _set_wecom_env(monkeypatch)
-    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://data.example.net")
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://data.example.com")
     r = wecom_client.get(
         "/auth/wecom/authorize-url",
         params={"redirect_uri": "https://evil.com/callback"},
@@ -221,10 +221,10 @@ def test_authorize_url_blocked_redirect_uri(wecom_client, monkeypatch):
 
 def test_authorize_url_allowed_redirect_uri(wecom_client, monkeypatch):
     _set_wecom_env(monkeypatch)
-    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://data.example.net")
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://data.example.com")
     r = wecom_client.get(
         "/auth/wecom/authorize-url",
-        params={"redirect_uri": "https://data.example.net"},
+        params={"redirect_uri": "https://data.example.com"},
     )
     assert r.status_code == 200
 
