@@ -41,9 +41,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-DATA_DIR = PROJECT_ROOT / "data"
-REAL_XLSX = DATA_DIR / "pantaobencao.xlsx"
-
 # ── Re-use client / tokens / _auth from the canonical fixture module ────────
 from tests.test_api_endpoints import _auth, client, tokens  # noqa: F401
 
@@ -329,19 +326,6 @@ class TestWeChatXlsxParser:
         # 推荐人数 (rec) has no dedicated DB column → must be in raw_payload
         assert "推荐人数" in rows[0]["raw_payload"]
 
-    # ------------------------------------------------------------------ real file
-    @pytest.mark.skipif(not REAL_XLSX.exists(), reason="pantaobencao.xlsx not in data/")
-    def test_parse_real_pantaobencao_file(self):
-        """Smoke-test against the actual sample file — must not raise."""
-        rows, rejected = self.parse(REAL_XLSX, account_id=1)
-        # The real file has 167 + 92 rows across two data sheets; first sheet wins
-        assert len(rows) > 0
-        # Every row should have a title
-        for r in rows:
-            assert r["title"]
-            assert r["publish_date"] is not None
-            assert isinstance(r["read_user_count"], int)
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Section 2 — MediaSyncRun model: new columns
@@ -420,7 +404,7 @@ class TestMediaSyncRunNewColumns:
                     start_date=date(2026, 5, 1),
                     end_date=date(2026, 5, 1),
                     source="manual",
-                    filename="pantaobencao.xlsx",
+                    filename="sample_account.xlsx",
                 )
                 s.add(run)
                 s.commit()
@@ -429,7 +413,7 @@ class TestMediaSyncRunNewColumns:
                     account_id=acc.id, source="manual"
                 ).one()
                 assert stored.source == "manual"
-                assert stored.filename == "pantaobencao.xlsx"
+                assert stored.filename == "sample_account.xlsx"
         finally:
             engine.dispose()
 
@@ -785,14 +769,14 @@ class TestMediaUploadEndpoint:
         xlsx_bytes = _make_wechat_xlsx_bytes()
         client.post(
             "/media/upload",
-            files={"file": ("pantaobencao_2026.xlsx", xlsx_bytes,
+            files={"file": ("sample_account_2026.xlsx", xlsx_bytes,
                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
             data={"account_id": str(acc["id"])},
             headers=_auth(tokens["admin"]),
         )
         r = client.get("/media/uploads", headers=_auth(tokens["analyst"]))
         runs = r.json()
-        assert runs[0]["filename"] == "pantaobencao_2026.xlsx"
+        assert runs[0]["filename"] == "sample_account_2026.xlsx"
 
     # ------------------------------------------------------------------ rejection reporting
     def test_upload_reports_rejected_rows_in_summary(self, client, tokens):
