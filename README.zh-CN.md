@@ -1,5 +1,9 @@
 # OmniPanel
 
+[![CI](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Nanboy-Ronan/OmniPanel)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.13%2B-blue)](https://www.python.org/)
+
 [English](README.md) | [中文](README.zh-CN.md)
 
 一个面向中国电商和自媒体数据的自托管分析平台——基于各平台**官方提供的导出数据**，不涉及任何爬虫。
@@ -105,6 +109,10 @@ make db-upgrade                          # 应用所有未执行的迁移
 make db-new-migration msg="add table x"  # 根据 ORM 改动自动生成迁移文件
 make db-check                            # 校验数据库是否已是最新版本
 ```
+
+## 贡献
+
+欢迎提 Issue 和 PR——见 [CONTRIBUTING.md](CONTRIBUTING.md)（英文）。
 
 ## 许可证
 
