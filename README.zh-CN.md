@@ -26,6 +26,20 @@
 
 通用 BI 工具不理解平台特有的业务口径（比如不同平台上"客户"该如何定义、哪些阅读指标是累计值不能直接求和、多行订单要怎么去重）。爬虫类工具处在法律灰色地带，而且经常因为平台改版而失效。OmniPanel 介于两者之间：只摄入你自己合法拥有的**权威导出数据**，并把平台业务口径编码进系统，让数字开箱即用就是对的。
 
+### 和同类项目的对比
+
+| 项目 | 数据来源 | 实际提供的是什么 |
+|---|---|---|
+| **OmniPanel**（本仓库） | 官方导出数据（有赞/京东/天猫，微信公众号/小红书/知乎） | 自托管应用：仪表盘、队列留存与跨平台身份识别、SQL 查询台、中文问数据 |
+| [DA_Multi_Agent_Workflow](https://github.com/liuchaoqi-7/DA_Multi_Agent_Workflow) | 平台 API + 爬虫（抖音小店、小红书、视频号、广告平台） | 由 n8n 编排的多智能体 ETL/分析流水线，结果同步进飞书 |
+| [ECommerceCrawlers](https://github.com/DropsDevopsOrg/ECommerceCrawlers) | 网页爬虫（淘宝、闲鱼、微博等 20+ 网站） | 爬虫代码示例/练习，不是可部署的产品 |
+| [data-api (Just One API)](https://github.com/justoneapi/data-api) | 网页爬虫，覆盖 40+ 平台 | 托管型按调用计费的数据接口服务，没有分析层 |
+| [bodapi global-ecommerce-data-scraping-solutions-cn](https://github.com/bodapi/global-ecommerce-data-scraping-solutions-cn) | 带反爬绕过的网页爬虫，覆盖 20+ 全球平台 | 面向跨境的托管型价格/评论/竞品情报数据服务 |
+
+这不是"我们各方面都更好"——完整的对比见
+[docs/comparison.zh-CN.md](docs/comparison.zh-CN.md)，里面列了这些项目做得更好、
+值得 OmniPanel 借鉴的地方，也列了 OmniPanel 做到了但它们都没做到的事。
+
 ## 功能
 
 - **多平台电商订单摄入** —— 直接丢进有赞、京东、天猫的订单导出文件；通过列指纹自动识别平台来源，归一化到统一结构，同时保留平台原始行以便追溯。
@@ -99,6 +113,7 @@ MINIMAX_API_KEY=...                # 或 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / 
 - [中文问数据 (NL-to-SQL)](docs/nl-to-sql.zh-CN.md) —— 工作原理、服务商注册表、如何新增服务商
 - [测试指南](docs/testing.zh-CN.md) —— 如何跑测试、合成数据集、依赖真实文件的烟雾测试
 - [微信自动同步](docs/wechat-auto-sync.zh-CN.md) —— 公众号指标的每日后台自动同步
+- [与同类项目的对比](docs/comparison.zh-CN.md) —— 和爬虫类、智能体工作流类替代方案的诚实优劣对比
 
 ## 测试
 
