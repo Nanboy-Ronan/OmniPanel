@@ -1,0 +1,19 @@
+title = "OmniPanel gitleaks config"
+
+# Start from gitleaks' built-in ruleset (generic API keys, tokens, private
+# keys, cloud provider credentials, etc.) and layer project-specific tuning
+# on top. Keep this file free of any literal secret values or organization
+# names — it is itself scanned and published, so allowlist entries must stay
+# generic (regexes, paths) rather than naming anything specific that was
+# previously leaked.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secret test/example values"
+regexes = [
+  '''test-secret-do-not-use-in-production''',
+]
+paths = [
+  '''(^|/)\.env\.example$''',
+]
