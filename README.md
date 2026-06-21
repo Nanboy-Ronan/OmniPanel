@@ -6,14 +6,25 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-A self-hosted analytics platform for Chinese e-commerce and self-media data —
-built on the **official data exports** each platform already gives you, with no
-scraping involved.
+General-purpose BI (business intelligence) tools draw charts on whatever
+schema you hand them — they don't know what a "customer" means on your
+platform, which metrics are cumulative, or how multi-line records should be
+de-duplicated. That correctness work gets redone by hand in every dashboard,
+every query, forever. OmniPanel takes the opposite approach: encode the
+business rules once, in the platform itself, so every dashboard, every SQL
+query, and every natural-language question built on top of it is correct by
+construction — not just another chart-on-top-of-SQL tool.
 
-Upload the spreadsheets you export from your store and content back-ends,
-OmniPanel normalizes them into a clean schema, and you get customer analytics,
-content-performance metrics, and an ad-hoc SQL console (including a
-natural-language "ask your data" helper) on top.
+The current proof point is Chinese e-commerce and self-media data, where
+those rules are sharp and well understood: upload the **official exports**
+you already get from your store and content back-ends — no scraping — and
+OmniPanel normalizes them, encodes the platform-specific business rules
+(customer identity, repurchase windows, which metrics are cumulative vs.
+daily, de-duplication), and gives you dashboards, cross-platform analytics, a
+governed SQL console, and a natural-language "ask your data" layer on top.
+It's where we started, not where we stop — the same ingest → normalize →
+encode-business-rules → analyze pipeline is built to extend to other data
+domains over time.
 
 ## Screenshots
 
@@ -27,14 +38,13 @@ natural-language "ask your data" helper) on top.
 |---|---|
 | ![Cross-platform customer identity](docs/images/screenshot_identity.png) | ![SQL console with query results](docs/images/screenshot_sql.png) |
 
-## Why
+## Why official exports, not scraping
 
-General-purpose BI tools don't understand platform-specific semantics (what a
-"customer" is on each marketplace, which read metrics are cumulative, how to
-de-duplicate multi-line orders). Scraper-based tools live in a legal grey area
-and break constantly. OmniPanel sits in between: it ingests the **authoritative
-exports** you already own and encodes the platform business rules so the numbers
-are correct out of the box.
+Scraper-based tools live in a legal grey area and break every time a platform
+redesigns its page or tightens anti-bot defenses. OmniPanel only ingests the
+**authoritative exports** you already legally own — official, structured,
+stable — and spends its effort on the correctness work generic BI tools skip
+instead of on fighting anti-bot measures.
 
 ### How this compares to similar projects
 
