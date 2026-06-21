@@ -36,6 +36,8 @@ from app.ui.pages.media_traffic import page_media_traffic
 # from app.ui.pages.media_upload import page_media_upload  # disabled xlsx upload 2026-06-01
 from app.ui.pages.content_impact import page_content_impact
 from app.ui.pages.customers import page_customers
+from app.ui.pages.customer_identity import page_customer_identity
+from app.ui.pages.cohort_retention import page_cohort_retention
 from app.ui.pages.data_browse import page_data
 from app.ui.pages.sql_console import page_sql_console
 from app.ui.pages.db_status import page_db_status
@@ -286,6 +288,8 @@ ECOMMERCE_PAGES = {
     "数据上传":   page_upload,
     "数据分析":   page_analysis,
     "客户管理":   page_customers,
+    "跨平台客户": page_customer_identity,
+    "客户留存":   page_cohort_retention,
     "数据浏览":   page_data,
     "SQL 控制台": page_sql_console,
     "数据字典":   page_data_dictionary,

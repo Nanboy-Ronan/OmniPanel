@@ -81,6 +81,17 @@ Streamlit 前端  ──HTTP──▶  FastAPI 后端  ──▶  PostgreSQL
 ID）——完整的业务口径参考见 `app/utils/nl_to_sql.py` 中的 `SCHEMA_DOC`
 常量，它同时也是中文问数据 prompt 的一部分，相当于这些口径细节（包括哪些阅读指标是累计值而非按日、多行订单如何去重）的活文档。
 
+### 跨平台客户身份识别（`app/views/ecommerce/identity.py`）
+
+因为 `customer_key` 是按平台定义的，同一个真实的人在多个平台下单时，在代码里其他地方都会被当成互不相关的客户。`GET /analysis/identity/clusters`
+改为按收货人手机号把各平台订单关联起来，分成两个永不相加汇总的置信度等级：
+
+- **`exact`（精确）** —— 有赞和天猫都导出完整、未脱敏的手机号，所以两个
+  `customer_key` 只要手机号完全一致，就以高置信度合并。
+- **`fuzzy`（模糊）** —— 京东导出的手机号是脱敏的（`1******6198`——只保留首位数字和后四位），所以京东的行只能按这个局部指纹匹配（`app/utils/phone.py`）。这会产生真实的误判（任何后四位相同的两个人都会被混在一起），因此在聚类逻辑、API 响应结构和前端（跨平台客户页面）里都把它和精确分组结构性地分开。
+
+这是一个附加的、只读的视图，按需计算——不会改变 `orders`/`customers` 或任何其他接口的行为。
+
 ## 角色与权限
 
 三种角色，通过 `app/auth.py` 里的 FastAPI 依赖项强制执行：
@@ -103,7 +114,7 @@ ID）——完整的业务口径参考见 `app/utils/nl_to_sql.py` 中的 `SCHEM
 |---|---|---|
 | `/auth/jwt`, `/auth/register`, `/auth/wecom` | 鉴权 | JWT 登录、自助注册、企业微信 OAuth |
 | `/upload` | 电商摄入 | 上传文件；通过 `upload_batches/{id}` 轮询状态 |
-| `/analysis` | 电商分析 | 总览、客户拆分、复购率、字段覆盖率、SQL 查询台（`/analysis/sql`）、中文问数据（`/analysis/nl-sql`） |
+| `/analysis` | 电商分析 | 总览、客户拆分、复购率、队列留存（`/analysis/cohort_retention`）、跨平台客户身份（`/analysis/identity/clusters`）、字段覆盖率、SQL 查询台（`/analysis/sql`）、中文问数据（`/analysis/nl-sql`） |
 | `/orders_all` | 电商 | 原始订单列表/导出 |
 | `/media`, `/media/xhs`, `/media/zhihu` | 自媒体 | 账号、图文/笔记、指标、流量、微信同步触发 |
 | `/admin` | 管理 | 用户管理、`/admin/clear-db` |

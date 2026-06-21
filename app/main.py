@@ -34,7 +34,7 @@ from .utils.rate_limiter import login_rate_limiter, get_client_ip
 
 # ─── Routers ────────────────────────────────────────────────────────────────
 # Ecommerce domain
-from .views.ecommerce   import upload_router, analysis_router, orders_all_router
+from .views.ecommerce   import upload_router, analysis_router, orders_all_router, identity_router
 # Media domain
 from .views.media       import media_router, media_upload_router
 from .views.media.xhs    import router as xhs_router              # POST /media/xhs/upload
@@ -113,6 +113,7 @@ app.include_router(wecom_auth_router)
 app.include_router(upload_router)        # /upload/
 app.include_router(analysis_router)      # /analysis/
 app.include_router(orders_all_router)    # /orders_all/
+app.include_router(identity_router)      # /analysis/identity/clusters
 app.include_router(admin_router)         # /admin/clear-db
 app.include_router(media_router)         # /media/
 app.include_router(media_upload_router)   # /media/upload, /media/uploads, /media/accounts (POST)

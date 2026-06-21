@@ -26,20 +26,34 @@ are correct out of the box.
 
 ## Features
 
-- **Multi-platform order ingestion** — drop in exports from common marketplaces;
-  column fingerprinting auto-detects the platform and normalizes to one schema.
+- **Multi-platform e-commerce ingestion** — drop in order exports from
+  有赞 (Youzan), 京东 (JD), or 天猫 (Tmall); column fingerprinting
+  auto-detects the platform and normalizes everything to one schema, while
+  the platform-native row is preserved alongside it for traceability.
 - **Customer analytics** — new vs. returning breakdowns, repurchase rate and
-  time-to-repurchase, per-customer order history, regional distribution.
-- **Self-media analytics** — article/post metrics for owned official accounts
-  and content platforms, plus a content→sales impact view.
+  time-to-repurchase, per-customer order history, regional distribution,
+  monthly cohort retention curves, and cross-platform customer identity
+  matching (the same person ordering from Youzan/JD/Tmall is recognized as
+  one customer by phone number instead of three, with explicit
+  exact/fuzzy-confidence tiers since JD masks its phone numbers).
+- **Self-media analytics** — daily article/post metrics for 微信公众号
+  (WeChat Official Accounts, auto-synced via the WeChat API), 小红书
+  (Xiaohongshu), and 知乎 (Zhihu), plus a content→sales impact view that
+  correlates publish dates with order volume.
 - **SQL console** — a read-only ad-hoc query tool with strict guardrails
-  (SELECT/WITH only, auto `LIMIT`, statement timeout, full audit logging).
+  (SELECT/WITH only, auto `LIMIT`, statement timeout, full audit logging),
+  with the ability to save and share frequently-used queries.
 - **中文问数据 (NL-to-SQL)** — ask a question in plain Chinese and get generated
   SQL + results. Pluggable LLM providers (Anthropic, OpenAI, MiniMax, DeepSeek,
   Moonshot, Zhipu); API keys stay server-side and you pick provider/model from a
   dropdown.
-- **Roles & audit** — viewer / analyst / admin roles; every query and mutating
-  action is written to an operation log.
+- **Roles, SSO & audit** — viewer / analyst / admin roles, plus optional
+  Enterprise WeChat (WeCom) single sign-on; every query and mutating action
+  is written to an operation log, and admins get a Users screen for
+  account/role management.
+- **Background jobs** — scheduled WeChat metric sync and monthly database
+  backups, leader-elected so they stay safe to run with multiple backend
+  workers.
 
 ## Architecture
 

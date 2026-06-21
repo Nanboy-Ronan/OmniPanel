@@ -99,6 +99,28 @@ used by the NL-to-SQL prompt, which doubles as living documentation of these
 caveats (including which read metrics are cumulative vs. daily, and how
 multi-line orders are de-duplicated).
 
+### Cross-platform customer identity (`app/views/ecommerce/identity.py`)
+
+Because `customer_key` is platform-specific, the same real person ordering
+from more than one platform is counted as unrelated customers everywhere
+else in this codebase. `GET /analysis/identity/clusters` groups orders
+across platforms by recipient phone number instead, in two confidence tiers
+that are never summed together:
+
+- **`exact`** — Youzan and Tmall both export full, unmasked phone numbers,
+  so two `customer_key`s sharing the same full phone are joined with high
+  confidence.
+- **`fuzzy`** — JD masks its exported phone numbers (`1******6198` — only
+  the first digit and last 4 digits survive), so JD rows can only be
+  matched by that partial fingerprint (`app/utils/phone.py`). This produces
+  real false positives (any two people sharing the same last 4 digits
+  collide), which is why it's kept structurally separate from the exact
+  tier in the clustering logic, the API response shape, and the UI
+  (跨平台客户 page).
+
+This is an additive, read-only view computed on demand — it does not change
+`orders`/`customers` or any other endpoint's behavior.
+
 ## Roles & permissions
 
 Three roles, enforced via FastAPI dependencies in `app/auth.py`:
@@ -121,7 +143,7 @@ Routers are mounted in `app/main.py`. Grouped by domain:
 |---|---|---|
 | `/auth/jwt`, `/auth/register`, `/auth/wecom` | Auth | JWT login, self-registration, Enterprise WeChat (WeCom) OAuth |
 | `/upload` | E-commerce ingestion | Upload a file; poll `upload_batches/{id}` for status |
-| `/analysis` | E-commerce analytics | Overview, customer breakdowns, repurchase rate, field coverage, the SQL console (`/analysis/sql`) and NL-to-SQL (`/analysis/nl-sql`) |
+| `/analysis` | E-commerce analytics | Overview, customer breakdowns, repurchase rate, cohort retention (`/analysis/cohort_retention`), cross-platform customer identity (`/analysis/identity/clusters`), field coverage, the SQL console (`/analysis/sql`) and NL-to-SQL (`/analysis/nl-sql`) |
 | `/orders_all` | E-commerce | Raw order listing/export |
 | `/media`, `/media/xhs`, `/media/zhihu` | Self-media | Accounts, posts, metrics, traffic, WeChat sync trigger |
 | `/admin` | Admin | User management, `/admin/clear-db` |
