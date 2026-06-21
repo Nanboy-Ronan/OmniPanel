@@ -141,6 +141,28 @@ class APIClient:
             timeout=self._timeout(),
         )
 
+    def cohort_retention(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        platform: str | None = None,
+        max_offset: int = 12,
+    ) -> requests.Response:
+        """Return monthly cohort retention (per-period + cumulative)."""
+        params: dict = {"max_offset": max_offset}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if platform:
+            params["platform"] = platform
+        return self._session.get(
+            f"{self.base_url}/analysis/cohort_retention",
+            params=params,
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
     def customers(
         self,
         start_date: str | None = None,
@@ -179,6 +201,27 @@ class APIClient:
             params["end_date"] = end_date
         return self._session.get(
             f"{self.base_url}/analysis/customers/{customer_id}",
+            params=params,
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def identity_clusters(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        confidence: str | None = None,
+    ) -> requests.Response:
+        """Return cross-platform customer identity clusters (phone-based)."""
+        params = {}
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if confidence:
+            params["confidence"] = confidence
+        return self._session.get(
+            f"{self.base_url}/analysis/identity/clusters",
             params=params,
             headers=self._headers(),
             timeout=self._timeout(),
