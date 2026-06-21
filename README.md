@@ -58,16 +58,27 @@ are correct out of the box.
 ## Architecture
 
 ```
-Streamlit UI  ──HTTP──▶  FastAPI backend  ──▶  PostgreSQL
-                              │
-                              ├─ ETL: detect → normalize → load
-                              ├─ analytics endpoints
-                              └─ SQL console + NL-to-SQL
+┌──────────────┐     HTTP      ┌──────────────┐
+│  Streamlit   │ ◄──────────► │   FastAPI    │
+│  dashboard   │   REST API   │   backend    │
+│  :8501       │              │   :8000      │
+└──────────────┘              └──────┬───────┘
+                                      │ SQLAlchemy (async ORM)
+                               ┌──────▼───────┐
+                               │  PostgreSQL  │
+                               └──────────────┘
 ```
 
-- **Backend:** FastAPI (`app/`), SQLAlchemy + asyncpg, Alembic migrations.
+- **Backend:** FastAPI (`app/`) — auth (JWT + WeCom SSO), the ETL pipeline,
+  analytics endpoints, the SQL console + NL-to-SQL, and leader-elected
+  background jobs (WeChat sync, monthly DB backup).
 - **Frontend:** Streamlit (`app/ui/`), talking to the backend over HTTP.
-- **Database:** PostgreSQL.
+- **Database:** PostgreSQL, with an optional Redis layer for shared caching
+  and login rate-limiting.
+
+See [Architecture](docs/architecture.md) for the full diagrams (backend
+internals, the WeCom SSO flow, optional Redis/NL-to-SQL layers) and the
+complete API surface.
 
 ## Quick start
 
