@@ -27,16 +27,23 @@
 ## 架构
 
 ```
-Streamlit 前端  ──HTTP──▶  FastAPI 后端  ──▶  PostgreSQL
-                              │
-                              ├─ ETL：识别平台 → 归一化 → 入库
-                              ├─ 分析接口
-                              └─ SQL 查询台 + 中文问数据
+┌──────────────┐     HTTP      ┌──────────────┐
+│  Streamlit   │ ◄──────────► │   FastAPI    │
+│     前端     │   REST API   │     后端     │
+│    :8501     │              │    :8000     │
+└──────────────┘              └──────┬───────┘
+                                      │ SQLAlchemy（异步 ORM）
+                               ┌──────▼───────┐
+                               │  PostgreSQL  │
+                               └──────────────┘
 ```
 
-- **后端：** FastAPI（`app/`），SQLAlchemy + asyncpg，Alembic 做数据库迁移。
+- **后端：** FastAPI（`app/`）—— 鉴权（JWT + 企业微信单点登录）、ETL 摄入流程、分析接口、SQL 查询台 + 中文问数据，以及带 leader 选举的后台任务（微信同步、数据库月度备份）。
 - **前端：** Streamlit（`app/ui/`），通过 HTTP 调用后端。
-- **数据库：** PostgreSQL。
+- **数据库：** PostgreSQL，可选接入 Redis 做跨进程缓存共享和登录限流。
+
+完整图（后端内部结构、企业微信单点登录流程、可选的 Redis/中文问数据层）和完整
+API 一览见 [架构说明](docs/architecture.zh-CN.md)。
 
 ## 快速开始
 
