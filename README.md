@@ -36,6 +36,21 @@ and break constantly. OmniPanel sits in between: it ingests the **authoritative
 exports** you already own and encodes the platform business rules so the numbers
 are correct out of the box.
 
+### How this compares to similar projects
+
+| Project | Data source | What it actually ships |
+|---|---|---|
+| **OmniPanel** (this repo) | Official exports (Youzan/JD/Tmall, WeChat OA/XHS/Zhihu) | Self-hosted app: dashboards, cohort/identity analytics, SQL console, NL-to-SQL |
+| [DA_Multi_Agent_Workflow](https://github.com/liuchaoqi-7/DA_Multi_Agent_Workflow) | Platform APIs + crawlers (Douyin Shop, XHS, WeChat Video Channels, ad platforms) | n8n-orchestrated multi-agent ETL/analytics pipeline synced into Feishu |
+| [ECommerceCrawlers](https://github.com/DropsDevopsOrg/ECommerceCrawlers) | Web scraping (Taobao, Xianyu, Weibo, 20+ sites) | Scraper code samples / learning exercises, not a deployable product |
+| [data-api (Just One API)](https://github.com/justoneapi/data-api) | Web scraping, 40+ platforms | Hosted pay-per-call data feed, no analytics layer |
+| [bodapi global-ecommerce-data-scraping-solutions-cn](https://github.com/bodapi/global-ecommerce-data-scraping-solutions-cn) | Web scraping with anti-bot bypass, 20+ global platforms | Hosted cross-border price/review/competitive-intelligence feed |
+
+This isn't "we're better at everything" — see
+[docs/comparison.md](docs/comparison.md) for what each of those projects does
+better (and which of those ideas are worth borrowing into OmniPanel) alongside
+what OmniPanel does that none of them do.
+
 ## Features
 
 - **Multi-platform e-commerce ingestion** — drop in order exports from
@@ -138,6 +153,7 @@ affected.
 - [中文问数据 (NL-to-SQL)](docs/nl-to-sql.md) — how it works, the provider registry, adding a provider
 - [Testing](docs/testing.md) — running the suite, the synthetic dataset, real-file smoke tests
 - [WeChat auto-sync](docs/wechat-auto-sync.md) — daily background sync for official-account metrics
+- [Comparison with similar projects](docs/comparison.md) — honest pros/cons vs. scraper-based and agent-workflow alternatives
 
 ## Testing
 
