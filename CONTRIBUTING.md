@@ -20,6 +20,22 @@ database, so anything green locally should be green in CI.
 - Keep PRs focused — one logical change per PR is easier to review than a
   bundle of unrelated fixes.
 
+## Secret scanning
+
+This repo runs [gitleaks](https://github.com/gitleaks/gitleaks) in CI on
+every push and PR (`.github/workflows/secret-scan.yml`) to catch
+accidentally committed credentials or internal URLs before they land in
+history. To get the same check locally before you push:
+
+```bash
+brew install gitleaks pre-commit   # or your platform's equivalent
+pre-commit install
+```
+
+This installs a pre-commit hook (`.pre-commit-config.yaml`) that scans
+staged changes. If it flags a false positive, add a narrowly-scoped entry
+to `.gitleaks.toml` rather than disabling the hook.
+
 ## Adding a new e-commerce platform connector
 
 The detect → normalize → load pipeline in `app/db/etl/` is designed for
