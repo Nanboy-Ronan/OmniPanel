@@ -15,6 +15,18 @@ OmniPanel normalizes them into a clean schema, and you get customer analytics,
 content-performance metrics, and an ad-hoc SQL console (including a
 natural-language "ask your data" helper) on top.
 
+## Screenshots
+
+*(all data below is a randomly generated synthetic dataset, not a real store)*
+
+| Customer analytics | Cohort retention |
+|---|---|
+| ![Customer analytics overview](docs/images/screenshot_analysis.png) | ![Monthly cohort retention curves](docs/images/screenshot_cohort.png) |
+
+| Cross-platform customer identity | SQL console |
+|---|---|
+| ![Cross-platform customer identity](docs/images/screenshot_identity.png) | ![SQL console with query results](docs/images/screenshot_sql.png) |
+
 ## Why
 
 General-purpose BI tools don't understand platform-specific semantics (what a
