@@ -57,17 +57,7 @@ are correct out of the box.
 
 ## Architecture
 
-```
-┌──────────────┐     HTTP      ┌──────────────┐
-│  Streamlit   │ ◄──────────► │   FastAPI    │
-│  dashboard   │   REST API   │   backend    │
-│  :8501       │              │   :8000      │
-└──────────────┘              └──────┬───────┘
-                                      │ SQLAlchemy (async ORM)
-                               ┌──────▼───────┐
-                               │  PostgreSQL  │
-                               └──────────────┘
-```
+![OmniPanel architecture](docs/images/architecture.png)
 
 - **Backend:** FastAPI (`app/`) — auth (JWT + WeCom SSO), the ETL pipeline,
   analytics endpoints, the SQL console + NL-to-SQL, and leader-elected

@@ -4,6 +4,12 @@
 
 ## Overview
 
+![OmniPanel architecture](images/architecture.png)
+
+The diagrams below break the same picture down piece by piece: the core
+request flow, then each backend module in more detail, then the two flows
+that involve an external party (WeCom SSO, NL-to-SQL providers).
+
 ```
 ┌──────────────┐     HTTP      ┌──────────────┐
 │  Streamlit   │ ◄──────────► │   FastAPI    │

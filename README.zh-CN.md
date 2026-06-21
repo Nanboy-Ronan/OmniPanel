@@ -26,17 +26,7 @@
 
 ## 架构
 
-```
-┌──────────────┐     HTTP      ┌──────────────┐
-│  Streamlit   │ ◄──────────► │   FastAPI    │
-│     前端     │   REST API   │     后端     │
-│    :8501     │              │    :8000     │
-└──────────────┘              └──────┬───────┘
-                                      │ SQLAlchemy（异步 ORM）
-                               ┌──────▼───────┐
-                               │  PostgreSQL  │
-                               └──────────────┘
-```
+![OmniPanel 架构图](docs/images/architecture.zh-CN.png)
 
 - **后端：** FastAPI（`app/`）—— 鉴权（JWT + 企业微信单点登录）、ETL 摄入流程、分析接口、SQL 查询台 + 中文问数据，以及带 leader 选举的后台任务（微信同步、数据库月度备份）。
 - **前端：** Streamlit（`app/ui/`），通过 HTTP 调用后端。
