@@ -106,6 +106,36 @@ SSL_CERTFILE=/path/to/cert.pem
 uvicorn（纯 HTTP）前面用反向代理（nginx、Caddy 等）终止 TLS——这种情况下不要设置这两项，并确保
 `PROXY_HEADERS=true`（默认就是开启的），这样才能从 `X-Forwarded-For` 正确读取客户端 IP。
 
+## 常见问题排查
+
+**`make db-upgrade` 报"connection refused"或"role does not exist"**
+
+检查 `.env` 中 `RAP_DATABASE_URL` 是否指向一个正在运行的 PostgreSQL 实例，以及 URL 里的用户和数据库是否已创建。如果数据库还没建，先执行 `createdb <数据库名>`。
+
+**后端启动后，`GET /health` 返回不健康**
+
+健康检查会同时验证数据库连接和（如果配置了 `REDIS_URL`）Redis 连通性。Redis 不可达时，应用会自动降级，但其他功能不受影响。如果是数据库检查失败，请再次核对 `RAP_DATABASE_URL` 并确认迁移已执行。
+
+**Streamlit 加载数据时提示"Connection refused"**
+
+前端默认访问 `http://localhost:8000` 上的后端。确保 FastAPI 后端正在运行，且 `.env` 中的 `CORS_ORIGINS` 包含了 Streamlit 的地址（例如 `http://localhost:8501`）。
+
+**上传文件时报"unrecognized column set"（无法识别列结构）**
+
+OmniPanel 纯粹依靠列名来识别平台来源。请确保上传的是从平台后台直接导出的原始文件，而不是你自己重新整理过的格式。支持的列名指纹详见[架构说明 → 数据摄入](architecture.zh-CN.md#数据摄入-etl)。
+
+**第一个注册的用户没有自动成为 admin**
+
+自动提升为 `admin` 只对 `user` 表中的第一行生效。如果你曾经删掉并重建过数据库，重新注册后应该正常。如果表里之前已有记录，可以手动执行 SQL 提升：
+
+```sql
+UPDATE "user" SET role = 'admin' WHERE email = 'your@email.com';
+```
+
+**中文问数据返回 503**
+
+没有配置任何大模型服务商的 API Key。在 `.env` 中至少配置一个（例如 `MINIMAX_API_KEY=...`），然后重启后端。
+
 ## 下一步
 
 - [架构说明](architecture.zh-CN.md) —— 各组件如何协作、数据模型、完整配置参考
