@@ -118,6 +118,36 @@ SSL_CERTFILE=/path/to/cert.pem
 — in that case leave these unset and make sure `PROXY_HEADERS=true` (the
 default) so client IPs are read from `X-Forwarded-For`.
 
+## Troubleshooting
+
+**`make db-upgrade` fails with "connection refused" or "role does not exist"**
+
+Check that `RAP_DATABASE_URL` in `.env` points at a running PostgreSQL instance and that the user/database in the URL exist. Create the database first with `createdb <dbname>` if you haven't already.
+
+**Backend starts but `GET /health` returns unhealthy**
+
+The health endpoint checks both the database connection and (if `REDIS_URL` is set) Redis. If Redis is unreachable, the app falls back gracefully and `/health` will still report it — but no other functionality is blocked. If the database check fails, verify `RAP_DATABASE_URL` and that migrations have been applied.
+
+**Streamlit shows "Connection refused" when loading data**
+
+The frontend talks to the backend at `http://localhost:8000` by default. Make sure the FastAPI backend is running and that `CORS_ORIGINS` in `.env` includes the Streamlit URL (e.g. `http://localhost:8501`).
+
+**File upload is rejected with "unrecognized column set"**
+
+OmniPanel identifies the platform purely by column names. Make sure you're uploading the raw export file from the platform's back-office — not a file you've reformatted. The recognized column fingerprints are documented in [Architecture → Data ingestion](architecture.md#data-ingestion-etl).
+
+**The first registered user is not admin**
+
+The auto-promotion to `admin` only applies to the very first user row inserted into the `user` table. If you dropped and re-created the database and registered again, it should work. If the table already had rows from a prior setup, promote manually:
+
+```sql
+UPDATE "user" SET role = 'admin' WHERE email = 'your@email.com';
+```
+
+**NL-to-SQL returns 503**
+
+No LLM provider API key is configured. Set at least one key in `.env` (e.g. `MINIMAX_API_KEY=...`) and restart the backend.
+
 ## Next steps
 
 - [Architecture](architecture.md) — how the pieces fit together, the data
