@@ -43,7 +43,7 @@ real candidates for a future OmniPanel release, not just praise.
   charts). OmniPanel's admin pages have an audit log but no equivalent
   "usage over time" visualization — worth adding to the operation-log page.
 - bodapi's cross-border **competitive-intelligence** angle (price/review
-  monitoring on competitors, not your own store) is a genuinely different,
+  monitoring on competitors, not your own business) is a genuinely different,
   complementary value prop OmniPanel doesn't attempt.
 
 ### From ECommerceCrawlers
