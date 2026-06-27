@@ -97,7 +97,7 @@ role** (see `app/auth.py`); every subsequent registration defaults to
 
 ## 8. Upload your first export
 
-From your store or content platform's back-office, export an order or
+From your business or content platform's back-office, export an order or
 article report (the formats OmniPanel currently auto-detects are documented
 in [Architecture → Data ingestion](architecture.md#data-ingestion-etl)). Upload
 it from the UI's Upload screen, then check Analysis for the resulting

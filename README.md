@@ -34,11 +34,11 @@ General-purpose BI tools draw charts on whatever schema you hand them. They don'
 
 OmniPanel takes the opposite approach: **encode the business rules once, in the platform itself**, so every dashboard, SQL query, and natural-language question built on top is correct by construction.
 
-The current proof point is Chinese e-commerce and self-media data. Upload the **official exports** you already get from your store and content back-ends — no scraping — and OmniPanel normalizes them, encodes the platform-specific business rules (customer identity, repurchase windows, which metrics are cumulative vs. daily, de-duplication), and gives you dashboards, cross-platform analytics, a governed SQL console, and a natural-language "ask your data" layer on top. It's where we started, not where we stop — the same ingest → normalize → encode-business-rules → analyze pipeline is built to extend to other data domains over time.
+The current proof point is Chinese e-commerce and self-media data. Upload the **official exports** you already get from your business and content back-ends — no scraping — and OmniPanel normalizes them, encodes the platform-specific business rules (customer identity, repurchase windows, which metrics are cumulative vs. daily, de-duplication), and gives you dashboards, cross-platform analytics, a governed SQL console, and a natural-language "ask your data" layer on top. It's where we started, not where we stop — the same ingest → normalize → encode-business-rules → analyze pipeline is built to extend to other data domains over time.
 
 ## Screenshots
 
-> All data below is a randomly generated synthetic dataset, not a real store.
+> All data below is a randomly generated synthetic dataset, not a real business.
 
 | Customer analytics | Cohort retention |
 |---|---|
