@@ -35,12 +35,24 @@ class Settings(BaseSettings):
     # ── Auth ──────────────────────────────────────────────────────────────────
     rap_secret: str = "CHANGE_ME"
     token_lifetime_seconds: int = 86400  # 24 h
+    # Comma-separated previous RAP_SECRET values, accepted for verifying
+    # already-issued JWTs only — new tokens are always signed with rap_secret.
+    # Lets the secret be rotated without forcing every signed-in user to log
+    # in again: set rap_secret to a new value, move the old value here,
+    # restart, then remove it once >= token_lifetime_seconds has passed (every
+    # token signed with the old secret will have expired by then).
+    rap_secret_previous: str = ""
 
     # ── Server ────────────────────────────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000
     proxy_headers: bool = True
-    forwarded_allow_ips: str = "*"
+    # Comma-separated IPs/networks allowed to set X-Forwarded-For (anything else
+    # is treated as the real client). Must list every hop that legitimately sits
+    # in front of this process — in the current deployment that's only the
+    # Streamlit process calling over loopback. Enforced unconditionally via
+    # ProxyHeadersMiddleware in app/main.py, regardless of how uvicorn is started.
+    forwarded_allow_ips: str = "127.0.0.1"
     ssl_keyfile: str | None = None
     ssl_certfile: str | None = None
 

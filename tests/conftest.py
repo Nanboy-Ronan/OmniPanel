@@ -125,6 +125,23 @@ def _pg_db():
 
 
 @pytest.fixture(autouse=True)
+def _noop_load_dotenv(monkeypatch):
+    """Prevent app/main.py's module-level load_dotenv() from re-injecting real
+    .env values on each importlib.reload(app.main) call in test fixtures.
+
+    Without this, env vars set via monkeypatch.delenv() or os.environ.setdefault()
+    are silently overwritten by the real .env on each reload, causing isolation
+    failures in any test that calls reload() and then inspects Settings() values
+    (e.g. WECOM_DEFAULT_ROLE, WECOM_STREAMLIT_REDIRECT_URI).
+
+    The real .env has already been loaded into os.environ before pytest collects
+    tests, so making reload-time calls a no-op removes nothing needed.
+    """
+    import dotenv
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **kw: None)
+
+
+@pytest.fixture(autouse=True)
 def _clean_db(request):
     """Truncate all data tables between tests so each test starts fresh."""
     db_fixtures = {"_pg_db", "pg_sync_url", "pg_async_url", "client", "api_client", "db_session"}

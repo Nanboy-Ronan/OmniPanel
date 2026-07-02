@@ -137,7 +137,19 @@ streamlit run app/ui/dashboard.py
 |---|---|
 | `RAP_DATABASE_URL` | PostgreSQL 连接串（`postgresql+asyncpg://…`） |
 | `RAP_SECRET` | 用于签发登录令牌的密钥——请设置强随机值（`python -c "import secrets; print(secrets.token_urlsafe(48))"` 生成） |
+| `RAP_SECRET_PREVIOUS` | 旧的 `RAP_SECRET` 值（逗号分隔），仅用于在轮换窗口期内校验已签发的令牌 |
+| `FORWARDED_ALLOW_IPS` | 当 API 部署在反向代理之后时，信任其设置 `X-Forwarded-For` 的 IP/网段（逗号分隔，默认 `127.0.0.1`） |
 | `CORS_ORIGINS` | 允许访问 API 的来源域名，逗号分隔 |
+
+### 轮换 `RAP_SECRET`
+
+`RAP_SECRET` 用于签发所有 JWT（登录会话）以及密码重置、邮箱验证令牌。如果不配合 `RAP_SECRET_PREVIOUS` 直接轮换，会导致所有已登录用户立即被强制下线。要在不强制全员下线的前提下完成轮换：
+
+1. 生成新密钥：`python -c "import secrets; print(secrets.token_urlsafe(48))"`。
+2. 把当前 `RAP_SECRET` 的值移到 `RAP_SECRET_PREVIOUS`，再将 `RAP_SECRET` 设为新值，重启后端。此后新登录会使用 `RAP_SECRET` 签发；已有会话虽然是用旧密钥签发的，但因为旧值仍在 `RAP_SECRET_PREVIOUS` 中，依然能通过校验。
+3. 等待至少 `TOKEN_LIFETIME_SECONDS`（默认 86400 秒 / 24 小时），确保所有用旧密钥签发的令牌都已过期，再删除 `RAP_SECRET_PREVIOUS` 并重启一次。
+
+如果怀疑旧密钥已经泄露而非例行轮换，则不必等待第 3 步，应立即处理，并考虑用其他方式强制让现有会话失效。
 
 ### 启用中文问数据 (NL-to-SQL)
 
