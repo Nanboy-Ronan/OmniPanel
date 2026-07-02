@@ -11,6 +11,7 @@ load_dotenv()
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from sqlalchemy import text
 from .config import settings
@@ -70,7 +71,12 @@ app.add_middleware(
 # ─── Middleware: rate-limit password login failures ─────────────────────────
 @app.middleware("http")
 async def _password_login_rate_limit(request: Request, call_next):
-    """Count failed /auth/jwt/login attempts per IP; block after MAX_ATTEMPTS.
+    """Count failed /auth/jwt/login attempts per email; block after MAX_ATTEMPTS.
+
+    Keyed by email rather than IP: all Streamlit→FastAPI calls share the same
+    loopback IP (127.0.0.1), so IP-keying would let one user's lockout block
+    the entire organisation. Starlette caches request.form() on first call, so
+    downstream OAuth2PasswordRequestForm dependency can still read the body.
 
     HTTPException cannot be raised from BaseHTTPMiddleware (it bypasses
     FastAPI's exception handler and crashes Starlette's TaskGroup). Instead,
@@ -80,9 +86,23 @@ async def _password_login_rate_limit(request: Request, call_next):
     if not is_login:
         return await call_next(request)
 
-    ip = get_client_ip(request)
+    # Read the submitted email; fall back to IP for malformed requests.
+    # Must use request.body() (not request.form()): Starlette's _CachedRequest
+    # replays self._body to the downstream app only when body() was called;
+    # form() consumes stream() instead, and the downstream then receives an
+    # empty body (returning 422 from OAuth2PasswordRequestForm).
     try:
-        await login_rate_limiter.check(ip, "password_login")
+        from urllib.parse import parse_qs
+        body_bytes = await request.body()
+        form_data = parse_qs(body_bytes.decode("utf-8", errors="replace"))
+        identifier = (form_data.get("username", [""])[0]).strip().lower()
+    except Exception:
+        identifier = ""
+    if not identifier:
+        identifier = get_client_ip(request)
+
+    try:
+        await login_rate_limiter.check(identifier, "password_login")
     except HTTPException as exc:
         return JSONResponse(
             status_code=exc.status_code,
@@ -93,11 +113,21 @@ async def _password_login_rate_limit(request: Request, call_next):
     response = await call_next(request)
 
     if response.status_code in (400, 401):
-        await login_rate_limiter.record_failure(ip, "password_login")
+        await login_rate_limiter.record_failure(identifier, "password_login")
     elif response.status_code == 200:
-        await login_rate_limiter.reset(ip, "password_login")
+        await login_rate_limiter.reset(identifier, "password_login")
 
     return response
+
+
+# Added last so Starlette wraps it outermost (most-recently-added middleware
+# wraps everything else) — request.client.host must already be the real,
+# trust-checked client IP before CORS or the rate limiter above ever read it.
+# This must not depend on uvicorn's own CLI/__main__ startup path: baking it
+# into the app object means it applies the same way whether the process is
+# started via `uvicorn app.main:app`, `python -m app.main`, or TestClient.
+if settings.proxy_headers:
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=settings.forwarded_allow_ips)
 
 
 # ─── FastAPI-Users auth routes ──────────────────────────────────────────────
@@ -173,13 +203,16 @@ async def ping(request: Request):
         "pong": True,
         "scheme": request.url.scheme,
         "host": request.client.host if request.client else None,
-        "headers": dict(request.headers),
     }
 
 # ─── Development / HTTPS runner ─────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
 
+    # proxy_headers/forwarded_allow_ips are handled by the ProxyHeadersMiddleware
+    # added to `app` above, not passed here — that way trust is enforced the
+    # same way regardless of whether uvicorn is started via this __main__ block
+    # or via `uvicorn app.main:app` directly (the documented production path).
     if settings.ssl_keyfile and settings.ssl_certfile:
         uvicorn.run(
             app,
@@ -187,8 +220,6 @@ if __name__ == "__main__":
             port=settings.port,
             ssl_keyfile=settings.ssl_keyfile,
             ssl_certfile=settings.ssl_certfile,
-            proxy_headers=settings.proxy_headers,
-            forwarded_allow_ips=settings.forwarded_allow_ips,
         )
     else:
         logging.warning("SSL_KEYFILE/SSL_CERTFILE not set; starting HTTP server.")
@@ -196,6 +227,4 @@ if __name__ == "__main__":
             app,
             host=settings.host,
             port=settings.port,
-            proxy_headers=settings.proxy_headers,
-            forwarded_allow_ips=settings.forwarded_allow_ips,
         )

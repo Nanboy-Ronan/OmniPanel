@@ -137,7 +137,19 @@ All settings come from environment variables (see `.env.example` for the full li
 |---|---|
 | `RAP_DATABASE_URL` | PostgreSQL connection string (`postgresql+asyncpg://…`) |
 | `RAP_SECRET` | Signs auth tokens — use a strong random value (`python -c "import secrets; print(secrets.token_urlsafe(48))"`) |
+| `RAP_SECRET_PREVIOUS` | Comma-separated previous `RAP_SECRET` values, accepted only for verifying already-issued tokens during a rotation window |
+| `FORWARDED_ALLOW_IPS` | Comma-separated IPs/networks trusted to set `X-Forwarded-For` when the API sits behind a reverse proxy (default `127.0.0.1`) |
 | `CORS_ORIGINS` | Comma-separated allowed origins for the API |
+
+### Rotating `RAP_SECRET`
+
+`RAP_SECRET` signs every JWT (login sessions) plus password-reset and email-verification tokens. Rotating it without `RAP_SECRET_PREVIOUS` immediately logs out every signed-in user. To rotate without a forced mass logout:
+
+1. Generate a new secret: `python -c "import secrets; print(secrets.token_urlsafe(48))"`.
+2. Move the current `RAP_SECRET` value into `RAP_SECRET_PREVIOUS`, then set `RAP_SECRET` to the new value, and restart the backend. New logins are signed with `RAP_SECRET`; existing sessions signed with the old secret keep verifying because it's now in `RAP_SECRET_PREVIOUS`.
+3. Wait at least `TOKEN_LIFETIME_SECONDS` (default 86400s / 24h) so every token signed with the old secret has expired, then remove `RAP_SECRET_PREVIOUS` and restart once more.
+
+If the old secret is suspected leaked rather than rotated on a routine schedule, skip step 3's wait and consider force-expiring sessions some other way.
 
 ### Enabling 中文问数据 (NL-to-SQL)
 

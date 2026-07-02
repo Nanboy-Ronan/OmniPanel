@@ -1,21 +1,20 @@
 """Tests for login rate limiting.
 
-TDD: these tests are written before the implementation.
-
 Coverage:
   Unit (no DB/HTTP, direct class tests with injected fake Redis):
     - check() passes when under the failure limit
     - check() raises 429 after MAX_ATTEMPTS failures
     - record_failure() increments the counter
     - reset() clears the counter so check() passes again
-    - Different IPs have independent counters
+    - Different identifiers have independent counters
     - Different endpoints have independent counters
-    - No Redis configured → fail-open (no exception raised)
+    - No Redis configured → still enforced via an in-memory fallback counter
 
   Integration (TestClient + real test DB + injected fake Redis):
     - POST /auth/jwt/login: 5 wrong passwords → 6th attempt returns 429
     - POST /auth/jwt/login: successful login after < MAX failures resets counter
-    - POST /auth/wecom/exchange: rate limited per IP
+    - Proxy trust boundary: untrusted peer cannot evade lockout by spoofing XFF
+    - Different email accounts are independently limited (one lockout ≠ all locked)
 """
 from __future__ import annotations
 
@@ -148,9 +147,10 @@ class TestLoginRateLimiterUnit:
 
         _run(_test())
 
-    def test_fails_open_when_redis_unavailable(self):
-        """No Redis → no exception raised (availability over strict security)."""
+    def test_uses_memory_fallback_when_redis_unavailable(self):
+        """No Redis → still enforced via the in-process counter, not skipped."""
         from app.utils.rate_limiter import LoginRateLimiter, MAX_ATTEMPTS
+        from fastapi import HTTPException
 
         limiter = LoginRateLimiter(redis_client=None)
         # Override URL to something unreachable
@@ -158,8 +158,55 @@ class TestLoginRateLimiterUnit:
         os.environ["REDIS_URL"] = "redis://127.0.0.1:19999/0"
 
         async def _test():
-            for _ in range(MAX_ATTEMPTS + 1):
+            for _ in range(MAX_ATTEMPTS):
                 await limiter.record_failure("1.2.3.4", "test_ep")
+            with pytest.raises(HTTPException) as exc_info:
+                await limiter.check("1.2.3.4", "test_ep")
+            assert exc_info.value.status_code == 429
+
+        try:
+            _run(_test())
+        finally:
+            if original is None:
+                os.environ.pop("REDIS_URL", None)
+            else:
+                os.environ["REDIS_URL"] = original
+
+    def test_memory_fallback_different_ips_independent(self):
+        """The in-memory fallback still keys by (ip, endpoint), like Redis."""
+        from app.utils.rate_limiter import LoginRateLimiter, MAX_ATTEMPTS
+        from fastapi import HTTPException
+
+        limiter = LoginRateLimiter(redis_client=None)
+        original = os.environ.get("REDIS_URL")
+        os.environ["REDIS_URL"] = "redis://127.0.0.1:19999/0"
+
+        async def _test():
+            for _ in range(MAX_ATTEMPTS):
+                await limiter.record_failure("10.0.0.1", "test_ep")
+            await limiter.check("10.0.0.2", "test_ep")  # must not raise
+            with pytest.raises(HTTPException):
+                await limiter.check("10.0.0.1", "test_ep")
+
+        try:
+            _run(_test())
+        finally:
+            if original is None:
+                os.environ.pop("REDIS_URL", None)
+            else:
+                os.environ["REDIS_URL"] = original
+
+    def test_memory_fallback_reset_clears_counter(self):
+        from app.utils.rate_limiter import LoginRateLimiter, MAX_ATTEMPTS
+
+        limiter = LoginRateLimiter(redis_client=None)
+        original = os.environ.get("REDIS_URL")
+        os.environ["REDIS_URL"] = "redis://127.0.0.1:19999/0"
+
+        async def _test():
+            for _ in range(MAX_ATTEMPTS):
+                await limiter.record_failure("1.2.3.4", "test_ep")
+            await limiter.reset("1.2.3.4", "test_ep")
             await limiter.check("1.2.3.4", "test_ep")  # must not raise
 
         try:
@@ -300,3 +347,110 @@ class TestPasswordLoginRateLimit:
                 data={"username": rl_tokens["email"], "password": "wrong"},
             )
         assert r.status_code != 429
+
+
+# ═══════════════════════════════════════════════════════════════
+# Section 3: Proxy trust boundary — X-Forwarded-For must only be honoured
+# from a peer listed in FORWARDED_ALLOW_IPS (enforced by ProxyHeadersMiddleware
+# in app/main.py). This is what stops an attacker from sending a fresh fake
+# X-Forwarded-For on every request to dodge the per-IP lockout.
+# ═══════════════════════════════════════════════════════════════
+
+def _client_connecting_from(pg_async_url, monkeypatch, peer_ip: str):
+    """Build a TestClient whose simulated TCP peer is ``peer_ip``, with a
+    fake-Redis rate limiter injected — same setup as ``rl_client``, but with
+    control over the connecting peer so we can test the trust boundary."""
+    from sqlalchemy.pool import NullPool
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+    from sqlalchemy.orm import sessionmaker
+    import app.db as db
+
+    engine = create_async_engine(pg_async_url, future=True, echo=False, poolclass=NullPool)
+    SL = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(db, "DATABASE_URL", pg_async_url, raising=False)
+    monkeypatch.setattr(db, "engine", engine, raising=False)
+    monkeypatch.setattr(db, "AsyncSessionLocal", SL, raising=False)
+
+    import app.main
+    importlib.reload(app.main)
+
+    fake_redis = _fake_redis()
+    from app.utils import rate_limiter as rl_mod
+    rl_mod.login_rate_limiter._client = fake_redis
+
+    from fastapi.testclient import TestClient
+    return TestClient(app.main.app, client=(peer_ip, 12345)), engine
+
+
+class TestProxyTrustBoundary:
+
+    def test_untrusted_peer_cannot_evade_lockout_by_spoofing_xff(
+        self, pg_async_url, monkeypatch
+    ):
+        """A peer outside FORWARDED_ALLOW_IPS (default: only 127.0.0.1, the
+        Streamlit loopback hop) must not be able to rotate X-Forwarded-For to
+        dodge the lockout — its real socket IP is used instead."""
+        from app.utils.rate_limiter import MAX_ATTEMPTS
+
+        client, engine = _client_connecting_from(pg_async_url, monkeypatch, "203.0.113.9")
+        try:
+            with client as c:
+                c.post(
+                    "/auth/register",
+                    json={"email": "victim@test.com", "password": "correct_pw", "role": "viewer"},
+                )
+                for i in range(MAX_ATTEMPTS):
+                    c.post(
+                        "/auth/jwt/login",
+                        data={"username": "victim@test.com", "password": "wrong"},
+                        headers={"X-Forwarded-For": f"10.0.0.{i}"},  # rotate every request
+                    )
+                r = c.post(
+                    "/auth/jwt/login",
+                    data={"username": "victim@test.com", "password": "wrong"},
+                    headers={"X-Forwarded-For": "10.0.0.99"},  # yet another fake IP
+                )
+                assert r.status_code == 429
+        finally:
+            asyncio.run(engine.dispose())
+
+    def test_different_email_accounts_are_independently_limited(
+        self, pg_async_url, monkeypatch
+    ):
+        """Rate limiting is keyed by email, so locking out one account must not
+        block a different account even when both come from the same IP address.
+        This is the correct invariant for an app where all Streamlit→FastAPI
+        calls share the same loopback IP (127.0.0.1)."""
+        from app.utils.rate_limiter import MAX_ATTEMPTS
+
+        client, engine = _client_connecting_from(pg_async_url, monkeypatch, "127.0.0.1")
+        try:
+            with client as c:
+                # Register two separate accounts
+                c.post(
+                    "/auth/register",
+                    json={"email": "account_a@test.com", "password": "correct_pw", "role": "viewer"},
+                )
+                c.post(
+                    "/auth/register",
+                    json={"email": "account_b@test.com", "password": "correct_pw", "role": "viewer"},
+                )
+                # Lock out account_a
+                for _ in range(MAX_ATTEMPTS):
+                    c.post(
+                        "/auth/jwt/login",
+                        data={"username": "account_a@test.com", "password": "wrong"},
+                    )
+                r_a = c.post(
+                    "/auth/jwt/login",
+                    data={"username": "account_a@test.com", "password": "wrong"},
+                )
+                assert r_a.status_code == 429
+                # account_b must be unaffected — same IP, different email
+                r_b = c.post(
+                    "/auth/jwt/login",
+                    data={"username": "account_b@test.com", "password": "wrong"},
+                )
+                assert r_b.status_code != 429
+        finally:
+            asyncio.run(engine.dispose())
