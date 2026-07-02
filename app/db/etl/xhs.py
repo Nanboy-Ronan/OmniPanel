@@ -5,8 +5,18 @@ XHS backend exports have this layout:
   row 1  — real column headers                          → use as df.columns
   row 2+ — data rows
 
-Upsert key: (title, publish_date).  Numeric traffic metrics are always
-overwritten on re-upload; articles absent from the current file are kept.
+Upload semantics — ADDITIVE ONLY (never deletes rows):
+  • New post (no matching dedup key in DB) → INSERT.
+  • Existing post (account_id + title + publish_date already in DB)
+      → UPDATE traffic metrics only; created_at and the dedup key are untouched.
+  • Post absent from the current file but present in DB → left unchanged.
+
+This means uploading a 500-row export when the DB already has 1,000 rows
+for that account will leave all 1,000 rows intact: the 500 rows in the
+file are upserted and the other 500 are not touched.
+
+Dedup key: (account_id, title, publish_date)  [constraint uq_xhs_posts_account_title_date]
+Columns updated on conflict: see _UPSERT_UPDATE_COLS.
 """
 from __future__ import annotations
 
@@ -97,7 +107,13 @@ def parse_xhs_xlsx(df_raw: pd.DataFrame) -> list[dict]:
 
 
 def upsert_xhs_posts(rows: list[dict], account_id: int, session: Session) -> dict:
-    """Upsert parsed rows (with account_id) into xhs_posts.  Returns summary counts."""
+    """Insert new posts and update existing posts; never remove posts absent from rows.
+
+    Each row is matched by (account_id, title, publish_date).  On a match the
+    columns listed in _UPSERT_UPDATE_COLS are overwritten; all other columns
+    (id, account_id, title, publish_date, created_at) are left as-is.
+    Rows already in the DB that are not present in `rows` are not touched.
+    """
     if not rows:
         return {"total": 0, "upserted": 0}
 

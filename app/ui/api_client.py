@@ -393,10 +393,10 @@ class APIClient:
             timeout=self._timeout(),
         )
 
-    def create_xhs_account(self, name: str) -> requests.Response:
+    def create_xhs_account(self, name: str, account_type: str = "company") -> requests.Response:
         return self._session.post(
             f"{self.base_url}/media/xhs/accounts",
-            json={"name": name},
+            json={"name": name, "account_type": account_type},
             headers=self._headers(),
             timeout=self._timeout(),
         )
