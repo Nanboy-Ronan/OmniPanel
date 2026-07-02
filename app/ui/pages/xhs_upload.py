@@ -31,11 +31,14 @@ def _account_section(client, is_admin: bool) -> None:
         return
     with st.expander("账号管理", expanded=False):
         accounts = _load_accounts(client)
+        _TYPE_LABEL = {"company": "公司号", "self_media": "自媒体号"}
+
         if accounts:
             for acc in accounts:
                 col_name, col_rename, col_del = st.columns([5, 1, 1])
                 status_icon = "🟢" if acc["is_active"] else "⚫"
-                col_name.markdown(f"{status_icon} **{acc['name']}**  `id={acc['id']}`")
+                type_tag = _TYPE_LABEL.get(acc.get("account_type", "company"), "公司号")
+                col_name.markdown(f"{status_icon} **{acc['name']}** `{type_tag}` `id={acc['id']}`")
                 if col_rename.button("改名", key=f"xhs-rename-btn-{acc['id']}", use_container_width=True):
                     st.session_state[f"_xhs_rename_{acc['id']}"] = True
                 with col_del:
@@ -84,13 +87,20 @@ def _account_section(client, is_admin: bool) -> None:
         st.markdown("---")
         with st.form("xhs-add-account"):
             new_name = st.text_input("账号名称", placeholder="例：示例品牌小红书")
+            new_type = st.radio(
+                "账号类型",
+                options=["company", "self_media"],
+                format_func=lambda x: "公司号" if x == "company" else "自媒体号",
+                horizontal=True,
+            )
             if st.form_submit_button("添加账号"):
                 if not new_name.strip():
                     st.warning("请输入账号名称。")
                 else:
-                    r = client.create_xhs_account(new_name.strip())
+                    r = client.create_xhs_account(new_name.strip(), account_type=new_type)
                     if r.status_code == 201:
-                        st.success(f"账号「{new_name.strip()}」已创建。")
+                        type_label = "公司号" if new_type == "company" else "自媒体号"
+                        st.success(f"账号「{new_name.strip()}」（{type_label}）已创建。")
                         st.rerun()
                     else:
                         show_api_error(r)
@@ -161,13 +171,18 @@ def page_xhs_upload() -> None:
         st.warning("请管理员先在上方「账号管理」中添加小红书账号。")
         return
 
-    acc_options = {a["name"]: a["id"] for a in accounts if a["is_active"]}
+    _TYPE_LABEL_SHORT = {"company": "公司号", "self_media": "自媒体号"}
+    acc_options = {
+        f"{a['name']} [{_TYPE_LABEL_SHORT.get(a.get('account_type', 'company'), '公司号')}]": a["id"]
+        for a in accounts if a["is_active"]
+    }
     if not acc_options:
         st.warning("暂无可用账号（所有账号均已停用）。")
         return
 
-    selected_name = st.selectbox("选择账号", list(acc_options.keys()), key="xhs_account_sel")
-    selected_id   = acc_options[selected_name]
+    selected_label = st.selectbox("选择账号", list(acc_options.keys()), key="xhs_account_sel")
+    selected_id    = acc_options[selected_label]
+    selected_name  = selected_label  # used in section header & file export
 
     st.markdown("---")
     st.markdown("#### 上传导出文件")

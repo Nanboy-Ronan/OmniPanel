@@ -28,8 +28,12 @@ _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 # ── Account CRUD ──────────────────────────────────────────────────────────────
 
+_VALID_ACCOUNT_TYPES = {"company", "self_media"}
+
+
 class XhsAccountCreate(BaseModel):
     name: str
+    account_type: str = "company"
 
 
 @router.post("/accounts", status_code=status.HTTP_201_CREATED)
@@ -39,7 +43,9 @@ async def create_xhs_account(
     session: AsyncSession = Depends(get_session),
 ):
     from sqlalchemy.exc import IntegrityError
-    acc = XhsAccount(name=body.name.strip())
+    if body.account_type not in _VALID_ACCOUNT_TYPES:
+        raise HTTPException(status_code=422, detail=f"account_type 必须是 company 或 self_media")
+    acc = XhsAccount(name=body.name.strip(), account_type=body.account_type)
     session.add(acc)
     try:
         await session.commit()
@@ -47,7 +53,7 @@ async def create_xhs_account(
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
-    return {"id": acc.id, "name": acc.name, "is_active": acc.is_active}
+    return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active}
 
 
 @router.get("/accounts")
@@ -58,7 +64,7 @@ async def list_xhs_accounts(
     rows = (await session.execute(
         select(XhsAccount).order_by(XhsAccount.created_at)
     )).scalars().all()
-    return [{"id": a.id, "name": a.name, "is_active": a.is_active} for a in rows]
+    return [{"id": a.id, "name": a.name, "account_type": a.account_type, "is_active": a.is_active} for a in rows]
 
 
 class XhsAccountUpdate(BaseModel):
@@ -83,7 +89,7 @@ async def rename_xhs_account(
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
-    return {"id": acc.id, "name": acc.name, "is_active": acc.is_active}
+    return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active}
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

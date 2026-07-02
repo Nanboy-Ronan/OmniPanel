@@ -504,3 +504,200 @@ class TestXhsAuth:
                            headers=_auth(tokens["admin"]))
         r_list = client.get("/media/xhs/posts", headers=_auth(tokens["admin"]))
         assert r_up.status_code == 200 and r_list.status_code == 200
+
+
+# ─── TestXhsUpsertSemantics ───────────────────────────────────────────────────
+
+class TestXhsUpsertSemantics:
+    """Additive-only upsert: insert new rows, update existing rows, never delete.
+
+    Upload semantics (documented in app/db/etl/xhs.py):
+      • Row with new (account_id, title, publish_date) → INSERT.
+      • Row whose key already exists in DB → UPDATE traffic metrics only.
+      • Row absent from the current upload but present in DB → left untouched.
+
+    Concretely: if the DB has 1,000 posts and a 500-row file is uploaded,
+    the DB will have at least 1,000 posts after the upload — the 500 posts
+    not in the file are never removed.
+    """
+
+    def _upload_rows(self, client, token, account_id, rows):
+        r = client.post(
+            "/media/xhs/upload",
+            data={"account_id": account_id},
+            files={"file": ("xhs.xlsx", _make_xhs_xlsx_bytes(rows),
+                            "application/octet-stream")},
+            headers=_auth(token),
+        )
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def _list_posts(self, client, token, account_id):
+        return client.get(
+            "/media/xhs/posts",
+            params={"account_id": account_id, "limit": 1000},
+            headers=_auth(token),
+        ).json()
+
+    # ── insert ────────────────────────────────────────────────────────────────
+
+    def test_new_rows_are_inserted(self, client, tokens, account):
+        """Posts not yet in DB are inserted on upload."""
+        rows = [_one_row(**{"笔记标题": "插入测试-新",
+                            "首次发布时间": "2023年01月10日00时00分00秒"})]
+        self._upload_rows(client, tokens["analyst"], account, rows)
+        titles = {p["title"] for p in self._list_posts(client, tokens["analyst"], account)}
+        assert "插入测试-新" in titles
+
+    def test_upload_count_reflects_rows_in_file(self, client, tokens, account):
+        """The 'total' response field matches the number of rows in the file."""
+        rows = [
+            _one_row(**{"笔记标题": f"计数测试-{i}",
+                        "首次发布时间": f"2023年0{i+1}月01日00时00分00秒"})
+            for i in range(4)
+        ]
+        result = self._upload_rows(client, tokens["analyst"], account, rows)
+        assert result["total"] == 4
+
+    # ── update ────────────────────────────────────────────────────────────────
+
+    def test_existing_row_traffic_metrics_updated(self, client, tokens, account):
+        """Re-uploading a post with new numbers overwrites the old traffic metrics."""
+        key = {"笔记标题": "指标更新测试", "首次发布时间": "2023年02月01日00时00分00秒"}
+        self._upload_rows(client, tokens["analyst"], account,
+                          [_one_row(**key, **{"曝光": "100", "观看量": "50"})])
+        self._upload_rows(client, tokens["analyst"], account,
+                          [_one_row(**key, **{"曝光": "999", "观看量": "777"})])
+
+        posts = {p["title"]: p for p in self._list_posts(client, tokens["analyst"], account)}
+        assert posts["指标更新测试"]["impressions"] == 999
+        assert posts["指标更新测试"]["views"] == 777
+
+    def test_all_metric_columns_updated(self, client, tokens, account):
+        """Every column in _UPSERT_UPDATE_COLS is refreshed on conflict."""
+        key = {"笔记标题": "全列更新测试", "首次发布时间": "2023年03月01日00时00分00秒"}
+        self._upload_rows(client, tokens["analyst"], account, [
+            _one_row(**key, **{
+                "曝光": "1", "观看量": "2", "封面点击率": "0.01",
+                "点赞": "3", "评论": "4", "收藏": "5", "涨粉": "6",
+                "分享": "7", "人均观看时长": "8.0", "弹幕": "9",
+            }),
+        ])
+        self._upload_rows(client, tokens["analyst"], account, [
+            _one_row(**key, **{
+                "曝光": "100", "观看量": "200", "封面点击率": "0.10",
+                "点赞": "300", "评论": "400", "收藏": "500", "涨粉": "600",
+                "分享": "700", "人均观看时长": "80.0", "弹幕": "900",
+            }),
+        ])
+        p = next(p for p in self._list_posts(client, tokens["analyst"], account)
+                 if p["title"] == "全列更新测试")
+        assert p["impressions"] == 100
+        assert p["views"] == 200
+        assert abs(p["cover_click_rate"] - 0.10) < 1e-6
+        assert p["likes"] == 300
+        assert p["comments"] == 400
+        assert p["collects"] == 500
+        assert p["new_followers"] == 600
+        assert p["shares"] == 700
+        assert abs(p["avg_watch_time"] - 80.0) < 0.01
+        assert p["danmu"] == 900
+
+    def test_dedup_key_is_title_plus_date(self, client, tokens, account):
+        """Same title on a different date creates a new row instead of updating."""
+        base_title = "日期去重测试"
+        self._upload_rows(client, tokens["analyst"], account, [
+            _one_row(**{"笔记标题": base_title, "首次发布时间": "2023年04月01日00时00分00秒",
+                        "曝光": "50"}),
+        ])
+        self._upload_rows(client, tokens["analyst"], account, [
+            _one_row(**{"笔记标题": base_title, "首次发布时间": "2023年04月15日00时00分00秒",
+                        "曝光": "150"}),
+        ])
+        posts = [p for p in self._list_posts(client, tokens["analyst"], account)
+                 if p["title"] == base_title]
+        assert len(posts) == 2, f"Expected 2 rows (different dates), got {len(posts)}"
+        by_date = {p["publish_date"]: p["impressions"] for p in posts}
+        assert by_date["2023-04-01"] == 50
+        assert by_date["2023-04-15"] == 150
+
+    # ── preserve absent rows ──────────────────────────────────────────────────
+
+    def test_absent_posts_are_not_deleted(self, client, tokens, account):
+        """A post not in the new upload file is NOT removed from the DB."""
+        old_key = {"笔记标题": "保留旧文章", "首次发布时间": "2023年05月01日00时00分00秒"}
+        new_key = {"笔记标题": "新增文章", "首次发布时间": "2023年06月01日00时00分00秒"}
+
+        self._upload_rows(client, tokens["analyst"], account, [_one_row(**old_key)])
+        # Second upload contains only the new post — old one is absent from file
+        self._upload_rows(client, tokens["analyst"], account, [_one_row(**new_key)])
+
+        titles = {p["title"] for p in self._list_posts(client, tokens["analyst"], account)}
+        assert "保留旧文章" in titles, "post absent from second upload must be preserved"
+        assert "新增文章" in titles
+
+    def test_partial_upload_preserves_all_existing_rows(self, client, tokens, account):
+        """Core guarantee: uploading N rows when DB has M>N rows leaves all M rows intact.
+
+        Scenario: upload 10 posts, then upload only the first 5.
+        All 10 must still be present.
+        """
+        all_rows = [
+            _one_row(**{
+                "笔记标题": f"批量保留测试-{i:02d}",
+                "首次发布时间": f"2022年{i+1:02d}月01日00时00分00秒",
+            })
+            for i in range(10)
+        ]
+        self._upload_rows(client, tokens["analyst"], account, all_rows)
+        # Upload only the first 5 — posts 5-9 are absent from this file
+        self._upload_rows(client, tokens["analyst"], account, all_rows[:5])
+
+        titles = {
+            p["title"]
+            for p in self._list_posts(client, tokens["analyst"], account)
+            if p["title"].startswith("批量保留测试-")
+        }
+        assert len(titles) == 10, (
+            f"Expected all 10 posts preserved, got {len(titles)}: {sorted(titles)}"
+        )
+
+    def test_partial_overlap_insert_update_preserve(self, client, tokens, account):
+        """Upload {A,B,C} then {B,C,D}: result must be {A,B,C,D}.
+
+        A → preserved unchanged (absent from second upload)
+        B → metrics updated
+        C → metrics updated
+        D → newly inserted
+        """
+        batch1 = [
+            _one_row(**{"笔记标题": "重叠-A", "首次发布时间": "2022年11月01日00时00分00秒",
+                        "曝光": "100"}),
+            _one_row(**{"笔记标题": "重叠-B", "首次发布时间": "2022年11月02日00时00分00秒",
+                        "曝光": "200"}),
+            _one_row(**{"笔记标题": "重叠-C", "首次发布时间": "2022年11月03日00时00分00秒",
+                        "曝光": "300"}),
+        ]
+        batch2 = [
+            _one_row(**{"笔记标题": "重叠-B", "首次发布时间": "2022年11月02日00时00分00秒",
+                        "曝光": "999"}),
+            _one_row(**{"笔记标题": "重叠-C", "首次发布时间": "2022年11月03日00时00分00秒",
+                        "曝光": "888"}),
+            _one_row(**{"笔记标题": "重叠-D", "首次发布时间": "2022年11月04日00时00分00秒",
+                        "曝光": "400"}),
+        ]
+        self._upload_rows(client, tokens["analyst"], account, batch1)
+        self._upload_rows(client, tokens["analyst"], account, batch2)
+
+        posts = {
+            p["title"]: p
+            for p in self._list_posts(client, tokens["analyst"], account)
+            if p["title"].startswith("重叠-")
+        }
+        assert set(posts) == {"重叠-A", "重叠-B", "重叠-C", "重叠-D"}, (
+            f"Expected {{A,B,C,D}}, got {set(posts)}"
+        )
+        assert posts["重叠-A"]["impressions"] == 100, "A must be preserved unchanged"
+        assert posts["重叠-B"]["impressions"] == 999, "B must be updated"
+        assert posts["重叠-C"]["impressions"] == 888, "C must be updated"
+        assert posts["重叠-D"]["impressions"] == 400, "D must be newly inserted"
