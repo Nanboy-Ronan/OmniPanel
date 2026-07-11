@@ -21,6 +21,12 @@ async def analyse(
     start_date: dt.date = Query(...),
     end_date:   dt.date = Query(...),
     platform: str | None = Query(None),
+    include_rows: bool = Query(
+        True,
+        description="Set false to skip the raw-row payload (up to 2*rows_cap rows) "
+        "when only the aggregates/daily series are needed, e.g. the overview page's "
+        "trend chart.",
+    ),
     _u = Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -29,6 +35,7 @@ async def analyse(
         start_date=str(start_date),
         end_date=str(end_date),
         platform=platform,
+        include_rows=include_rows,
     )
     cached = await analysis_cache.get(cache_key)
     if cached is not None:
@@ -106,40 +113,46 @@ async def analyse(
             new_daily[key] = r.customers
 
     # ── Capped raw rows (for the collapsible detail tables in the UI) ─────────
-    raw_stmt = (
-        select(
-            base.c.order_date,
-            base.c.customer_key,
-            base.c.sku,
-            base.c.price,
-            base.c.platform,
-            base.c.is_old,
+    # Skipped entirely when the caller only needs aggregates/daily series
+    # (e.g. the overview page's trend chart) — this is the expensive part of
+    # the query, up to 2*rows_cap rows serialised to JSON.
+    if include_rows:
+        raw_stmt = (
+            select(
+                base.c.order_date,
+                base.c.customer_key,
+                base.c.sku,
+                base.c.price,
+                base.c.platform,
+                base.c.is_old,
+            )
+            .order_by(base.c.order_date)
+            .limit(rows_cap * 2)  # fetch cap*2 then split — keeps one query
         )
-        .order_by(base.c.order_date)
-        .limit(rows_cap * 2)  # fetch cap*2 then split — keeps one query
-    )
-    raw_rows = (await session.execute(raw_stmt)).all()
+        raw_rows = (await session.execute(raw_stmt)).all()
 
-    old_rows_raw = [
-        {
-            "order_date": str(r.order_date),
-            "customer_key": r.customer_key,
-            "sku": r.sku,
-            "price": float(r.price or 0),
-            "platform": r.platform,
-        }
-        for r in raw_rows if r.is_old
-    ][:rows_cap]
-    new_rows_raw = [
-        {
-            "order_date": str(r.order_date),
-            "customer_key": r.customer_key,
-            "sku": r.sku,
-            "price": float(r.price or 0),
-            "platform": r.platform,
-        }
-        for r in raw_rows if not r.is_old
-    ][:rows_cap]
+        old_rows_raw = [
+            {
+                "order_date": str(r.order_date),
+                "customer_key": r.customer_key,
+                "sku": r.sku,
+                "price": float(r.price or 0),
+                "platform": r.platform,
+            }
+            for r in raw_rows if r.is_old
+        ][:rows_cap]
+        new_rows_raw = [
+            {
+                "order_date": str(r.order_date),
+                "customer_key": r.customer_key,
+                "sku": r.sku,
+                "price": float(r.price or 0),
+                "platform": r.platform,
+            }
+            for r in raw_rows if not r.is_old
+        ][:rows_cap]
+    else:
+        old_rows_raw, new_rows_raw = [], []
 
     result_data = {
         "old": {
@@ -273,5 +286,27 @@ async def analyse_overview(
         "top_province": top_province,
         "top_province_unique": top_province_unique,
     }
+    await analysis_cache.set(cache_key, result_data)
+    return result_data
+
+
+@router.get("/latest_order_date", summary="Most recent order_date in the dataset")
+async def latest_order_date(
+    _u=Depends(current_analyst_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Return the most recent order_date across all platforms, or None if empty.
+
+    Orders are uploaded in batches rather than captured in real time, so the
+    calendar "today" is almost always empty. The KPI dashboard uses this as
+    its "as of" anchor instead of ``date.today()``.
+    """
+    cache_key = analysis_cache._make_key("latest_order_date")
+    cached = await analysis_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    latest = (await session.execute(select(func.max(Order.order_date)))).scalar()
+    result_data = {"latest_order_date": str(latest) if latest else None}
     await analysis_cache.set(cache_key, result_data)
     return result_data
