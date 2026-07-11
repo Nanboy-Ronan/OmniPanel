@@ -92,15 +92,54 @@ def test_upload_requires_submit_button():
     assert "form_submit_button(\"上传\")" in content
 
 
+def test_upload_sends_expected_platform():
+    """The tab's platform must be sent as expected_platform, so a wrong-tab
+    upload is rejected server-side instead of silently ingesting under a
+    different platform and only warning after the fact."""
+    content = open("app/ui/pages/upload.py", encoding="utf-8").read()
+    assert "client.upload(f.name, f.getvalue(), expected_platform=expected_platform)" in content
+
+
 def test_upload_summary_reflects_raw_ingest_counts():
     content = open("app/ui/pages/upload.py", encoding="utf-8").read()
     assert "_render_upload_summary" in content
     assert "来源行数" in content
     assert "新增订单" in content
     assert "原始行已存" in content
+
+
+def test_upload_batch_polling_normalises_batch_id_and_total_rows():
+    """get_upload_batch() returns id/row_count, not batch_id/total_rows — without
+    normalising these, the rejected-rows expander never renders (batch_id stays
+    None) and "来源行数" always shows N/A, even when the async ETL path succeeds
+    and rows were actually rejected.
+    """
+    content = open("app/ui/pages/upload.py", encoding="utf-8").read()
+    assert 'data.setdefault("batch_id", data.get("id", batch_id))' in content
+    assert 'data.setdefault("total_rows", data.get("row_count"))' in content
     assert "重复行" in content
     assert "拒绝行" in content
     assert "batch_id" in content
+
+
+def test_csv_downloads_use_utf8_sig_bom():
+    """Every st.download_button CSV export must encode utf-8-sig; a bare
+    to_csv() (no BOM) opens as mojibake in Excel on Windows/中文 locales.
+    """
+    import re
+
+    ui_pages_dir = "app/ui/pages"
+    offenders = []
+    for fname in os.listdir(ui_pages_dir):
+        if not fname.endswith(".py"):
+            continue
+        path = os.path.join(ui_pages_dir, fname)
+        content = open(path, encoding="utf-8").read()
+        for match in re.finditer(r"\.to_csv\(index=False\)(\.encode\([^)]*\))?", content):
+            if match.group(1) != '.encode("utf-8-sig")':
+                line_no = content[: match.start()].count("\n") + 1
+                offenders.append(f"{fname}:{line_no}")
+    assert not offenders, f"CSV export(s) missing utf-8-sig encoding: {offenders}"
 
 
 def test_database_status_visible_for_admins():
