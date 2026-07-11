@@ -56,6 +56,60 @@ def _province_charts(overview: dict) -> None:
         right.altair_chart(_styled_chart(chart2), use_container_width=True)
 
 
+def _daily_customer_trend_chart(
+    old_daily: dict | None, new_daily: dict | None, *, y_title: str, chart_title: str
+) -> None:
+    """Render the 老客户/新客户 daily-active-customers line chart.
+
+    Shared by the 概览 and 新老客户 views, which differ only in axis/chart title.
+    """
+    frames = []
+    if old_daily:
+        df_old = pd.DataFrame({"date": list(old_daily.keys()), "customers": list(old_daily.values())})
+        df_old["客户类型"] = "老客户"
+        frames.append(df_old)
+    if new_daily:
+        df_new = pd.DataFrame({"date": list(new_daily.keys()), "customers": list(new_daily.values())})
+        df_new["客户类型"] = "新客户"
+        frames.append(df_new)
+    if not frames:
+        return
+
+    line_df = pd.concat(frames)
+    line_df["date"] = pd.to_datetime(line_df["date"])
+    color_scale = alt.Scale(domain=["老客户", "新客户"], range=[PALETTE["old"], PALETTE["new"]])
+    line = (
+        alt.Chart(line_df)
+        .mark_line(point=alt.OverlayMarkDef(filled=True, size=60))
+        .encode(
+            x=alt.X("date:T", title="日期"),
+            y=alt.Y("customers:Q", title=y_title),
+            color=alt.Color("客户类型:N", scale=color_scale),
+            tooltip=["date:T", "customers:Q", "客户类型:N"],
+        )
+        .properties(title=chart_title)
+    )
+    st.altair_chart(_styled_chart(line), use_container_width=True)
+
+
+def _top_sku_chart(overview: dict | None) -> None:
+    """Render the 订单量最高的 SKU bar chart, shared by both analysis views."""
+    if not overview or not overview.get("top_sku"):
+        return
+    top_df = pd.DataFrame(overview["top_sku"])
+    sku_chart = (
+        alt.Chart(top_df)
+        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=PALETTE["old"])
+        .encode(
+            x=alt.X("sku:N", sort="-y", title="SKU"),
+            y=alt.Y("orders:Q", title="订单数"),
+            tooltip=["sku", "orders", alt.Tooltip("revenue:Q", format=",.2f")],
+        )
+        .properties(title="订单量最高的 SKU")
+    )
+    st.altair_chart(_styled_chart(sku_chart), use_container_width=True)
+
+
 def _repurchase_frequency_chart(freq_dist: dict, window_label: str) -> None:
     """Render a horizontal bar chart for new-customer order-count distribution."""
     order = ["1", "2", "3", "4+"]
@@ -110,7 +164,9 @@ def analysis_overview_page(start: date, end: date, platform: str | None = None) 
 
     r_over = client.overview(start, end, platform)
     r_rep = client.repurchase_rate(start, end, platform, window_days)
-    r_trend = client.analysis(start, end, platform)
+    # include_rows=False: this view only uses old_daily/new_daily for the trend
+    # line — skip the up-to-2*rows_cap raw-row payload the "新老客户" view needs.
+    r_trend = client.analysis(start, end, platform, include_rows=False)
     if r_over.status_code != 200:
         show_api_error(r_over)
         return
@@ -151,50 +207,14 @@ def analysis_overview_page(start: date, end: date, platform: str | None = None) 
 
     # 每日客户活动趋势
     if trend_data:
-        frames = []
-        if trend_data.get("old_daily"):
-            df_old = pd.DataFrame(
-                {"date": list(trend_data["old_daily"].keys()), "customers": list(trend_data["old_daily"].values())}
-            )
-            df_old["客户类型"] = "老客户"
-            frames.append(df_old)
-        if trend_data.get("new_daily"):
-            df_new = pd.DataFrame(
-                {"date": list(trend_data["new_daily"].keys()), "customers": list(trend_data["new_daily"].values())}
-            )
-            df_new["客户类型"] = "新客户"
-            frames.append(df_new)
-        if frames:
-            line_df = pd.concat(frames)
-            line_df["date"] = pd.to_datetime(line_df["date"])
-            _color_scale = alt.Scale(domain=["老客户", "新客户"], range=[PALETTE["old"], PALETTE["new"]])
-            line = (
-                alt.Chart(line_df)
-                .mark_line(point=alt.OverlayMarkDef(filled=True, size=60))
-                .encode(
-                    x=alt.X("date:T", title="日期"),
-                    y=alt.Y("customers:Q", title="每日活跃客户"),
-                    color=alt.Color("客户类型:N", scale=_color_scale),
-                    tooltip=["date:T", "customers:Q", "客户类型:N"],
-                )
-                .properties(title="每日客户活动")
-            )
-            st.altair_chart(_styled_chart(line), use_container_width=True)
-
-    if overview.get("top_sku"):
-        top_df = pd.DataFrame(overview["top_sku"])
-        sku_chart = (
-            alt.Chart(top_df)
-            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=PALETTE["old"])
-            .encode(
-                x=alt.X("sku:N", sort="-y", title="SKU"),
-                y=alt.Y("orders:Q", title="订单数"),
-                tooltip=["sku", "orders", alt.Tooltip("revenue:Q", format=",.2f")],
-            )
-            .properties(title="订单量最高的 SKU")
+        _daily_customer_trend_chart(
+            trend_data.get("old_daily"),
+            trend_data.get("new_daily"),
+            y_title="每日活跃客户",
+            chart_title="每日客户活动",
         )
-        st.altair_chart(_styled_chart(sku_chart), use_container_width=True)
 
+    _top_sku_chart(overview)
     _province_charts(overview)
 
 
@@ -268,51 +288,11 @@ def analysis_old_vs_new_page(start: date, end: date, platform: str | None = None
     st.altair_chart(_styled_chart(bar), use_container_width=True)
 
     # 每日趋势
-    _color_scale = alt.Scale(domain=["老客户", "新客户"], range=[PALETTE["old"], PALETTE["new"]])
-    if data.get("old_daily") or data.get("new_daily"):
-        frames = []
-        if data.get("old_daily"):
-            old_by_day = pd.DataFrame(
-                {"date": list(data["old_daily"].keys()), "customers": list(data["old_daily"].values())}
-            )
-            old_by_day["客户类型"] = "老客户"
-            frames.append(old_by_day)
-        if data.get("new_daily"):
-            new_by_day = pd.DataFrame(
-                {"date": list(data["new_daily"].keys()), "customers": list(data["new_daily"].values())}
-            )
-            new_by_day["客户类型"] = "新客户"
-            frames.append(new_by_day)
-        if frames:
-            line_df = pd.concat(frames)
-            line_df["date"] = pd.to_datetime(line_df["date"])
-            line = (
-                alt.Chart(line_df)
-                .mark_line(point=alt.OverlayMarkDef(filled=True, size=60))
-                .encode(
-                    x=alt.X("date:T", title="日期"),
-                    y=alt.Y("customers:Q", title="客户数"),
-                    color=alt.Color("客户类型:N", scale=_color_scale),
-                    tooltip=["date:T", "customers:Q", "客户类型:N"],
-                )
-                .properties(title="每日客户趋势")
-            )
-            st.altair_chart(_styled_chart(line), use_container_width=True)
+    _daily_customer_trend_chart(
+        data.get("old_daily"), data.get("new_daily"), y_title="客户数", chart_title="每日客户趋势"
+    )
 
-    # Top SKU 图表
-    if overview and overview.get("top_sku"):
-        top_df = pd.DataFrame(overview["top_sku"])
-        sku_chart = (
-            alt.Chart(top_df)
-            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=PALETTE["old"])
-            .encode(
-                x=alt.X("sku:N", sort="-y", title="SKU"),
-                y=alt.Y("orders:Q", title="订单数"),
-                tooltip=["sku", "orders", alt.Tooltip("revenue:Q", format=",.2f")],
-            )
-            .properties(title="订单量最高的 SKU")
-        )
-        st.altair_chart(_styled_chart(sku_chart), use_container_width=True)
+    _top_sku_chart(overview)
 
     # 省份图表
     if overview:
