@@ -1,11 +1,12 @@
 # rap/app/views/ecommerce/orders_all.py
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import date, datetime
 from decimal import Decimal
 
 from ...auth import current_active_user
+from ...config import settings
 from ...db import get_session
 from ...db.models import JdOrder, Order, TmallOrder, YouzanOrder
 from ...utils.logger import log_operation
@@ -34,16 +35,38 @@ def _raw_row_to_dict(row) -> dict:
     }
 
 
-@router.get("/", summary="Return every order row as JSON")
+@router.get("/", summary="Return a page of order rows as JSON")
 async def get_all_orders(
+    response: Response,
+    limit: int = Query(
+        None,
+        ge=1,
+        le=20000,
+        description="Max rows to return. Defaults to settings.analysis_rows_cap.",
+    ),
+    offset: int = Query(0, ge=0),
     _u=Depends(current_active_user),
     session: AsyncSession = Depends(get_session),
 ):
+    """Paginated order listing — total row count is returned in the
+    ``X-Total-Count`` response header so the client can show "N / total" and
+    decide whether to fetch more, without the API ever serialising the whole
+    table in one response.
+    """
+    effective_limit = limit or settings.analysis_rows_cap
     try:
-        result = await session.execute(select(Order).order_by(Order.order_date))
+        total = (await session.execute(select(func.count(Order.id)))).scalar() or 0
+        result = await session.execute(
+            select(Order)
+            .order_by(Order.order_date, Order.id)
+            .offset(offset)
+            .limit(effective_limit)
+        )
         orders = result.scalars().all()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+    response.headers["X-Total-Count"] = str(total)
 
     rows = [
         {

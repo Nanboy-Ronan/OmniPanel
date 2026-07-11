@@ -4,6 +4,8 @@ import streamlit as st
 
 from app.ui._helpers import _page_hero, show_api_error
 
+_PAGE_SIZE = 5000
+
 
 def page_data() -> None:
     client = st.session_state["client"]
@@ -11,18 +13,39 @@ def page_data() -> None:
 
     col_refresh, _ = st.columns([1, 5])
     refresh = col_refresh.button("刷新")
+    if refresh:
+        st.session_state.pop("orders_df", None)
+        st.session_state["orders_loaded_limit"] = _PAGE_SIZE
+
+    loaded_limit = st.session_state.get("orders_loaded_limit", _PAGE_SIZE)
     df = st.session_state.get("orders_df")
-    if df is None or refresh:
-        r = client.orders_all()
+    if df is None:
+        r = client.orders_all(limit=loaded_limit)
         if r.status_code != 200:
             show_api_error(r)
             return
         df = pd.DataFrame(r.json())
         st.session_state["orders_df"] = df
+        st.session_state["orders_total_count"] = int(
+            r.headers.get("X-Total-Count", len(df))
+        )
+        st.session_state["orders_loaded_limit"] = loaded_limit
 
     if df.empty:
         st.info("暂无数据，请先上传订单文件。")
         return
+
+    total_count = st.session_state.get("orders_total_count", len(df))
+    if len(df) < total_count:
+        info_col, load_col = st.columns([4, 1])
+        info_col.info(
+            f"已加载 {len(df):,} / 共 {total_count:,} 条订单（按日期排序）。"
+            f"下方搜索和筛选仅作用于已加载的数据。"
+        )
+        if load_col.button(f"加载更多 (+{_PAGE_SIZE:,})", use_container_width=True):
+            st.session_state["orders_loaded_limit"] = loaded_limit + _PAGE_SIZE
+            st.session_state.pop("orders_df", None)
+            st.rerun()
 
     # 搜索 + 列筛选
     search = st.text_input("搜索所有文本列", placeholder="例：山东省、订单号、SKU 名称…")
@@ -50,10 +73,10 @@ def page_data() -> None:
             df_view = df_view[df_view[c].isin(sel)]
 
     row_col, download_col = st.columns([3, 1])
-    row_col.write(f"显示 **{len(df_view):,} / {len(df):,}** 条")
+    row_col.write(f"显示 **{len(df_view):,} / {len(df):,}** 条已加载记录")
     download_col.download_button(
         "下载 CSV",
-        df_view.to_csv(index=False),
+        df_view.to_csv(index=False).encode("utf-8-sig"),
         "filtered_orders.csv",
         mime="text/csv",
     )

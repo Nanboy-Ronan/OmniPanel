@@ -137,7 +137,7 @@ def _render_nl_query(
     c1.caption(f"共 {row_count:,} 行")
     c2.download_button(
         "下载 CSV",
-        df.to_csv(index=False),
+        df.to_csv(index=False).encode("utf-8-sig"),
         "nl_query_result.csv",
         mime="text/csv",
         key="nl_dl",
@@ -269,7 +269,7 @@ def page_sql_console() -> None:
     c1.caption(f"共 {row_count:,} 行")
     c2.download_button(
         "下载 CSV",
-        result_df.to_csv(index=False),
+        result_df.to_csv(index=False).encode("utf-8-sig"),
         "query_result.csv",
         mime="text/csv",
     )

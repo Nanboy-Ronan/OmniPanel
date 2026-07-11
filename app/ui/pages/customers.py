@@ -7,6 +7,8 @@ import streamlit as st
 
 from app.ui._helpers import PALETTE, _page_hero, _styled_chart, show_api_error
 
+_PAGE_SIZE = 2000
+
 
 def page_customers() -> None:
     client = st.session_state["client"]
@@ -40,15 +42,35 @@ def page_customers() -> None:
         st.error("开始日期不能晚于结束日期。")
         return
 
-    r = client.customers(str(start), str(end), int(min_orders), pf)
+    # Reset the loaded page size whenever the filters themselves change —
+    # otherwise switching platforms keeps an inflated limit from a previous,
+    # unrelated "加载更多" click.
+    filter_sig = (str(start), str(end), int(min_orders), pf)
+    if st.session_state.get("cust_filter_sig") != filter_sig:
+        st.session_state["cust_filter_sig"] = filter_sig
+        st.session_state["cust_loaded_limit"] = _PAGE_SIZE
+    loaded_limit = st.session_state["cust_loaded_limit"]
+
+    r = client.customers(str(start), str(end), int(min_orders), pf, limit=loaded_limit)
     if r.status_code != 200:
         show_api_error(r)
         return
     df = pd.DataFrame(r.json())
+    total_count = int(r.headers.get("X-Total-Count", len(df)))
     if df.empty:
         st.info("未找到符合条件的客户。")
         return
     df["customer"] = df.apply(_customer_label, axis=1)
+
+    if len(df) < total_count:
+        info_col, load_col = st.columns([4, 1])
+        info_col.info(
+            f"已加载 {len(df):,} / 共 {total_count:,} 位符合条件的客户（按消费额排序）。"
+            f"下方搜索仅作用于已加载的客户。"
+        )
+        if load_col.button(f"加载更多 (+{_PAGE_SIZE:,})", use_container_width=True):
+            st.session_state["cust_loaded_limit"] = loaded_limit + _PAGE_SIZE
+            st.rerun()
 
     search_col, export_col = st.columns([4, 1])
     search = search_col.text_input("搜索客户（手机号 / 地址 / 姓名）", key="cust_search")
@@ -74,7 +96,7 @@ def page_customers() -> None:
     export_col.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
     export_col.download_button(
         "导出 CSV",
-        df_display.to_csv(index=False),
+        df_display.to_csv(index=False).encode("utf-8-sig"),
         "customers.csv",
         mime="text/csv",
         use_container_width=True,
