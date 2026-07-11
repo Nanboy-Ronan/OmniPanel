@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover - non-POSIX (e.g. Windows dev)
     fcntl = None  # type: ignore[assignment]
 
 from . import DATABASE_URL
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,10 @@ def prune_old_backups(backup_dir: Path, keep: int | None = None) -> int:
 
     Only files whose suffix is in ``_BACKUP_EXTENSIONS`` are considered.
     Dotfiles (e.g. ``.last_monthly_backup``, ``.backup.lock``) are always left
-    alone.  *keep* defaults to ``RPA_BACKUP_KEEP`` (env) or 5.
+    alone.  *keep* defaults to ``settings.rpa_backup_keep`` (5).
     """
     if keep is None:
-        try:
-            keep = int(os.getenv("RPA_BACKUP_KEEP", "5"))
-        except (ValueError, TypeError):
-            keep = 5
+        keep = settings.rpa_backup_keep
 
     candidates = sorted(
         (
@@ -84,7 +82,7 @@ def monthly_backup(backup_dir: str | Path | None = None) -> Path | None:
     corrupt (doubled) dump. Only the worker that wins the lock performs the
     backup; the others skip.
     """
-    root = Path(backup_dir or os.getenv("RPA_BACKUP_DIR", "backups"))
+    root = Path(backup_dir or settings.rpa_backup_dir)
     root.mkdir(parents=True, exist_ok=True)
 
     # Fast pre-check before taking the lock / opening pg_dump.
@@ -135,14 +133,14 @@ def _pg_connection_args(parsed) -> list[str]:
 def _wrap_for_docker(pg_args: list[str], parsed, *, interactive: bool) -> tuple[list[str], dict]:
     """Return the (argv, env) to run a postgres client command.
 
-    When ``RPA_PG_DOCKER_CONTAINER`` is set, the command is wrapped in
+    When ``settings.rpa_pg_docker_container`` is set, the command is wrapped in
     ``docker exec`` so it runs inside the PostgreSQL container (where the
     client binaries live). Input/output is streamed over stdin/stdout, so the
     dump file always lands on the host filesystem regardless of where the
     binary runs. Otherwise the command runs natively and ``PGPASSWORD`` is
     passed through the environment.
     """
-    container = os.getenv("RPA_PG_DOCKER_CONTAINER")
+    container = settings.rpa_pg_docker_container
     env = os.environ.copy()
     if container:
         argv = ["docker", "exec"]
@@ -161,7 +159,7 @@ def _wrap_for_docker(pg_args: list[str], parsed, *, interactive: bool) -> tuple[
 
 def backup_database(reason: str, backup_dir: str | Path | None = None) -> Path | None:
     """Create a database backup using ``pg_dump`` and return its path."""
-    root = Path(backup_dir or os.getenv("RPA_BACKUP_DIR", "backups"))
+    root = Path(backup_dir or settings.rpa_backup_dir)
     root.mkdir(parents=True, exist_ok=True)
 
     safe_reason = "".join(

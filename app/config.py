@@ -64,10 +64,15 @@ class Settings(BaseSettings):
 
     # ── Backup ───────────────────────────────────────────────────────────────
     rpa_backup_dir: str = "backups"
+    # Number of most-recent backup files to keep; older ones are pruned.
+    rpa_backup_keep: int = 5
     rap_disable_monthly_backup: bool = False
     # Hour of the day (0-23) in app_timezone at which the daily backup check runs.
     # The actual dump only fires when >= 30 days have elapsed since the last one.
     backup_hour: int = 2
+    # When set, pg_dump/psql run inside this Docker container (where the client
+    # binaries live); dumps still land on the host via stdin/stdout streaming.
+    rpa_pg_docker_container: str | None = None
 
     # ── Upload ───────────────────────────────────────────────────────────────
     max_upload_mb: int = 50

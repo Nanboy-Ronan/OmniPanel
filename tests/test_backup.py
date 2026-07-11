@@ -17,7 +17,7 @@ def test_monthly_backup_runs_once_and_records_timestamp(monkeypatch, tmp_path):
         kwargs["stdout"].write(b"-- backup sql")
         return subprocess.CompletedProcess(args, 0)
 
-    monkeypatch.delenv("RPA_PG_DOCKER_CONTAINER", raising=False)
+    monkeypatch.setattr(backup.settings, "rpa_pg_docker_container", None)
     monkeypatch.setattr(
         backup,
         "DATABASE_URL",
@@ -55,7 +55,7 @@ def test_backup_database_routes_through_docker_when_configured(monkeypatch, tmp_
         kwargs["stdout"].write(b"-- backup sql")
         return subprocess.CompletedProcess(args, 0)
 
-    monkeypatch.setenv("RPA_PG_DOCKER_CONTAINER", "rpa-postgres")
+    monkeypatch.setattr(backup.settings, "rpa_pg_docker_container", "rpa-postgres")
     monkeypatch.setattr(
         backup,
         "DATABASE_URL",
@@ -85,7 +85,7 @@ def test_restore_database_uses_psql_with_error_stop(monkeypatch, tmp_path):
         calls.append((args, kwargs))
         return subprocess.CompletedProcess(args, 0)
 
-    monkeypatch.delenv("RPA_PG_DOCKER_CONTAINER", raising=False)
+    monkeypatch.setattr(backup.settings, "rpa_pg_docker_container", None)
     monkeypatch.setattr(
         backup,
         "DATABASE_URL",
@@ -190,7 +190,7 @@ def test_prune_called_after_successful_monthly_backup(monkeypatch, tmp_path):
         prune_calls.append(root)
         return 0
 
-    monkeypatch.delenv("RPA_PG_DOCKER_CONTAINER", raising=False)
+    monkeypatch.setattr(backup.settings, "rpa_pg_docker_container", None)
     monkeypatch.setattr(backup, "DATABASE_URL", "postgresql+asyncpg://rpa:rpa@127.0.0.1:5432/rpa")
     monkeypatch.setattr(backup.subprocess, "run", fake_run)
     monkeypatch.setattr(backup, "prune_old_backups", fake_prune)
