@@ -189,6 +189,14 @@ def _clean_db(request):
     finally:
         conn.close()
 
+    # analysis_cache is a module-level singleton, not reset by the TRUNCATE
+    # above. Endpoints whose cache key carries no params (e.g.
+    # /analysis/latest_order_date) would otherwise leak a stale value from
+    # whichever earlier test in this session populated that key.
+    import asyncio
+    from app.utils.cache import analysis_cache
+    asyncio.run(analysis_cache.invalidate())
+
 
 @pytest.fixture
 def pg_sync_url(_pg_db):

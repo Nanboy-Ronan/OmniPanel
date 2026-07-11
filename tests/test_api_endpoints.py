@@ -246,6 +246,62 @@ def test_upload_size_limit(client, tokens, monkeypatch):
     assert "File too large" in r.json()["detail"]
 
 
+def test_upload_reuse_of_identical_file_still_creates_new_batch_and_dedupes_rows(client, tokens):
+    """Re-uploading the exact same file content must still go through the full
+    ETL and get its own UploadBatch (audit trail) — duplicate detection
+    happens at the row level (via content hash in the ETL), not by skipping
+    the batch entirely. See test_platform_raw_tables.py for the thorough
+    row-level-dedup coverage this endpoint relies on.
+    """
+    data = "订单号,买家付款时间,收货人手机号/提货人手机号,全部商品名称,商品种类数,订单实付金额\n1,2025-07-21,13800138000,item,1,10"
+
+    r1 = client.post(
+        "/upload/", files={"file": ("dup.csv", data)}, headers=_auth(tokens["admin"])
+    )
+    assert r1.status_code == 202
+    batch1_id = r1.json()["batch_id"]
+    r_batch1 = client.get(f"/upload/batches/{batch1_id}", headers=_auth(tokens["admin"]))
+    assert r_batch1.json()["status"] == "completed"
+    assert r_batch1.json()["inserted_orders"] == 1
+
+    r2 = client.post(
+        "/upload/", files={"file": ("dup-renamed.csv", data)}, headers=_auth(tokens["admin"])
+    )
+    assert r2.status_code == 202
+    batch2_id = r2.json()["batch_id"]
+    assert batch2_id != batch1_id
+    r_batch2 = client.get(f"/upload/batches/{batch2_id}", headers=_auth(tokens["admin"]))
+    body2 = r_batch2.json()
+    assert body2["status"] == "completed"
+    assert body2["inserted_orders"] == 0
+    assert body2["duplicate_rows"] == 1
+
+
+def test_upload_rejects_platform_mismatch(client, tokens):
+    """A 有赞 (youzan) file uploaded against the 京东 (jd) tab must be rejected
+    synchronously, before any background ETL runs."""
+    youzan_csv = "订单号,买家付款时间,收货人手机号/提货人手机号,全部商品名称,商品种类数,订单实付金额\n1,2025-07-21,13800138000,item,1,10"
+
+    r = client.post(
+        "/upload/",
+        files={"file": ("looks-like-jd.csv", youzan_csv)},
+        params={"expected_platform": "jd"},
+        headers=_auth(tokens["admin"]),
+    )
+    assert r.status_code == 400
+    assert "youzan" in r.json()["detail"]
+    assert "jd" in r.json()["detail"]
+
+    # Matching platform must succeed normally.
+    r_ok = client.post(
+        "/upload/",
+        files={"file": ("actually-youzan.csv", youzan_csv)},
+        params={"expected_platform": "youzan"},
+        headers=_auth(tokens["admin"]),
+    )
+    assert r_ok.status_code == 202
+
+
 def test_analysis_after_upload(client, tokens):
     """Uploading data should also refresh analysis tables."""
     # Clear existing DB tables first
@@ -347,6 +403,34 @@ def test_analysis_invalid_range(client, tokens, sample_data):
     assert data["old_daily"] == {} and data["new_daily"] == {}
 
 
+def test_analysis_include_rows_false_omits_raw_rows_but_keeps_aggregates(client, tokens, sample_data):
+    """The overview page's trend chart only needs old_daily/new_daily —
+    include_rows=False must skip the (up to 2*rows_cap) raw-row payload while
+    still returning identical aggregates."""
+    params = {"start_date": "2025-07-01", "end_date": "2025-07-31"}
+
+    r_full = client.get("/analysis/", params=params, headers=_auth(tokens["analyst"]))
+    assert r_full.status_code == 200
+    full = r_full.json()
+    assert full["old"]["rows"] or full["new"]["rows"]  # sanity: some rows exist
+
+    r_slim = client.get(
+        "/analysis/", params={**params, "include_rows": "false"}, headers=_auth(tokens["analyst"])
+    )
+    assert r_slim.status_code == 200
+    slim = r_slim.json()
+    assert slim["old"]["rows"] == []
+    assert slim["new"]["rows"] == []
+
+    # Aggregates and daily series must be identical regardless of include_rows.
+    for group in ["old", "new"]:
+        assert slim[group]["count"] == full[group]["count"]
+        assert slim[group]["customer_count"] == full[group]["customer_count"]
+        assert slim[group]["paid_sum"] == full[group]["paid_sum"]
+    assert slim["old_daily"] == full["old_daily"]
+    assert slim["new_daily"] == full["new_daily"]
+
+
 def test_analysis_overview(client, tokens, sample_data):
     """Verify /analysis/overview filters data by date range."""
 
@@ -373,6 +457,35 @@ def test_analysis_overview(client, tokens, sample_data):
 
     # metrics should differ for the two ranges
     assert data1["orders"] != data2["orders"]
+
+
+def test_latest_order_date_reflects_max_order_date(client, tokens, sample_data):
+    """The KPI dashboard anchors on this instead of date.today() because orders
+    arrive in manual upload batches, not in real time."""
+    r = client.get(
+        "/analysis/latest_order_date", headers=_auth(tokens["analyst"])
+    )
+    assert r.status_code == 200
+    latest = r.json()["latest_order_date"]
+    assert latest is not None
+
+    # Cross-check against /analysis/customers's own max(last_date) for the
+    # full data range — both are derived from the same order_date column.
+    r_cust = client.get(
+        "/analysis/customers",
+        params={"start_date": "2020-01-01", "end_date": "2030-01-01"},
+        headers=_auth(tokens["analyst"]),
+    )
+    max_last_date = max(row["last_date"] for row in r_cust.json())
+    assert latest == max_last_date
+
+
+def test_latest_order_date_null_when_no_data(client, tokens):
+    r = client.get(
+        "/analysis/latest_order_date", headers=_auth(tokens["analyst"])
+    )
+    assert r.status_code == 200
+    assert r.json()["latest_order_date"] is None
 
 
 def test_analysis_customers(client, tokens, sample_data):
@@ -413,6 +526,94 @@ def test_analysis_customers(client, tokens, sample_data):
     data2 = r2.json()
     assert len(data2) == 2
     assert all(row["orders"] >= 2 for row in data2)
+
+
+def test_analysis_customers_pagination(client, tokens, sample_data):
+    """limit/offset must page through results, sorted by revenue desc, with the
+    pre-pagination total in X-Total-Count — this is what stops the endpoint
+    from having to serialise the whole customer base on every call."""
+    params = {"start_date": "2025-07-01", "end_date": "2025-07-31"}
+
+    r_full = client.get("/analysis/customers", params=params, headers=_auth(tokens["analyst"]))
+    assert r_full.headers["X-Total-Count"] == "38"
+    full = r_full.json()
+    assert len(full) == 38
+
+    r_page1 = client.get(
+        "/analysis/customers", params={**params, "limit": 10}, headers=_auth(tokens["analyst"])
+    )
+    assert r_page1.status_code == 200
+    assert r_page1.headers["X-Total-Count"] == "38"
+    page1 = r_page1.json()
+    assert len(page1) == 10
+    assert page1 == full[:10]
+
+    r_page2 = client.get(
+        "/analysis/customers",
+        params={**params, "limit": 10, "offset": 10},
+        headers=_auth(tokens["analyst"]),
+    )
+    assert r_page2.status_code == 200
+    page2 = r_page2.json()
+    assert len(page2) == 10
+    assert page2 == full[10:20]
+    # No overlap between pages.
+    assert {r["customer_key"] for r in page1}.isdisjoint({r["customer_key"] for r in page2})
+
+
+def test_analysis_customers_search(client, tokens, sample_data):
+    """search must match server-side across customer_key/receiver/phone/address/nick."""
+    params = {"start_date": "2025-07-01", "end_date": "2025-07-31"}
+    r_full = client.get("/analysis/customers", params=params, headers=_auth(tokens["analyst"]))
+    full = r_full.json()
+    assert full  # sanity
+
+    target = full[0]
+    # Search on a distinctive substring of the customer's phone (customer_key).
+    needle = target["customer_key"][-6:]
+    r_search = client.get(
+        "/analysis/customers",
+        params={**params, "search": needle},
+        headers=_auth(tokens["analyst"]),
+    )
+    assert r_search.status_code == 200
+    results = r_search.json()
+    assert results
+    assert any(r["customer_key"] == target["customer_key"] for r in results)
+    assert int(r_search.headers["X-Total-Count"]) <= len(full)
+
+    r_none = client.get(
+        "/analysis/customers",
+        params={**params, "search": "definitely-not-a-real-customer-xyz"},
+        headers=_auth(tokens["analyst"]),
+    )
+    assert r_none.status_code == 200
+    assert r_none.json() == []
+    assert r_none.headers["X-Total-Count"] == "0"
+
+
+def test_orders_all_pagination(client, tokens, sample_data):
+    """limit/offset must page through orders with the total in X-Total-Count."""
+    r_full = client.get("/orders_all/", headers=_auth(tokens["analyst"]))
+    assert r_full.status_code == 200
+    full = r_full.json()
+    total = int(r_full.headers["X-Total-Count"])
+    assert total == len(full)
+    assert total > 10
+
+    r_page = client.get(
+        "/orders_all/", params={"limit": 5}, headers=_auth(tokens["analyst"])
+    )
+    assert r_page.status_code == 200
+    page = r_page.json()
+    assert len(page) == 5
+    assert r_page.headers["X-Total-Count"] == str(total)
+    assert page == full[:5]
+
+    r_page2 = client.get(
+        "/orders_all/", params={"limit": 5, "offset": 5}, headers=_auth(tokens["analyst"])
+    )
+    assert r_page2.json() == full[5:10]
 
 
 def test_admin_clear_db_permissions(client, tokens):
