@@ -718,7 +718,7 @@ class TestSqlReadOnlyDbProtection:
 
     def test_db_rejects_update_even_if_validator_bypassed(self, client, tokens, monkeypatch):
         """DB-level read-only mode must block DML independently of the app validator."""
-        from app.views.ecommerce import analysis as analysis_mod
+        from app.views.ecommerce.analysis import sql_console as analysis_mod
         # Bypass both application-level guards
         monkeypatch.setattr(analysis_mod, "validate_sql_query", lambda sql: None)
         monkeypatch.setattr(analysis_mod, "enforce_limit", lambda sql, **kw: sql)
@@ -733,7 +733,7 @@ class TestSqlReadOnlyDbProtection:
         assert "read-only" in detail or "cannot execute" in detail
 
     def test_db_rejects_delete_even_if_validator_bypassed(self, client, tokens, monkeypatch):
-        from app.views.ecommerce import analysis as analysis_mod
+        from app.views.ecommerce.analysis import sql_console as analysis_mod
         monkeypatch.setattr(analysis_mod, "validate_sql_query", lambda sql: None)
         monkeypatch.setattr(analysis_mod, "enforce_limit", lambda sql, **kw: sql)
 
@@ -747,7 +747,7 @@ class TestSqlReadOnlyDbProtection:
         assert "read-only" in detail or "cannot execute" in detail
 
     def test_db_rejects_drop_even_if_validator_bypassed(self, client, tokens, monkeypatch):
-        from app.views.ecommerce import analysis as analysis_mod
+        from app.views.ecommerce.analysis import sql_console as analysis_mod
         monkeypatch.setattr(analysis_mod, "validate_sql_query", lambda sql: None)
         monkeypatch.setattr(analysis_mod, "enforce_limit", lambda sql, **kw: sql)
 
