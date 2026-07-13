@@ -7,6 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.13%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-13%2B-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![GitHub stars](https://img.shields.io/github/stars/Nanboy-Ronan/OmniPanel?style=social)](https://github.com/Nanboy-Ronan/OmniPanel/stargazers)
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -104,6 +105,22 @@ OmniPanel 反过来：**把业务规则在平台层一次性编码进去**，这
 
 ## 快速开始
 
+### Docker（最快）
+
+依赖：Docker + Docker Compose v2。会一起启动 Postgres、FastAPI 后端和 Streamlit 前端——本机不需要装 Python 或 Postgres。
+
+```bash
+git clone https://github.com/Nanboy-Ronan/OmniPanel.git
+cd OmniPanel
+cp .env.example .env
+#    编辑 .env：把 RAP_SECRET 设为一个真实的随机值（python -c "import secrets; print(secrets.token_urlsafe(48))"）
+docker compose up --build
+```
+
+打开 http://localhost:8501，注册第一个用户（会自动成为 admin），就可以开始上传导出文件了。
+
+### 手动安装
+
 依赖：Python 3.13+ 和一个 PostgreSQL 实例（13+）。
 
 ```bash
@@ -127,7 +144,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 streamlit run app/ui/dashboard.py
 ```
 
-打开 Streamlit 页面后，注册第一个用户（会自动成为 admin），就可以开始上传导出文件了。完整步骤见[快速上手](docs/getting-started.zh-CN.md)。
+无论哪种方式，打开 Streamlit 页面后，注册第一个用户（会自动成为 admin），就可以开始上传导出文件了。完整步骤见[快速上手](docs/getting-started.zh-CN.md)。
 
 ## 配置
 
@@ -178,7 +195,6 @@ MINIMAX_API_KEY=...                # 或 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / 
 
 近期计划：
 
-- **Docker / docker-compose 部署方案** —— 从 `git clone` 到运行起来，一套容器化路径
 - **抖音小店 & 视频号数据接入** —— 目前两个平台还没有稳定的官方导出，持续跟进
 - **飞书 / 钉钉推送** —— 把已保存查询的结果发送到团队日常使用的工具里
 

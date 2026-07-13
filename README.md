@@ -7,6 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.13%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-13%2B-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![GitHub stars](https://img.shields.io/github/stars/Nanboy-Ronan/OmniPanel?style=social)](https://github.com/Nanboy-Ronan/OmniPanel/stargazers)
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -104,6 +105,22 @@ See [Architecture](docs/architecture.md) for full diagrams (backend internals, W
 
 ## Quick start
 
+### Docker (fastest)
+
+Requirements: Docker + Docker Compose v2. This runs Postgres, the FastAPI backend, and the Streamlit frontend together — no local Python or Postgres install needed.
+
+```bash
+git clone https://github.com/Nanboy-Ronan/OmniPanel.git
+cd OmniPanel
+cp .env.example .env
+#    edit .env: set RAP_SECRET to a real value (python -c "import secrets; print(secrets.token_urlsafe(48))")
+docker compose up --build
+```
+
+Open http://localhost:8501, register the first user (automatically becomes admin), and start uploading exports.
+
+### Manual setup
+
 Requirements: Python 3.13+ and a PostgreSQL instance (13+).
 
 ```bash
@@ -127,7 +144,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 streamlit run app/ui/dashboard.py
 ```
 
-Open the Streamlit URL, register the first user (automatically becomes admin), and start uploading exports. Full walkthrough in [Getting started](docs/getting-started.md).
+Either way, open the Streamlit URL, register the first user (automatically becomes admin), and start uploading exports. Full walkthrough in [Getting started](docs/getting-started.md).
 
 ## Configuration
 
@@ -178,7 +195,6 @@ With no key configured, the feature returns 503 and nothing else is affected.
 
 Items we're working on or expect to tackle next:
 
-- **Docker / docker-compose deployment** — a fully containerized path from `git clone` to running app
 - **Douyin Shop & WeChat Video Channels connectors** — two large platforms currently without a stable official export
 - **Feishu / DingTalk push** — send saved-query results to where your team already works
 
