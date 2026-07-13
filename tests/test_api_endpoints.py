@@ -535,28 +535,29 @@ def test_analysis_customers_pagination(client, tokens, sample_data):
     params = {"start_date": "2025-07-01", "end_date": "2025-07-31"}
 
     r_full = client.get("/analysis/customers", params=params, headers=_auth(tokens["analyst"]))
-    assert r_full.headers["X-Total-Count"] == "38"
+    # July window has 5 customers (see tests/sample_dataset.py).
+    assert r_full.headers["X-Total-Count"] == "5"
     full = r_full.json()
-    assert len(full) == 38
+    assert len(full) == 5
 
     r_page1 = client.get(
-        "/analysis/customers", params={**params, "limit": 10}, headers=_auth(tokens["analyst"])
+        "/analysis/customers", params={**params, "limit": 3}, headers=_auth(tokens["analyst"])
     )
     assert r_page1.status_code == 200
-    assert r_page1.headers["X-Total-Count"] == "38"
+    assert r_page1.headers["X-Total-Count"] == "5"
     page1 = r_page1.json()
-    assert len(page1) == 10
-    assert page1 == full[:10]
+    assert len(page1) == 3
+    assert page1 == full[:3]
 
     r_page2 = client.get(
         "/analysis/customers",
-        params={**params, "limit": 10, "offset": 10},
+        params={**params, "limit": 3, "offset": 3},
         headers=_auth(tokens["analyst"]),
     )
     assert r_page2.status_code == 200
     page2 = r_page2.json()
-    assert len(page2) == 10
-    assert page2 == full[10:20]
+    assert len(page2) == 2
+    assert page2 == full[3:5]
     # No overlap between pages.
     assert {r["customer_key"] for r in page1}.isdisjoint({r["customer_key"] for r in page2})
 
@@ -599,7 +600,8 @@ def test_orders_all_pagination(client, tokens, sample_data):
     full = r_full.json()
     total = int(r_full.headers["X-Total-Count"])
     assert total == len(full)
-    assert total > 10
+    # 7 July + 3 June orders (see tests/sample_dataset.py).
+    assert total == 10
 
     r_page = client.get(
         "/orders_all/", params={"limit": 5}, headers=_auth(tokens["analyst"])
