@@ -925,7 +925,7 @@ class TestCustomerEndpointMultiPlatform:
 
         params = {"start_date": "2025-01-01", "end_date": "2027-01-01"}
         r = api_client.get(
-            "/analysis/customers/广东深圳市福田区示例路66号",
+            "/analysis/customers/广东深圳市福田区示例街道1号",
             params=params,
             headers=_auth(api_tokens["analyst"]),
         )
@@ -954,7 +954,7 @@ class TestCustomerEndpointMultiPlatform:
 
         params = {"start_date": "2025-01-01", "end_date": "2027-01-01"}
         r = api_client.get(
-            "/analysis/customers/江苏省 示例市 示例区 示例路16号",
+            "/analysis/customers/江苏省 示例市 示例区 示例地址",
             params=params,
             headers=_auth(api_tokens["analyst"]),
         )
