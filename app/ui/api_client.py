@@ -74,10 +74,19 @@ class APIClient:
             timeout=self._timeout(),
         )
 
-    def upload(self, name: str, data: bytes) -> requests.Response:
+    def upload(
+        self,
+        name: str,
+        data: bytes,
+        expected_platform: str | None = None,
+    ) -> requests.Response:
+        params: dict = {}
+        if expected_platform:
+            params["expected_platform"] = expected_platform
         return self._session.post(
             f"{self.base_url}/upload/",
             files={"file": (name, data)},
+            params=params,
             headers=self._headers(),
             timeout=self._timeout(30),
         )
@@ -98,10 +107,18 @@ class APIClient:
             timeout=self._timeout(),
         )
 
-    def analysis(self, start_date: str, end_date: str, platform: str | None = None) -> requests.Response:
-        params = {"start_date": start_date, "end_date": end_date}
+    def analysis(
+        self,
+        start_date: str,
+        end_date: str,
+        platform: str | None = None,
+        include_rows: bool = True,
+    ) -> requests.Response:
+        params: dict = {"start_date": start_date, "end_date": end_date}
         if platform:
             params["platform"] = platform
+        if not include_rows:
+            params["include_rows"] = False
         return self._session.get(
             f"{self.base_url}/analysis/",
             params=params,
@@ -117,6 +134,15 @@ class APIClient:
         return self._session.get(
             f"{self.base_url}/analysis/overview",
             params=params,
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def latest_order_date(self) -> requests.Response:
+        """Call `/analysis/latest_order_date` — the most recent order_date in
+        the dataset, used as the KPI dashboard's "as of" anchor."""
+        return self._session.get(
+            f"{self.base_url}/analysis/latest_order_date",
             headers=self._headers(),
             timeout=self._timeout(),
         )
@@ -169,9 +195,16 @@ class APIClient:
         end_date: str | None = None,
         min_orders: int | None = None,
         platform: str | None = None,
+        search: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> requests.Response:
-        """Return aggregated metrics for all customers."""
-        params = {}
+        """Return a page of aggregated customer metrics.
+
+        Total matching-customer count (before pagination) is in the
+        ``X-Total-Count`` response header.
+        """
+        params: dict = {"offset": offset}
         if start_date:
             params["start_date"] = start_date
         if end_date:
@@ -180,6 +213,10 @@ class APIClient:
             params["min_orders"] = min_orders
         if platform:
             params["platform"] = platform
+        if search:
+            params["search"] = search
+        if limit:
+            params["limit"] = limit
         return self._session.get(
             f"{self.base_url}/analysis/customers",
             params=params,
@@ -227,9 +264,15 @@ class APIClient:
             timeout=self._timeout(),
         )
 
-    def orders_all(self) -> requests.Response:
+    def orders_all(self, limit: int | None = None, offset: int = 0) -> requests.Response:
+        """Return a page of order rows. Total row count is in the
+        ``X-Total-Count`` response header."""
+        params: dict = {"offset": offset}
+        if limit:
+            params["limit"] = limit
         return self._session.get(
             f"{self.base_url}/orders_all/",
+            params=params,
             headers=self._headers(),
             timeout=self._timeout(30),
         )

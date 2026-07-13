@@ -81,12 +81,16 @@ def _render_tab(client, label: str, content_type: str) -> None:
     st.markdown(f"#### 上传{label}导出文件")
     st.caption("从知乎创作中心导出 CSV/XLS，上传后自动 upsert。已有内容更新数据；未出现的内容保持不变。")
 
-    uploaded = st.file_uploader(
-        f"选择知乎{label}文件",
-        type=["csv", "xls", "xlsx"],
-        key=f"zhihu_uploader_{content_type}",
-    )
-    if uploaded is not None:
+    with st.form(f"zhihu-upload-form-{content_type}", clear_on_submit=True):
+        uploaded = st.file_uploader(
+            f"选择知乎{label}文件",
+            type=["csv", "xls", "xlsx"],
+            key=f"zhihu_uploader_{content_type}",
+        )
+        submitted = st.form_submit_button("上传")
+    if submitted and uploaded is None:
+        st.warning("请先选择文件。")
+    elif submitted:
         with st.spinner("上传中…"):
             r = client.upload_zhihu(uploaded.read(), uploaded.name, content_type)
         if r.status_code == 200:

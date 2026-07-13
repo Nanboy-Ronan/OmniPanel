@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ... import db as _db_mod
 from ...db import get_session
 from ...db.etl import ingest_upload
+from ...db.etl.detect import detect_platform
 from ...db.models import Order, UploadBatch, UploadRejectedRow
 from ...auth import current_active_user
 from ...utils.cache import analysis_cache
@@ -60,6 +61,24 @@ def _validate_upload(filename: str, content_type: str | None) -> None:
                 status_code=415,
                 detail=f"Unsupported content type '{mime}'. Upload a CSV or Excel file.",
             )
+
+
+def _peek_platform(tmp_path: str, filename: str) -> str | None:
+    """Detect the platform from just the header row, without parsing the file body.
+
+    Used to reject an obvious tab/platform mismatch synchronously, before
+    spawning the (potentially slow) background ETL task. Returns None if
+    detection fails here — the real ETL error path already handles that case
+    with a proper batch.status='failed' record.
+    """
+    try:
+        if filename.lower().endswith((".xls", ".xlsx")):
+            header_df = pd.read_excel(tmp_path, dtype=str, nrows=0)
+        else:
+            header_df = pd.read_csv(tmp_path, dtype=str, nrows=0)
+        return detect_platform(header_df)
+    except Exception:
+        return None
 
 
 async def _run_ingestion(
@@ -137,15 +156,23 @@ async def _run_ingestion(
 async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    expected_platform: str | None = Query(
+        None,
+        description="Platform the client's tab/form expects (youzan/jd/tmall). "
+        "If the file's header row detects as a different platform, the upload "
+        "is rejected synchronously instead of silently ingesting under the "
+        "detected platform and only warning after the fact.",
+    ),
     session: AsyncSession = Depends(get_session),
     _user=Depends(current_active_user),
 ):
     """
     1) Validate extension and content-type synchronously.
     2) Stream the file to a temp path, enforcing the size limit.
-    3) Create an UploadBatch record with status='processing'.
-    4) Return 202 with the batch_id immediately.
-    5) ETL (detect platform → normalize → insert) runs as a background task.
+    3) Reject synchronously on an expected_platform mismatch.
+    4) Create an UploadBatch record with status='processing'.
+    5) Return 202 with the batch_id immediately.
+    6) ETL (detect platform → normalize → insert) runs as a background task.
 
     Clients poll GET /upload/batches/{batch_id} to learn the final status.
     """
@@ -179,6 +206,25 @@ async def upload_file(
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise HTTPException(status_code=500, detail=f"Could not save upload: {e}")
+
+    if expected_platform:
+        detected = _peek_platform(tmp_path, file.filename)
+        if detected is not None and detected != expected_platform:
+            os.unlink(tmp_path)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"文件内容检测为「{detected}」平台，与所选「{expected_platform}」标签页不符。"
+                    f"请确认文件是否选错，或切换到「{detected}」标签页重新上传。"
+                ),
+            )
+
+    # Note: uploads are intentionally NOT deduplicated by file_sha256 here.
+    # Every upload attempt gets its own UploadBatch row (audit trail — see
+    # test_platform_raw_tables.py's reupload tests), and duplicate *rows*
+    # within a file are already caught at ingest time via row-level content
+    # hashing (see app/db/etl/load.py), which correctly reports
+    # duplicate_rows without silently skipping the batch record.
 
     # Create the batch record immediately so the client has an ID to poll.
     batch = UploadBatch(
