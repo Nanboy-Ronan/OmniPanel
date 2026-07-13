@@ -769,7 +769,7 @@ async def customer_orders(
 
     await _ensure_data(session)
 
-    stmt = select(Order).where(Order.customer_key.contains(customer_id))
+    stmt = select(Order).where(Order.customer_key == customer_id)
 
     if start_date:
         stmt = stmt.where(Order.order_date >= start_date)
