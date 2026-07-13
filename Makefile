@@ -1,4 +1,4 @@
-.PHONY: help db-upgrade db-downgrade db-check db-new-migration db-history test
+.PHONY: help db-upgrade db-downgrade db-check db-new-migration db-history test deps-outdated deps-audit
 
 PYTHON ?= python
 ALEMBIC = $(PYTHON) -m alembic
@@ -14,6 +14,10 @@ help:
 	@echo ""
 	@echo "Other targets:"
 	@echo "  test                  Run the full pytest test suite"
+	@echo "  deps-outdated         List pinned requirements that have newer releases"
+	@echo "  deps-audit            Scan pinned requirements for known CVEs (needs pipx)"
+	@echo ""
+	@echo "Dependency upgrade cadence and process: docs/maintenance.md"
 
 db-upgrade:
 	$(ALEMBIC) upgrade head
@@ -39,3 +43,9 @@ db-new-migration:
 
 test:
 	$(PYTHON) -m pytest tests/ -q
+
+deps-outdated:
+	$(PYTHON) -m pip list --outdated
+
+deps-audit:
+	pipx run pip-audit -r requirements.txt
