@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rpa
+      POSTGRES_PASSWORD: rpa
+      POSTGRES_DB: rpa
+    volumes:
+      - omnipanel_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpa"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    env_file:
+      - .env
+    environment:
+      RAP_DATABASE_URL: postgresql+asyncpg://rpa:rpa@db:5432/rpa
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+
+  backend:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      RAP_DATABASE_URL: postgresql+asyncpg://rpa:rpa@db:5432/rpa
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  frontend:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      API_URL: http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    command: ["streamlit", "run", "app/ui/dashboard.py", "--server.address=0.0.0.0", "--server.port=8501"]
+
+volumes:
+  omnipanel_pgdata:
