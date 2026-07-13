@@ -908,10 +908,14 @@ class TestAnalysisPlatformFilter:
 # ===========================================================================
 
 class TestCustomerEndpointMultiPlatform:
-    """The customer detail endpoint should work with address-based customer IDs."""
+    """The customer detail endpoint takes the exact customer_key as returned by
+    GET /analysis/customers — never a partial/keyword search. A substring match
+    here would let one customer's address-based key accidentally swallow another
+    customer's orders when one address is a literal prefix of another (e.g. same
+    building, different unit)."""
 
-    def test_jd_customer_by_address_keyword(self, api_client, api_tokens):
-        """Searching by part of an address should find the JD customer."""
+    def test_jd_customer_by_exact_address(self, api_client, api_tokens):
+        """Looking up by the exact JD customer_key (full address) finds that customer."""
         jd_csv = _make_jd_csv()
         api_client.post(
             "/upload/",
@@ -919,11 +923,9 @@ class TestCustomerEndpointMultiPlatform:
             headers=_auth(api_tokens["admin"]),
         )
 
-        # Use part of the address as the customer identifier
-        # The endpoint should accept address-based search
         params = {"start_date": "2025-01-01", "end_date": "2027-01-01"}
         r = api_client.get(
-            "/analysis/customers/福田区",
+            "/analysis/customers/广东深圳市福田区农园路66号",
             params=params,
             headers=_auth(api_tokens["analyst"]),
         )
@@ -931,8 +933,18 @@ class TestCustomerEndpointMultiPlatform:
         data = r.json()
         assert data["count"] >= 1
 
-    def test_tmall_customer_by_address_keyword(self, api_client, api_tokens):
-        """Searching by part of a Tmall address should find the customer."""
+        # A partial keyword (e.g. just the district) must NOT match — that
+        # substring behavior previously let unrelated customers' orders bleed
+        # into each other's detail view. No exact match → 404.
+        r2 = api_client.get(
+            "/analysis/customers/福田区",
+            params=params,
+            headers=_auth(api_tokens["analyst"]),
+        )
+        assert r2.status_code == 404
+
+    def test_tmall_customer_by_exact_address(self, api_client, api_tokens):
+        """Looking up by the exact Tmall customer_key (parsed address) finds that customer."""
         tm_csv = _make_tmall_csv()
         api_client.post(
             "/upload/",
@@ -942,13 +954,20 @@ class TestCustomerEndpointMultiPlatform:
 
         params = {"start_date": "2025-01-01", "end_date": "2027-01-01"}
         r = api_client.get(
-            "/analysis/customers/广陵区",
+            "/analysis/customers/江苏省 扬州市 广陵区 淮海路16号",
             params=params,
             headers=_auth(api_tokens["analyst"]),
         )
         assert r.status_code == 200
         data = r.json()
         assert data["count"] >= 1
+
+        r2 = api_client.get(
+            "/analysis/customers/广陵区",
+            params=params,
+            headers=_auth(api_tokens["analyst"]),
+        )
+        assert r2.status_code == 404
 
     def test_youzan_customer_by_phone(self, api_client, api_tokens):
         """Youzan customers should still be searchable by phone number."""
