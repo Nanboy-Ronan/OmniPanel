@@ -7,7 +7,8 @@ import pandas as pd
 import streamlit as st
 
 from app.ui._helpers import _page_hero, _styled_chart, show_api_error
-from app.views.media.analysis import aggregate_read_sources, build_topic_source_matrix, match_article_topics
+from app.utils.topic_matching import match_article_topics
+from app.views.media.analysis import aggregate_read_sources, build_topic_source_matrix
 
 
 def _account_options(accounts: list[dict]) -> tuple[list[str], dict[str, int | None]]:

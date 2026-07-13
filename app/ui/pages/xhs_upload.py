@@ -191,20 +191,25 @@ def page_xhs_upload() -> None:
         "已有文章更新流量数据；未出现在本次文件中的文章保持不变。"
     )
 
-    uploaded = st.file_uploader(
-        "选择小红书 xlsx 文件",
-        type=["xlsx", "xls"],
-        key=f"xhs_file_uploader_{selected_id}",
-    )
-    if uploaded is not None:
-        with st.spinner("上传中…"):
-            r = client.upload_xhs(uploaded.read(), uploaded.name, selected_id)
-        if r.status_code == 200:
-            data = r.json()
-            st.success(f"账号「{selected_name}」上传成功：共处理 **{data['total']}** 篇笔记。")
-            st.session_state.pop(f"xhs_posts_cache_{selected_id}", None)
+    with st.form(f"xhs-upload-form-{selected_id}", clear_on_submit=True):
+        uploaded = st.file_uploader(
+            "选择小红书 xlsx 文件",
+            type=["xlsx", "xls"],
+            key=f"xhs_file_uploader_{selected_id}",
+        )
+        submitted = st.form_submit_button("上传")
+    if submitted:
+        if uploaded is None:
+            st.warning("请先选择文件。")
         else:
-            show_api_error(r, "上传失败。")
+            with st.spinner("上传中…"):
+                r = client.upload_xhs(uploaded.read(), uploaded.name, selected_id)
+            if r.status_code == 200:
+                data = r.json()
+                st.success(f"账号「{selected_name}」上传成功：共处理 **{data['total']}** 篇笔记。")
+                st.session_state.pop(f"xhs_posts_cache_{selected_id}", None)
+            else:
+                show_api_error(r, "上传失败。")
 
     st.markdown("---")
     st.markdown(f"#### {selected_name} · 笔记数据")

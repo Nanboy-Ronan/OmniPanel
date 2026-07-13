@@ -6,6 +6,15 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from ...utils.topic_matching import match_article_topics
+
+__all__ = [
+    "aggregate_read_sources",
+    "build_topic_source_matrix",
+    "match_article_topics",
+    "compute_content_impact",
+]
+
 
 def aggregate_read_sources(source_lists: list) -> dict[str, int]:
     """Merge multiple read_user_source JSON arrays into a single {scene_desc: count} dict.
@@ -55,22 +64,6 @@ def build_topic_source_matrix(
             for scene, count in sources.items():
                 bucket[scene] = bucket.get(scene, 0) + count
     return matrix
-
-
-def match_article_topics(title: str, topic_keywords: dict[str, list[str]]) -> list[str]:
-    """Return the list of topic names whose keywords appear in *title*.
-
-    Matching is case-insensitive. Returns ["其他"] when nothing matches or the
-    topic_keywords map is empty.
-    """
-    if not title or not topic_keywords:
-        return ["其他"]
-    matched = [
-        topic
-        for topic, keywords in topic_keywords.items()
-        if any(kw.lower() in title.lower() for kw in keywords)
-    ]
-    return matched or ["其他"]
 
 
 # ── Content × Ecommerce correlation ──────────────────────────────────────────

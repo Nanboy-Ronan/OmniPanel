@@ -79,28 +79,36 @@ def page_upload() -> None:
             return
 
         with st.spinner(f"正在上传 {label} 文件…"):
-            r = client.upload(f.name, f.getvalue())
+            r = client.upload(f.name, f.getvalue(), expected_platform=expected_platform)
 
         if r.status_code >= 400:
             show_api_error(r, "上传失败。")
             return
 
-        batch_id = r.json().get("batch_id")
+        resp = r.json()
+        batch_id = resp.get("batch_id")
         if batch_id is None:
             # Legacy synchronous response (should not happen in normal operation)
-            data = r.json()
+            data = resp
         else:
-            # Poll until the background ETL finishes (up to 120 s)
+            # Poll until the background ETL finishes (up to ~120 s), backing off
+            # from 1 s to 5 s between checks — most uploads finish in the first
+            # couple of checks, so this avoids hammering the API once a large
+            # file's ETL genuinely takes a while.
             data = None
             with st.spinner("正在处理文件，请稍候…"):
-                for _ in range(120):
+                elapsed = 0.0
+                delay = 1.0
+                while elapsed < 120:
                     r_batch = client.upload_batch(batch_id)
                     if r_batch.status_code == 200:
                         batch_data = r_batch.json()
                         if batch_data.get("status") != "processing":
                             data = batch_data
                             break
-                    time.sleep(1)
+                    time.sleep(delay)
+                    elapsed += delay
+                    delay = min(delay * 2, 5.0)
 
             if data is None:
                 st.warning("处理超时，请稍后在上传记录中查看结果。")
@@ -110,8 +118,15 @@ def page_upload() -> None:
                 st.error(f"文件处理失败：{data.get('error_message') or '未知错误'}")
                 return
 
-            # Normalise key name so _render_upload_summary works unchanged
+            # Normalise key names so _render_upload_summary works unchanged
+            # (the batch-status endpoint uses id/row_count/inserted_orders, while
+            # the legacy synchronous ingest_upload() path uses
+            # batch_id/total_rows/inserted_rows). Without this, batch_id stays
+            # unset and the rejected-rows expander never renders, even when
+            # rows were actually rejected.
+            data.setdefault("batch_id", data.get("id", batch_id))
             data.setdefault("inserted_rows", data.get("inserted_orders", 0))
+            data.setdefault("total_rows", data.get("row_count"))
 
         clear_cached_orders()
         detected = data.get("platform", "unknown")
