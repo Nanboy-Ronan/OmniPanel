@@ -308,3 +308,118 @@ def test_content_impact_forbidden_for_viewer(client, tokens):
 def test_content_impact_requires_auth(client):
     r = client.get("/media/content-impact")
     assert r.status_code == 401
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# source= param — XHS / Zhihu / default-regression
+# ─────────────────────────────────────────────────────────────────────────────
+
+from tests.test_xhs import account, _make_xhs_xlsx_bytes, _one_row as _one_xhs_row  # noqa: F401
+from tests.test_zhihu import _make_article_csv_bytes, _one_article
+
+
+def _upload_xhs_post(client, tokens, account, title, publish_date_cn, views=500, shares=20):
+    row = _one_xhs_row(**{
+        "笔记标题": title,
+        "首次发布时间": publish_date_cn,
+        "观看量": str(views),
+        "分享": str(shares),
+    })
+    r = client.post(
+        "/media/xhs/upload",
+        data={"account_id": account},
+        files={"file": ("xhs.xlsx", _make_xhs_xlsx_bytes([row]), "application/octet-stream")},
+        headers=_auth(tokens["admin"]),
+    )
+    assert r.status_code == 200, r.text
+
+
+def _upload_zhihu_article(client, tokens, title, publish_date_iso, reads=500, shares=20):
+    row = _one_article(**{
+        "标题": title,
+        "发布时间": publish_date_iso,
+        "阅读": str(reads),
+        "分享": str(shares),
+    })
+    r = client.post(
+        "/media/zhihu/upload",
+        data={"content_type": "article"},
+        files={"file": ("zh.csv", _make_article_csv_bytes([row]), "application/octet-stream")},
+        headers=_auth(tokens["admin"]),
+    )
+    assert r.status_code == 200, r.text
+
+
+class TestContentImpactXhsSource:
+    def test_source_xhs_uses_xhs_posts(self, client, tokens, account):
+        _upload_xhs_post(client, tokens, account, "示例商品笔记测试",
+                          "2026年06月15日12时00分00秒")
+        _upload_orders(client, tokens, [
+            ("xhs-9001", "2026-06-08", "13800001001", "示例商品", 1, 199),
+            ("xhs-9002", "2026-06-15", "13800001002", "示例商品", 1, 199),
+            ("xhs-9003", "2026-06-16", "13800001003", "示例商品", 1, 199),
+        ])
+
+        r = client.get(
+            "/media/content-impact",
+            params={"start_date": "2026-06-10", "end_date": "2026-06-20",
+                    "window_days": 7, "source": "xhs"},
+            headers=_auth(tokens["analyst"]),
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        row = next(x for x in data if x["title"] == "示例商品笔记测试")
+        assert row["pre_orders"] == 1   # 6/8
+        assert row["post_orders"] == 2  # 6/15, 6/16
+
+
+class TestContentImpactZhihuSource:
+    def test_source_zhihu_uses_zhihu_posts(self, client, tokens):
+        _upload_zhihu_article(client, tokens, "知乎示例科普文章", "2026-06-15")
+        _upload_orders(client, tokens, [
+            ("zh-9001", "2026-06-08", "13800002001", "示例商品", 1, 199),
+            ("zh-9002", "2026-06-15", "13800002002", "示例商品", 1, 199),
+            ("zh-9003", "2026-06-16", "13800002003", "示例商品", 1, 199),
+        ])
+
+        r = client.get(
+            "/media/content-impact",
+            params={"start_date": "2026-06-10", "end_date": "2026-06-20",
+                    "window_days": 7, "source": "zhihu"},
+            headers=_auth(tokens["analyst"]),
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        row = next(x for x in data if x["title"] == "知乎示例科普文章")
+        assert row["pre_orders"] == 1
+        assert row["post_orders"] == 2
+
+
+class TestContentImpactSourceDefaultIsWechatRegression:
+    def test_omitting_source_param_preserves_existing_behavior(self, client, tokens, monkeypatch):
+        _sync_posts(client, tokens, monkeypatch, [
+            {
+                "external_id": "ci-default", "title": "默认来源回归测试", "publish_date": date(2026, 5, 15),
+                "metric_date": date(2026, 5, 15), "url": None, "read_user_count": 400,
+                "share_user_count": 15, "like_user": 0, "comment_count": 0, "collection_user": 0,
+                "read_avg_time": None, "read_user_source": None, "read_finish_rate": None, "raw_payload": {},
+            }
+        ])
+        _upload_orders(client, tokens, [
+            ("d001", "2026-05-08", "13800009001", "item", 1, 100),
+            ("d002", "2026-05-15", "13800009002", "item", 1, 100),
+        ])
+
+        r_omitted = client.get(
+            "/media/content-impact",
+            params={"start_date": "2026-05-15", "end_date": "2026-05-15", "window_days": 7},
+            headers=_auth(tokens["analyst"]),
+        )
+        r_explicit = client.get(
+            "/media/content-impact",
+            params={"start_date": "2026-05-15", "end_date": "2026-05-15", "window_days": 7, "source": "wechat"},
+            headers=_auth(tokens["analyst"]),
+        )
+        assert r_omitted.status_code == 200
+        assert r_explicit.status_code == 200
+        assert r_omitted.json() == r_explicit.json()

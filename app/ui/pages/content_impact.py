@@ -42,12 +42,14 @@ def page_content_impact() -> None:
     default_start = default_end - timedelta(days=60)
 
     # ── Filters ───────────────────────────────────────────────────────────────
-    c1, c2, c3, c4, c5 = st.columns([2, 2, 1.4, 1.8, 1.8])
+    c1, c2, c3, c4, c5 = st.columns([1.8, 1.8, 1.2, 1.5, 1.5])
     start = c1.date_input("文章发布起", value=default_start, key="ci_start")
     end = c2.date_input("文章发布止", value=default_end, key="ci_end")
     window = c3.number_input("比对窗口（天）", min_value=1, max_value=30, value=7, step=1, key="ci_window")
     platform = c4.selectbox("电商平台", ["全部", "youzan", "jd", "tmall"], key="ci_platform")
     ec_platform = None if platform == "全部" else platform
+    source_label = c5.selectbox("内容来源", ["微信", "小红书", "知乎"], key="ci_source")
+    source = {"微信": "wechat", "小红书": "xhs", "知乎": "zhihu"}[source_label]
 
     if start > end:
         st.error("开始日期不能晚于结束日期。")
@@ -57,6 +59,7 @@ def page_content_impact() -> None:
         str(start), str(end),
         window_days=int(window),
         platform=ec_platform,
+        source=source,
     )
     if r.status_code != 200:
         show_api_error(r)
@@ -64,7 +67,7 @@ def page_content_impact() -> None:
 
     data = r.json()
     if not data:
-        st.info("当前区间内没有公众号文章数据。请先同步公众号或检查日期范围。")
+        st.info(f"当前区间内没有{source_label}内容数据。请先上传/同步数据或检查日期范围。")
         return
 
     df = pd.DataFrame(data)
