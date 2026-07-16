@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.ui._helpers import _page_hero, _styled_chart, show_api_error
+from app.utils.topic_matching import match_article_topics
 
 _MIN_VIEWS = 50  # minimum views required to include a post in rate-based rankings
 
@@ -242,8 +243,8 @@ def page_xhs_upload() -> None:
 
     df = _preprocess(pd.DataFrame(posts))
 
-    tab_overview, tab_funnel, tab_engagement, tab_genre, tab_trend, tab_list = st.tabs(
-        ["概览分析", "转化漏斗", "互动效率", "体裁对比", "发布趋势", "笔记明细"]
+    tab_overview, tab_funnel, tab_engagement, tab_genre, tab_topic, tab_trend, tab_list = st.tabs(
+        ["概览分析", "转化漏斗", "互动效率", "体裁对比", "话题标签", "发布趋势", "笔记明细"]
     )
 
     # ── 概览分析 ──────────────────────────────────────────────────────────────
@@ -568,6 +569,109 @@ def page_xhs_upload() -> None:
                         .interactive()
                     )
                     st.altair_chart(_styled_chart(scatter_wt), use_container_width=True)
+
+    # ── 话题标签 ──────────────────────────────────────────────────────────────
+    with tab_topic:
+        st.markdown("### 话题标签分析")
+        st.caption("自定义关键词组，系统将按标题匹配归类，对比各话题的流量与互动表现。")
+
+        with st.expander("⚙️ 设置话题关键词", expanded=True):
+            n_topics = st.number_input("话题数量", min_value=1, max_value=6, value=3, step=1, key="xhs_topic_n")
+            topic_map: dict[str, list[str]] = {}
+            for i in range(int(n_topics)):
+                c1, c2 = st.columns([1, 3])
+                topic_name = c1.text_input(
+                    f"话题 {i+1} 名称",
+                    value=["新品发布", "成分功效", "促销活动"][i] if i < 3 else f"话题{i+1}",
+                    key=f"xhs_topic_name_{i}",
+                )
+                kw_raw = c2.text_input(
+                    "关键词（逗号分隔）",
+                    value=["新品,上市,发布", "成分,功效,科普", "折扣,优惠,特惠"][i] if i < 3 else "",
+                    key=f"xhs_topic_kw_{i}",
+                )
+                if topic_name and kw_raw:
+                    topic_map[topic_name] = [k.strip() for k in kw_raw.split(",") if k.strip()]
+
+        if not topic_map:
+            st.info("请至少设置一个话题及其关键词。")
+        else:
+            topic_df = df.copy()
+            topic_df["话题"] = topic_df["title"].apply(lambda t: match_article_topics(t, topic_map))
+            topic_df = topic_df.explode("话题")
+
+            grouped = (
+                topic_df.groupby("话题")
+                .agg(
+                    笔记数=("id", "count"),
+                    均篇观看=("views", "mean"),
+                    均篇点赞=("likes", "mean"),
+                    均篇收藏=("collects", "mean"),
+                    总观看=("views", "sum"),
+                )
+                .round(1)
+                .reset_index()
+                .sort_values("均篇观看", ascending=False)
+            )
+
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                avg_view_chart = (
+                    alt.Chart(grouped)
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+                    .encode(
+                        x=alt.X("均篇观看:Q", title="均篇观看量"),
+                        y=alt.Y("话题:N", sort="-x", title=""),
+                        tooltip=[
+                            alt.Tooltip("话题:N", title="话题"),
+                            alt.Tooltip("笔记数:Q", title="笔记数"),
+                            alt.Tooltip("均篇观看:Q", title="均篇观看", format=".0f"),
+                            alt.Tooltip("总观看:Q", title="总观看", format=","),
+                        ],
+                    )
+                    .properties(title="各话题均篇观看量", height=max(200, 40 * len(grouped)))
+                )
+                st.altair_chart(_styled_chart(avg_view_chart), use_container_width=True)
+
+            with col_t2:
+                avg_engagement_chart = (
+                    alt.Chart(grouped)
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#10b981")
+                    .encode(
+                        x=alt.X("均篇点赞:Q", title="均篇点赞量"),
+                        y=alt.Y("话题:N", sort="-x", title=""),
+                        tooltip=[
+                            alt.Tooltip("话题:N", title="话题"),
+                            alt.Tooltip("均篇点赞:Q", title="均篇点赞", format=".1f"),
+                            alt.Tooltip("均篇收藏:Q", title="均篇收藏", format=".1f"),
+                        ],
+                    )
+                    .properties(title="各话题均篇点赞量", height=max(200, 40 * len(grouped)))
+                )
+                st.altair_chart(_styled_chart(avg_engagement_chart), use_container_width=True)
+
+            st.markdown("#### 话题汇总表")
+            st.dataframe(grouped, use_container_width=True, hide_index=True)
+
+            st.markdown("#### 各话题笔记明细")
+            selected_topic = st.selectbox("选择查看的话题", grouped["话题"].tolist(), key="xhs_topic_detail_select")
+            detail_cols = [c for c in ["title", "publish_date", "views", "likes", "collects", "shares"] if c in topic_df.columns]
+            detail_df = topic_df[topic_df["话题"] == selected_topic][detail_cols].sort_values(
+                "views", ascending=False
+            )
+            st.dataframe(
+                detail_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "title": st.column_config.TextColumn("标题", width="large"),
+                    "publish_date": st.column_config.TextColumn("发布日期"),
+                    "views": st.column_config.NumberColumn("观看量", format="%d"),
+                    "likes": st.column_config.NumberColumn("点赞数", format="%d"),
+                    "collects": st.column_config.NumberColumn("收藏数", format="%d"),
+                    "shares": st.column_config.NumberColumn("分享数", format="%d"),
+                },
+            )
 
     # ── 发布趋势 ──────────────────────────────────────────────────────────────
     with tab_trend:

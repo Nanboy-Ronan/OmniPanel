@@ -634,6 +634,7 @@ class APIClient:
         window_days: int = 7,
         account_id: int | None = None,
         platform: str | None = None,
+        source: str | None = None,
     ) -> requests.Response:
         """Return per-article order/revenue lift vs. the pre-publish window."""
         params: dict = {"window_days": window_days}
@@ -645,6 +646,8 @@ class APIClient:
             params["account_id"] = account_id
         if platform:
             params["platform"] = platform
+        if source:
+            params["source"] = source
         return self._session.get(
             f"{self.base_url}/media/content-impact",
             params=params,

@@ -13,7 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import current_admin_user, current_analyst_user
 from ...connectors.wechat_official import WeChatOfficialClient
 from ...db import get_session
-from ...db.models import MediaAccount, MediaArticleTraffic, MediaPost, MediaPostMetricDaily, MediaSyncRun, Order
+from ...db.models import (
+    MediaAccount,
+    MediaArticleTraffic,
+    MediaPost,
+    MediaPostMetricDaily,
+    MediaSyncRun,
+    Order,
+    XhsPost,
+    ZhihuPost,
+)
 from .analysis import aggregate_read_sources, compute_content_impact
 
 logger = logging.getLogger(__name__)
@@ -593,20 +602,12 @@ async def source_breakdown(
     return aggregate_read_sources(source_lists)
 
 
-@router.get("/content-impact")
-async def content_impact(
-    start_date: date | None = Query(None),
-    end_date: date | None = Query(None),
-    window_days: int = Query(7, ge=1, le=30),
-    account_id: int | None = Query(None),
-    platform: str | None = Query(None),
-    _u=Depends(current_analyst_user),
-    session: AsyncSession = Depends(get_session),
-):
-    """For each article, compare total store orders/revenue in the N days before vs.
-    after its publish_date and return the per-post lift metrics.
-    """
-    # ── Step 1: fetch articles with their latest read-metric snapshot ───────
+async def _wechat_posts_data(
+    session: AsyncSession,
+    start_date: date | None,
+    end_date: date | None,
+    account_id: int | None,
+) -> list[dict]:
     metric_subq = _latest_metric_subquery()
     post_stmt = (
         select(
@@ -627,10 +628,7 @@ async def content_impact(
         post_stmt = post_stmt.where(MediaPost.account_id == account_id)
 
     post_rows = (await session.execute(post_stmt)).all()
-    if not post_rows:
-        return []
-
-    posts_data = [
+    return [
         {
             "id": r.id,
             "title": r.title,
@@ -640,6 +638,92 @@ async def content_impact(
         }
         for r in post_rows
     ]
+
+
+async def _xhs_posts_data(
+    session: AsyncSession,
+    start_date: date | None,
+    end_date: date | None,
+    account_id: int | None,
+) -> list[dict]:
+    stmt = select(
+        XhsPost.id, XhsPost.title, XhsPost.publish_date, XhsPost.views, XhsPost.shares
+    ).where(XhsPost.publish_date.isnot(None))
+    if start_date:
+        stmt = stmt.where(XhsPost.publish_date >= start_date)
+    if end_date:
+        stmt = stmt.where(XhsPost.publish_date <= end_date)
+    if account_id:
+        stmt = stmt.where(XhsPost.account_id == account_id)
+
+    rows = (await session.execute(stmt)).all()
+    return [
+        {
+            "id": r.id,
+            "title": r.title,
+            "publish_date": str(r.publish_date),
+            "read_user_count": int(r.views or 0),
+            "share_user_count": int(r.shares or 0),
+        }
+        for r in rows
+    ]
+
+
+async def _zhihu_posts_data(
+    session: AsyncSession,
+    start_date: date | None,
+    end_date: date | None,
+) -> list[dict]:
+    stmt = select(
+        ZhihuPost.id, ZhihuPost.title, ZhihuPost.publish_date, ZhihuPost.reads, ZhihuPost.shares
+    ).where(ZhihuPost.publish_date.isnot(None))
+    if start_date:
+        stmt = stmt.where(ZhihuPost.publish_date >= start_date)
+    if end_date:
+        stmt = stmt.where(ZhihuPost.publish_date <= end_date)
+
+    rows = (await session.execute(stmt)).all()
+    return [
+        {
+            "id": r.id,
+            "title": r.title,
+            "publish_date": str(r.publish_date),
+            "read_user_count": int(r.reads or 0),
+            "share_user_count": int(r.shares or 0),
+        }
+        for r in rows
+    ]
+
+
+@router.get("/content-impact")
+async def content_impact(
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    window_days: int = Query(7, ge=1, le=30),
+    account_id: int | None = Query(None),
+    platform: str | None = Query(None),
+    source: str = Query("wechat", pattern="^(wechat|xhs|zhihu)$"),
+    _u=Depends(current_analyst_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """For each article, compare total store orders/revenue in the N days before vs.
+    after its publish_date and return the per-post lift metrics.
+
+    ``source`` selects which self-media platform's posts feed the lift
+    calculation; defaults to WeChat (unchanged behavior). ``account_id`` only
+    applies to wechat/xhs (both have an account concept); it's a no-op for
+    zhihu, which has no account dimension.
+    """
+    # ── Step 1: fetch articles with their latest engagement numbers ─────────
+    if source == "wechat":
+        posts_data = await _wechat_posts_data(session, start_date, end_date, account_id)
+    elif source == "xhs":
+        posts_data = await _xhs_posts_data(session, start_date, end_date, account_id)
+    else:  # "zhihu"
+        posts_data = await _zhihu_posts_data(session, start_date, end_date)
+
+    if not posts_data:
+        return []
 
     # ── Step 2: determine overall order query range ──────────────────────────
     all_pub_dates = [date.fromisoformat(p["publish_date"]) for p in posts_data]
