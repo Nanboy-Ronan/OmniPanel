@@ -170,11 +170,6 @@ class Settings(BaseSettings):
     # Max number of failure screenshot+HTML pairs kept under collector_dir/debug.
     collector_debug_keep: int = 20
 
-    # ── WeCom group-bot alerting (optional) ───────────────────────────────────
-    # Webhook URL for a WeCom group bot. When unset, alerts are silently
-    # skipped — nothing else in the app depends on this being configured.
-    wecom_bot_webhook: str | None = None
-
     @property
     def cors_origins_list(self) -> list[str]:
         if self.cors_origins:
