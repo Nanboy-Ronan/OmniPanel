@@ -42,6 +42,7 @@ python-calamine==0.6.2
 packaging==24.2
 pandas==2.2.3
 pillow==11.2.1
+playwright==1.60.0
 protobuf==6.31.1
 pwdlib==0.2.1
 pyarrow==20.0.0

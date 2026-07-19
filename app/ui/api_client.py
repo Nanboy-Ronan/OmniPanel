@@ -523,6 +523,53 @@ class APIClient:
             timeout=self._timeout(),
         )
 
+    # ── Collector (creator-portal export agent) ─────────────────────────────
+
+    def upload_collector_session(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        platform: str,
+        account_id: int | None = None,
+    ) -> requests.Response:
+        """Upload a storage_state.json produced by `bootstrap-login` locally."""
+        data: dict = {"platform": platform}
+        if account_id is not None:
+            data["account_id"] = account_id
+        return self._session.post(
+            f"{self.base_url}/admin/collector/sessions",
+            data=data,
+            files={"file": (filename, file_bytes, "application/json")},
+            headers={k: v for k, v in self._headers().items() if k != "Content-Type"},
+            timeout=self._timeout(),
+        )
+
+    def collector_sessions(self) -> requests.Response:
+        return self._session.get(
+            f"{self.base_url}/admin/collector/sessions",
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def delete_collector_session(self, platform: str, account_id: int | None = None) -> requests.Response:
+        params: dict = {"platform": platform}
+        if account_id is not None:
+            params["account_id"] = account_id
+        return self._session.delete(
+            f"{self.base_url}/admin/collector/sessions",
+            params=params,
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def collector_runs(self, limit: int = 50) -> requests.Response:
+        return self._session.get(
+            f"{self.base_url}/admin/collector/runs",
+            params={"limit": limit},
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
     def media_accounts(self) -> requests.Response:
         """Return configured media accounts."""
         return self._session.get(

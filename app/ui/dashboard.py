@@ -43,6 +43,7 @@ from app.ui.pages.sql_console import page_sql_console
 from app.ui.pages.db_status import page_db_status
 from app.ui.pages.user_management import page_user_management
 from app.ui.pages.logs import page_logs
+from app.ui.pages.collector import page_collector
 
 st.set_page_config(
     page_title="OmniPanel",
@@ -310,6 +311,7 @@ if st.session_state.get("is_admin"):
         "用户管理":   page_user_management,
         "操作日志":   page_logs,
         "数据库状态": page_db_status,
+        "自动采集":   page_collector,
     }
 
 # ── Render ────────────────────────────────────────────────────────────────────

@@ -42,6 +42,7 @@ from .views.media.xhs    import router as xhs_router              # POST /media/
 from .views.media.zhihu  import router as zhihu_router            # POST /media/zhihu/upload
 # Platform
 from .views.admin         import router as admin_router          # POST /admin/clear-db
+from .views.collector_admin import router as collector_admin_router  # /admin/collector/*
 from .views.register      import router as register_router       # POST /auth/register
 from .views.wecom_auth    import router as wecom_auth_router     # Enterprise WeChat OAuth
 from .views.saved_queries import router as saved_queries_router  # GET/POST/DELETE /saved-queries/
@@ -145,6 +146,7 @@ app.include_router(analysis_router)      # /analysis/
 app.include_router(orders_all_router)    # /orders_all/
 app.include_router(identity_router)      # /analysis/identity/clusters
 app.include_router(admin_router)         # /admin/clear-db
+app.include_router(collector_admin_router)  # /admin/collector/*
 app.include_router(media_router)         # /media/
 app.include_router(media_upload_router)   # /media/upload, /media/uploads, /media/accounts (POST)
 app.include_router(xhs_router)            # /media/xhs/upload
