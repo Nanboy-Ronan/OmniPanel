@@ -188,6 +188,7 @@ With no key configured, the feature returns 503 and nothing else is affected.
 | [中文问数据 (NL-to-SQL)](docs/nl-to-sql.md) | How it works, the provider registry, adding a provider |
 | [Testing](docs/testing.md) | Running the suite, the synthetic dataset, skipped tests |
 | [WeChat auto-sync](docs/wechat-auto-sync.md) | Daily background sync for official-account metrics |
+| [Creator-portal collector](docs/collector.md) | Automating XHS/Zhihu creator-portal exports with Playwright |
 | [Dependency maintenance](docs/maintenance.md) | Upgrade cadence, critical-package list, the bump→test→smoke process |
 | [Comparison with similar projects](docs/comparison.md) | Honest pros/cons vs. scraper-based and agent-workflow alternatives |
 
