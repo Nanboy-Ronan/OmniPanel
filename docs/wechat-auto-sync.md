@@ -67,6 +67,28 @@ the 180-day window.  The risk is only if the scheduler is disabled for more
 than ~10 days (the safety buffer), at which point the oldest articles in the
 window begin losing data.
 
+## Notifications
+
+Every daily run sends exactly one WeCom notification — success or failure,
+never both — covering every configured account:
+
+- **All accounts synced successfully**: a summary message with per-account
+  posts/metrics counts, unless `WECOM_NOTIFY_SUCCESS` is set to `false` (see
+  [collector.md](collector.md), shared with the creator-portal collector).
+- **Any account failed**: an alert listing each failure, followed by a
+  section for any accounts that did sync successfully in the same run.
+- **No accounts configured at all**: no notification (nothing to report;
+  this is the existing "skip the run" case, unchanged).
+
+Sent via the same WeCom self-built app used by the collector's alerts (see
+"Alerting" in [collector.md](collector.md)) — no separate credential to
+manage.
+
+A daily health-watchdog check (also in `app/scheduler.py`, see "Pipeline
+health watchdog" in [collector.md](collector.md)) separately catches the
+case where this loop stops running altogether, since a per-run notification
+only fires when a run actually happens.
+
 ## Monitoring
 
 Check the `media_sync_runs` table for recent run history:

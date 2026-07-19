@@ -188,6 +188,7 @@ MINIMAX_API_KEY=...                # 或 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / 
 | [中文问数据 (NL-to-SQL)](docs/nl-to-sql.zh-CN.md) | 工作原理、服务商注册表、如何新增服务商 |
 | [测试指南](docs/testing.zh-CN.md) | 如何跑测试、合成数据集、跳过的测试 |
 | [微信自动同步](docs/wechat-auto-sync.zh-CN.md) | 公众号指标的每日后台自动同步 |
+| [自动采集代理](docs/collector.zh-CN.md) | 用 Playwright 自动化小红书/知乎创作者后台的导出 |
 | [依赖维护](docs/maintenance.zh-CN.md) | 升级节奏、关键包清单、升级→测试→冒烟的流程 |
 | [与同类项目的对比](docs/comparison.zh-CN.md) | 和爬虫类、智能体工作流类替代方案的诚实优劣对比 |
 
