@@ -295,6 +295,35 @@ class MediaSyncRun(Base):
     )
 
 
+class CollectorRun(Base):
+    """One creator-portal export-agent run and its result summary.
+
+    account_id/content_type have no FK: a run record for an account that was
+    later deleted (or a platform with no account concept) must still survive.
+    """
+
+    __tablename__ = "collector_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(16), nullable=False)          # "xhs" | "zhihu"
+    account_id = Column(Integer, nullable=True)             # xhs_accounts.id; NULL for zhihu
+    content_type = Column(String(16), nullable=True)        # zhihu: "article" | "qa"
+    started_at = Column(DateTime, nullable=False, server_default=func.now())
+    finished_at = Column(DateTime, nullable=True)
+    # running | success | session_expired | download_failed | upload_failed | error
+    status = Column(String(32), nullable=False)
+    rows_upserted = Column(Integer, nullable=False, server_default="0")
+    filename = Column(String(500), nullable=True)
+    error_message = Column(Text, nullable=True)
+    triggered_by = Column(String(16), nullable=False, server_default="schedule")  # schedule|manual
+
+    __table_args__ = (
+        Index("ix_collector_runs_started_at", "started_at"),
+        Index("ix_collector_runs_status", "status"),
+        Index("ix_collector_runs_platform", "platform"),
+    )
+
+
 def _raw_system_columns():
     return {
         "id": Column(Integer, primary_key=True, autoincrement=True),

@@ -144,6 +144,37 @@ class Settings(BaseSettings):
     # Hour of the day (0-23) in app_timezone at which the sync runs.
     wechat_auto_sync_hour: int = 3
 
+    # ── Creator-portal collector (小红书/知乎自动取数) ─────────────────────────
+    # Master kill-switch. When false, `python -m app.collector collect` exits
+    # 0 immediately without touching the network or the DB.
+    collector_enabled: bool = False
+    collector_xhs_enabled: bool = True
+    collector_zhihu_enabled: bool = True
+    # Base directory for saved login sessions, scratch downloads, and
+    # failure-debug artifacts. On the VM this is under /var/lib/rpa (the only
+    # path writable by the hardened rpa-backend/rpa-collector systemd units).
+    collector_dir: str = "data/collector"
+    # Only headless=False has been verified against XHS live (2026-07-15/16);
+    # a headless run got redirected to login in early testing (confounded by
+    # a since-removed anti-detection flag, so not conclusively headless's
+    # fault, but unverified either way). Default to headed + xvfb-run on the
+    # VM until someone verifies true headless separately — see docs/collector.md.
+    collector_headless: bool = False
+    collector_api_url: str = "http://127.0.0.1:8000"
+    # Dedicated service-account credentials the collector uses to call the
+    # existing upload endpoints (viewer role is sufficient).
+    collector_service_email: str | None = None
+    collector_service_password: str | None = None
+    collector_nav_timeout_seconds: int = 45
+    collector_download_timeout_seconds: int = 120
+    # Max number of failure screenshot+HTML pairs kept under collector_dir/debug.
+    collector_debug_keep: int = 20
+
+    # ── WeCom group-bot alerting (optional) ───────────────────────────────────
+    # Webhook URL for a WeCom group bot. When unset, alerts are silently
+    # skipped — nothing else in the app depends on this being configured.
+    wecom_bot_webhook: str | None = None
+
     @property
     def cors_origins_list(self) -> list[str]:
         if self.cors_origins:
