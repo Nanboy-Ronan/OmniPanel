@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 from pathlib import Path
 from typing import Iterator
 
@@ -77,6 +78,30 @@ def looks_like_login(url: str, text: str) -> bool:
     return any(marker in t for marker in LOGIN_DOM_MARKERS)
 
 
+def _save_storage_state_atomic(context, path: Path) -> None:
+    """Write context.storage_state() to `path` atomically.
+
+    A saved session is an asset that requires a human re-login to recreate —
+    writing it in place (the original approach) risks a half-written, corrupt
+    file if the process is killed mid-write. Instead: dump to a temp file in
+    the same directory (same filesystem, so os.replace is atomic), chmod it
+    0600 to match the sessions dir's declared permissions, then replace.
+    Best-effort: a failed save shouldn't crash the whole run/teardown, it
+    just means this run's rotated cookies aren't persisted.
+    """
+    import json
+
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        state = context.storage_state()
+        tmp_path.write_text(json.dumps(state), encoding="utf-8")
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+    except Exception as exc:
+        _logger.warning("save_storage_state_failed path=%r: %s", path, exc)
+        tmp_path.unlink(missing_ok=True)
+
+
 def save_debug_artifacts(page, tag: str) -> None:
     """Best-effort screenshot + HTML dump on failure. Never raises — a broken
     debug dump must not mask the original collector error."""
@@ -127,7 +152,7 @@ def open_context(storage_state_path: Path, headless: bool | None = None) -> Iter
                 page = context.new_page()
                 yield page
             finally:
-                context.storage_state(path=str(storage_state_path))
+                _save_storage_state_atomic(context, storage_state_path)
                 context.close()
         finally:
             browser.close()

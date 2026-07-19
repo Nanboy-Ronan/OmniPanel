@@ -21,6 +21,10 @@ class _FakeSettings:
     collector_api_url: str = "http://fake"
     collector_service_email: str | None = "svc@example.com"
     collector_service_password: str | None = "pw"
+    # Default = no retry (matches pre-retry test behavior exactly, no sleeping).
+    # Retry-specific tests override this and monkeypatch runner._sleep.
+    collector_collect_retries: int = 1
+    collector_retry_delay_seconds: int = 0
 
 
 class _Resp:
@@ -85,6 +89,14 @@ def alerts(monkeypatch):
     sent = []
     monkeypatch.setattr(runner, "send_wecom_alert", lambda text: sent.append(text) or True)
     return sent
+
+
+@pytest.fixture
+def fake_sleep(monkeypatch):
+    """Short-circuit runner._sleep so retry-delay tests don't really sleep."""
+    calls = []
+    monkeypatch.setattr(runner, "_sleep", lambda seconds: calls.append(seconds))
+    return calls
 
 
 @pytest.fixture
@@ -241,6 +253,70 @@ class TestRunCollectFailureClassification:
         )
         assert rc == 0
         assert _fake_bookkeeping["started"] == []
+
+
+class TestRunCollectRetry:
+    def test_transient_timeout_then_success_no_alert(self, sessions, _fake_bookkeeping, alerts, fake_sleep):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False, collector_collect_retries=3,
+                                  collector_retry_delay_seconds=60)
+        api = _FakeAPI()
+        attempts = {"n": 0}
+
+        def flaky(storage_path, headless=None):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise DownloadTimeoutError("transient")
+            return b"ok", "f.xlsx"
+
+        rc = runner.run_collect(
+            settings=settings, api_client=api,
+            collect_fns={"xhs": flaky, "zhihu": lambda *a, **kw: (b"", "x")},
+        )
+        assert rc == 0
+        assert attempts["n"] == 3
+        assert fake_sleep == [60, 60]  # slept before the 2nd and 3rd attempts only
+        assert alerts == []
+        assert _fake_bookkeeping["finished"][0]["status"] == "success"
+
+    def test_exhausts_retries_then_download_failed(self, sessions, _fake_bookkeeping, alerts, fake_sleep):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False, collector_collect_retries=3,
+                                  collector_retry_delay_seconds=60)
+        attempts = {"n": 0}
+
+        def always_timing_out(storage_path, headless=None):
+            attempts["n"] += 1
+            raise DownloadTimeoutError("still timing out")
+
+        rc = runner.run_collect(
+            settings=settings, api_client=_FakeAPI(),
+            collect_fns={"xhs": always_timing_out, "zhihu": lambda *a, **kw: (b"", "x")},
+        )
+        assert rc == 1
+        assert attempts["n"] == 3
+        assert fake_sleep == [60, 60]
+        assert len(alerts) == 1
+        assert _fake_bookkeeping["finished"][0]["status"] == "download_failed"
+
+    def test_session_expired_is_never_retried(self, sessions, _fake_bookkeeping, alerts, fake_sleep):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False, collector_collect_retries=3,
+                                  collector_retry_delay_seconds=60)
+        attempts = {"n": 0}
+
+        def expired(storage_path, headless=None):
+            attempts["n"] += 1
+            raise SessionExpiredError("dead session")
+
+        rc = runner.run_collect(
+            settings=settings, api_client=_FakeAPI(),
+            collect_fns={"xhs": expired, "zhihu": lambda *a, **kw: (b"", "x")},
+        )
+        assert rc == 1
+        assert attempts["n"] == 1  # no retry on a dead session
+        assert fake_sleep == []
+        assert _fake_bookkeeping["finished"][0]["status"] == "session_expired"
 
 
 class TestBuildTargets:

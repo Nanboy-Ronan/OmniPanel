@@ -102,6 +102,22 @@ def _goto_and_check_login(page, url: str) -> bool:
     return _looks_expired(page)
 
 
+def verify_xhs_session(storage_path: Path, *, headless: bool | None = None) -> bool:
+    """Check whether the saved session at storage_path is still logged in.
+
+    Read-only probe: reuses the exact same warm-up hop + 15s CAS wait budget
+    as collect_xhs() (see module docstring bug (1) and (3)) instead of the
+    naive single-goto-and-check that the original verify-session had, which
+    would misreport a perfectly valid session as expired because it never
+    gave the silent CAS ticket exchange time to finish. Does not download or
+    write debug artifacts.
+    """
+    with open_context(storage_path, headless=headless) as page:
+        if _goto_and_check_login(page, XHS_PRO_HOME_URL):
+            return False
+        return not _goto_and_check_login(page, XHS_DATA_URL)
+
+
 def collect_xhs(storage_path: Path, *, headless: bool | None = None) -> tuple[bytes, str]:
     """Run one XHS export for the account whose session lives at storage_path.
 

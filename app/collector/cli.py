@@ -75,23 +75,19 @@ def _cmd_bootstrap_login(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify_session(args: argparse.Namespace) -> int:
-    from .browser import looks_like_login, open_context, visible_text
     from .paths import session_path
-    from .xhs import XHS_DATA_URL
-    from .zhihu import ZHIHU_DATA_URL
+    from .xhs import verify_xhs_session
+    from .zhihu import verify_zhihu_session
 
     path = session_path(args.platform, args.account_id)
     if not path.exists():
         print(f"未找到登录态文件: {path}", file=sys.stderr)
         return 1
 
-    portal_url = {"xhs": XHS_DATA_URL, "zhihu": ZHIHU_DATA_URL}[args.platform]
-    with open_context(path, headless=not args.headed) as page:
-        page.goto(portal_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(1500)
-        expired = looks_like_login(page.url, visible_text(page))
+    verify_fn = {"xhs": verify_xhs_session, "zhihu": verify_zhihu_session}[args.platform]
+    valid = verify_fn(path, headless=not args.headed)
 
-    if expired:
+    if not valid:
         print(f"{path}: 登录态已过期")
         return 1
     print(f"{path}: 登录态有效")
