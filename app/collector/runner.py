@@ -10,16 +10,21 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import time
 from pathlib import Path
 from typing import Callable, Literal
 
 from ..config import settings as _default_settings
 from ..utils.wecom_bot import send_wecom_alert
-from .errors import DownloadTimeoutError, SessionExpiredError
+from .errors import DownloadTimeoutError, SessionExpiredError, UploadFailedError
 from .paths import session_path
 from .runs import finish_run, start_run
 
 _logger = logging.getLogger(__name__)
+
+# Module-level so tests can monkeypatch it (same pattern as start_run/finish_run/
+# send_wecom_alert below) to short-circuit retry delays without real sleeping.
+_sleep = time.sleep
 
 
 @dataclasses.dataclass
@@ -83,13 +88,39 @@ def _collect_one(target: Target, collect_fns: dict[str, Callable], headless: boo
     return collect_fns["zhihu"](target.session_file, target.content_type, headless=headless)
 
 
+def _collect_with_retry(
+    target: Target,
+    collect_fns: dict[str, Callable],
+    headless: bool | None,
+    *,
+    retries: int,
+    delay_seconds: float,
+) -> tuple[bytes, str]:
+    """Retry _collect_one, but only for DownloadTimeoutError — a transient
+    failure with a still-valid session. SessionExpiredError and anything else
+    is never retried (retrying a dead session just wastes the whole delay)."""
+    attempt = 1
+    while True:
+        try:
+            return _collect_one(target, collect_fns, headless)
+        except DownloadTimeoutError:
+            if attempt >= retries:
+                raise
+            _logger.warning(
+                "%s: 下载超时，%d/%d 次尝试失败，%ds 后重试",
+                target.label, attempt, retries, delay_seconds,
+            )
+            _sleep(delay_seconds)
+            attempt += 1
+
+
 def _upload_one(api, target: Target, data: bytes, filename: str) -> dict:
     if target.platform == "xhs":
         resp = api.upload_xhs(data, filename, target.account_id)
     else:
         resp = api.upload_zhihu(data, filename, target.content_type)
     if resp.status_code != 200:
-        raise RuntimeError(f"upload rejected: {resp.status_code} {resp.text[:500]}")
+        raise UploadFailedError(f"upload rejected: {resp.status_code} {resp.text[:500]}")
     return resp.json()
 
 
@@ -149,7 +180,11 @@ def run_collect(
             triggered_by=triggered_by,
         )
         try:
-            data, filename = _collect_one(target, collect_fns, headless)
+            data, filename = _collect_with_retry(
+                target, collect_fns, headless,
+                retries=settings.collector_collect_retries,
+                delay_seconds=settings.collector_retry_delay_seconds,
+            )
 
             if dry_run:
                 finish_run(run_id, "success", rows_upserted=0, filename=filename)
@@ -174,11 +209,15 @@ def run_collect(
             _logger.error(msg)
             failures.append(msg)
 
+        except UploadFailedError as exc:
+            finish_run(run_id, "upload_failed", error_message=str(exc))
+            msg = f"{target.label}: 上传失败。{exc}"
+            _logger.error(msg, exc_info=exc)
+            failures.append(msg)
+
         except Exception as exc:
-            is_upload = "upload rejected" in str(exc)
-            status = "upload_failed" if is_upload else "error"
-            finish_run(run_id, status, error_message=str(exc))
-            msg = f"{target.label}: {'上传失败' if is_upload else '未知错误'}。{exc}"
+            finish_run(run_id, "error", error_message=str(exc))
+            msg = f"{target.label}: 未知错误。{exc}"
             _logger.error(msg, exc_info=exc)
             failures.append(msg)
 

@@ -167,6 +167,11 @@ class Settings(BaseSettings):
     collector_service_password: str | None = None
     collector_nav_timeout_seconds: int = 45
     collector_download_timeout_seconds: int = 120
+    # Total attempts (not extra retries) for a transient DownloadTimeoutError
+    # within one target — session expiry/upload failures are never retried.
+    # 1 = no retry.
+    collector_collect_retries: int = 2
+    collector_retry_delay_seconds: int = 60
     # Max number of failure screenshot+HTML pairs kept under collector_dir/debug.
     collector_debug_keep: int = 20
 

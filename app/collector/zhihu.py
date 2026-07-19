@@ -27,6 +27,20 @@ ZHIHU_TAB = {
 ZHIHU_EXPORT_BUTTON = 'button:has-text("导出")'
 
 
+def verify_zhihu_session(storage_path: Path, *, headless: bool | None = None) -> bool:
+    """Check whether the saved session at storage_path is still logged in.
+
+    Read-only probe mirroring collect_zhihu()'s login check. Zhihu's
+    selectors are still unverified placeholders (see module docstring), so
+    this stays as simple as collect_zhihu's own check rather than inventing
+    unverified CAS-style handling XHS needed.
+    """
+    with open_context(storage_path, headless=headless) as page:
+        page.goto(ZHIHU_DATA_URL, wait_until="domcontentloaded")
+        page.wait_for_timeout(1500)
+        return not looks_like_login(page.url, visible_text(page))
+
+
 def collect_zhihu(
     storage_path: Path,
     content_type: Literal["article", "qa"],
