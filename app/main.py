@@ -29,7 +29,7 @@ if settings.app_timezone in ("Asia/Shanghai", "Asia/Beijing", "PRC", "CST"):
 from .db import Base, engine
 import app.db.models  # noqa: F401 — register models with Base.metadata
 from .auth import fastapi_users, auth_backend, UserRead, UserCreate
-from .scheduler import monthly_backup_loop, wechat_auto_sync_loop
+from .scheduler import monthly_backup_loop, wechat_auto_sync_loop, watchdog_loop
 from .utils.leader import try_become_leader
 from .utils.rate_limiter import login_rate_limiter, get_client_ip
 
@@ -56,6 +56,8 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(monthly_backup_loop(settings))
         if settings.wechat_auto_sync_enabled:
             asyncio.create_task(wechat_auto_sync_loop(settings))
+        if settings.watchdog_enabled:
+            asyncio.create_task(watchdog_loop(settings))
     yield
 
 # ─── FastAPI instance ───────────────────────────────────────────────────────

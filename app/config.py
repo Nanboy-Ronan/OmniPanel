@@ -134,6 +134,18 @@ class Settings(BaseSettings):
     wecom_streamlit_redirect_uri: str | None = None
     app_url: str | None = None
     streamlit_url: str | None = None
+    # Send a WeCom notification on successful background-sync runs too, not
+    # just failures. Applies to the collector and the WeChat auto-sync loop.
+    wecom_notify_success: bool = True
+
+    # ── Pipeline health watchdog ───────────────────────────────────────────────
+    # Daily check that each enabled background pipeline actually ran recently —
+    # catches "nothing ran at all" (disabled timer, crashed process, tampered
+    # VM), which per-run success/failure notifications can't detect.
+    watchdog_enabled: bool = True
+    watchdog_hour: int = 9  # after backup (02:00), WeChat sync (03:00), collector (06:30)
+    watchdog_max_age_hours: int = 30  # daily pipelines: alert if no run in this long
+    watchdog_backup_max_age_days: int = 35  # monthly backup: 30-day cadence + buffer
 
     # ── WeChat auto-sync scheduler ────────────────────────────────────────────
     # Set WECHAT_AUTO_SYNC_ENABLED=true to enable the daily background sync.
