@@ -165,6 +165,7 @@ def run_collect(
         targets = [t for t in targets if t.content_type == only_content_type]
 
     failures: list[str] = []
+    successes: list[str] = []
 
     for target in targets:
         if not target.session_file.exists():
@@ -191,11 +192,13 @@ def run_collect(
                 continue
 
             result = _upload_one(api_client, target, data, filename)
+            rows = result.get("upserted", 0)
             finish_run(
                 run_id, "success",
-                rows_upserted=result.get("upserted", 0),
+                rows_upserted=rows,
                 filename=filename,
             )
+            successes.append(f"{target.label}: {rows} 行")
 
         except SessionExpiredError as exc:
             finish_run(run_id, "session_expired", error_message=str(exc))
@@ -223,7 +226,16 @@ def run_collect(
 
     if failures:
         header = f"[采集告警] 本次运行 {len(failures)}/{len(targets)} 个目标失败：\n"
-        send_wecom_alert(header + "\n".join(f"- {f}" for f in failures))
+        lines = [f"- {f}" for f in failures]
+        if successes:
+            lines.append("")
+            lines.append("成功的目标：")
+            lines.extend(f"- {s}" for s in successes)
+        send_wecom_alert(header + "\n".join(lines))
         return 1
+
+    if targets and not dry_run and settings.wecom_notify_success:
+        header = f"[采集] 本次运行全部成功（{len(successes)}/{len(targets)}）：\n"
+        send_wecom_alert(header + "\n".join(f"- {s}" for s in successes))
 
     return 0

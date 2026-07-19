@@ -25,6 +25,7 @@ class _FakeSettings:
     # Retry-specific tests override this and monkeypatch runner._sleep.
     collector_collect_retries: int = 1
     collector_retry_delay_seconds: int = 0
+    wecom_notify_success: bool = True
 
 
 class _Resp:
@@ -124,7 +125,7 @@ class TestRunCollectDisabled:
 
 
 class TestRunCollectSuccess:
-    def test_success_records_run_and_rows(self, sessions, _fake_bookkeeping):
+    def test_success_records_run_and_rows(self, sessions, _fake_bookkeeping, alerts):
         _touch(sessions / "xhs_1.json")
         settings = _FakeSettings(collector_zhihu_enabled=False)
         api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}])
@@ -143,6 +144,32 @@ class TestRunCollectSuccess:
         assert finished[0]["status"] == "success"
         assert finished[0]["rows_upserted"] == 1
 
+    def test_success_sends_wecom_notification(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}])
+
+        rc = runner.run_collect(
+            settings=settings, api_client=api,
+            collect_fns={"xhs": lambda p, headless=None: (b"x", "f.xlsx"), "zhihu": lambda *a, **kw: (b"", "x")},
+        )
+        assert rc == 0
+        assert len(alerts) == 1
+        assert "全部成功" in alerts[0]
+        assert "xhs(account_id=1)" in alerts[0]
+
+    def test_success_notification_suppressed_when_disabled(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False, wecom_notify_success=False)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}])
+
+        rc = runner.run_collect(
+            settings=settings, api_client=api,
+            collect_fns={"xhs": lambda p, headless=None: (b"x", "f.xlsx"), "zhihu": lambda *a, **kw: (b"", "x")},
+        )
+        assert rc == 0
+        assert alerts == []
+
     def test_dry_run_skips_upload(self, sessions, _fake_bookkeeping):
         _touch(sessions / "xhs_1.json")
         settings = _FakeSettings(collector_zhihu_enabled=False)
@@ -153,6 +180,17 @@ class TestRunCollectSuccess:
         )
         assert rc == 0
         assert api.uploads == []
+
+    def test_dry_run_sends_no_notification(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI()
+        rc = runner.run_collect(
+            settings=settings, api_client=api, dry_run=True,
+            collect_fns={"xhs": lambda p, headless=None: (b"x", "f.xlsx"), "zhihu": lambda *a, **kw: (b"", "x")},
+        )
+        assert rc == 0
+        assert alerts == []
 
 
 class TestRunCollectFailureClassification:
@@ -225,6 +263,12 @@ class TestRunCollectFailureClassification:
         assert rc == 1
         statuses = {f["status"] for f in _fake_bookkeeping["finished"]}
         assert statuses == {"session_expired", "success"}
+        # One alert covering the whole run: the failure plus the target that
+        # did succeed, so a partial failure isn't silent about the rest.
+        assert len(alerts) == 1
+        assert "xhs(account_id=1)" in alerts[0]
+        assert "成功的目标" in alerts[0]
+        assert "xhs(account_id=2)" in alerts[0]
 
     def test_login_failure_alerts_and_returns_nonzero(self, sessions, _fake_bookkeeping, alerts, monkeypatch):
         import app.ui.api_client as api_client_mod
@@ -256,7 +300,7 @@ class TestRunCollectFailureClassification:
 
 
 class TestRunCollectRetry:
-    def test_transient_timeout_then_success_no_alert(self, sessions, _fake_bookkeeping, alerts, fake_sleep):
+    def test_transient_timeout_then_success_sends_no_failure_alert(self, sessions, _fake_bookkeeping, alerts, fake_sleep):
         _touch(sessions / "xhs_1.json")
         settings = _FakeSettings(collector_zhihu_enabled=False, collector_collect_retries=3,
                                   collector_retry_delay_seconds=60)
@@ -276,7 +320,11 @@ class TestRunCollectRetry:
         assert rc == 0
         assert attempts["n"] == 3
         assert fake_sleep == [60, 60]  # slept before the 2nd and 3rd attempts only
-        assert alerts == []
+        # A recovered target still counts as a success — one notification,
+        # and it must not be a failure alert.
+        assert len(alerts) == 1
+        assert "告警" not in alerts[0]
+        assert "全部成功" in alerts[0]
         assert _fake_bookkeeping["finished"][0]["status"] == "success"
 
     def test_exhausts_retries_then_download_failed(self, sessions, _fake_bookkeeping, alerts, fake_sleep):
