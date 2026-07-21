@@ -27,18 +27,27 @@ _logger = logging.getLogger(__name__)
 _sleep = time.sleep
 
 
+_ZHIHU_CONTENT_LABEL = {"article": "文章", "qa": "问答"}
+
+
 @dataclasses.dataclass
 class Target:
     platform: Literal["xhs", "zhihu"]
     session_file: Path
     account_id: int | None = None
     content_type: str | None = None
+    account_name: str | None = None
 
     @property
     def label(self) -> str:
+        """Human-readable target name — this is what ends up in WeCom alerts,
+        so it must identify the account the way the operator knows it, not by
+        a database id they would have to look up.
+        """
         if self.platform == "xhs":
-            return f"xhs(account_id={self.account_id})"
-        return f"zhihu({self.content_type})"
+            who = self.account_name or f"账号#{self.account_id}"
+            return f"小红书·{who}"
+        return f"知乎·{_ZHIHU_CONTENT_LABEL.get(self.content_type, self.content_type)}"
 
 
 def build_targets(api, settings=None) -> list[Target]:
@@ -61,6 +70,7 @@ def build_targets(api, settings=None) -> list[Target]:
             targets.append(Target(
                 platform="xhs",
                 account_id=acc["id"],
+                account_name=acc.get("name"),
                 session_file=session_path("xhs", acc["id"]),
             ))
 

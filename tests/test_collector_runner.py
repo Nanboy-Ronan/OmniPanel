@@ -6,6 +6,7 @@ without Postgres, Chromium, or the real portals.
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 
 import pytest
 
@@ -147,7 +148,7 @@ class TestRunCollectSuccess:
     def test_success_sends_wecom_notification(self, sessions, _fake_bookkeeping, alerts):
         _touch(sessions / "xhs_1.json")
         settings = _FakeSettings(collector_zhihu_enabled=False)
-        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}])
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True, "name": "阳光小铺"}])
 
         rc = runner.run_collect(
             settings=settings, api_client=api,
@@ -156,7 +157,9 @@ class TestRunCollectSuccess:
         assert rc == 0
         assert len(alerts) == 1
         assert "全部成功" in alerts[0]
-        assert "xhs(account_id=1)" in alerts[0]
+        # The alert names the account; an operator must not have to look up an id.
+        assert "小红书·阳光小铺" in alerts[0]
+        assert "account_id" not in alerts[0]
 
     def test_success_notification_suppressed_when_disabled(self, sessions, _fake_bookkeeping, alerts):
         _touch(sessions / "xhs_1.json")
@@ -249,7 +252,10 @@ class TestRunCollectFailureClassification:
         _touch(sessions / "xhs_1.json")
         _touch(sessions / "xhs_2.json")
         settings = _FakeSettings(collector_zhihu_enabled=False)
-        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}, {"id": 2, "is_active": True}])
+        api = _FakeAPI(xhs_accounts=[
+            {"id": 1, "is_active": True, "name": "阳光小铺"},
+            {"id": 2, "is_active": True, "name": "阳光严选"},
+        ])
 
         def collect_by_account(storage_path, headless=None):
             if "xhs_1" in str(storage_path):
@@ -266,9 +272,9 @@ class TestRunCollectFailureClassification:
         # One alert covering the whole run: the failure plus the target that
         # did succeed, so a partial failure isn't silent about the rest.
         assert len(alerts) == 1
-        assert "xhs(account_id=1)" in alerts[0]
+        assert "小红书·阳光小铺" in alerts[0]
         assert "成功的目标" in alerts[0]
-        assert "xhs(account_id=2)" in alerts[0]
+        assert "小红书·阳光严选" in alerts[0]
 
     def test_login_failure_alerts_and_returns_nonzero(self, sessions, _fake_bookkeeping, alerts, monkeypatch):
         import app.ui.api_client as api_client_mod
@@ -383,3 +389,22 @@ class TestBuildTargets:
         ])
         targets = runner.build_targets(api, settings)
         assert sorted(t.account_id for t in targets) == [1, 3]
+
+    def test_xhs_targets_carry_account_name(self, sessions):
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI(xhs_accounts=[{"id": 7, "is_active": True, "name": "阳光小铺"}])
+        target = runner.build_targets(api, settings)[0]
+        assert target.account_name == "阳光小铺"
+        assert target.label == "小红书·阳光小铺"
+
+
+class TestTargetLabel:
+    def test_xhs_without_name_falls_back_to_id(self):
+        target = runner.Target(platform="xhs", session_file=Path("x.json"), account_id=4)
+        assert target.label == "小红书·账号#4"
+
+    def test_zhihu_content_types_are_translated(self):
+        article = runner.Target(platform="zhihu", session_file=Path("z.json"), content_type="article")
+        qa = runner.Target(platform="zhihu", session_file=Path("z.json"), content_type="qa")
+        assert article.label == "知乎·文章"
+        assert qa.label == "知乎·问答"

@@ -221,6 +221,36 @@ class TestCollectorRunsEndpoint:
         assert r.status_code == 200
         assert r.json() == []
 
+    def test_runs_include_account_name(self, client, tokens):
+        from app.collector.runs import finish_run, start_run
+
+        acc = _create_xhs_account(client, tokens["admin"], "运行记录测试号")
+        run_id = start_run("xhs", account_id=acc["id"], triggered_by="manual")
+        finish_run(run_id, "success", rows_upserted=3, filename="export.xlsx")
+
+        r = client.get("/admin/collector/runs", headers=_auth(tokens["admin"]))
+        assert r.status_code == 200
+        row = r.json()[0]
+        assert row["account_id"] == acc["id"]
+        assert row["account_name"] == "运行记录测试号"
+
+    def test_run_for_deleted_account_has_null_name(self, client, tokens):
+        """CollectorRun.account_id has no FK, so runs outlive their account."""
+        from app.collector.runs import start_run
+
+        start_run("xhs", account_id=999999, triggered_by="manual")
+        r = client.get("/admin/collector/runs", headers=_auth(tokens["admin"]))
+        assert r.json()[0]["account_name"] is None
+
+    def test_zhihu_run_has_no_account_name(self, client, tokens):
+        from app.collector.runs import start_run
+
+        start_run("zhihu", content_type="article")
+        r = client.get("/admin/collector/runs", headers=_auth(tokens["admin"]))
+        row = r.json()[0]
+        assert row["account_id"] is None
+        assert row["account_name"] is None
+
     def test_non_admin_cannot_list_runs(self, client, tokens):
         r = client.get("/admin/collector/runs", headers=_auth(tokens["analyst"]))
         assert r.status_code == 403
