@@ -153,11 +153,18 @@ async def list_collector_runs(
     rows = (await session.execute(
         select(CollectorRun).order_by(CollectorRun.started_at.desc()).limit(limit)
     )).scalars().all()
+    # Runs outlive the accounts they reference (CollectorRun.account_id has no
+    # FK by design), so a deleted account simply resolves to None here.
+    accounts = {
+        a.id: a.name
+        for a in (await session.execute(select(XhsAccount))).scalars().all()
+    }
     return [
         {
             "id": r.id,
             "platform": r.platform,
             "account_id": r.account_id,
+            "account_name": accounts.get(r.account_id) if r.account_id is not None else None,
             "content_type": r.content_type,
             "started_at": r.started_at.isoformat(),
             "finished_at": r.finished_at.isoformat() if r.finished_at else None,

@@ -6,6 +6,7 @@ import streamlit as st
 from app.ui._helpers import _page_hero, show_api_error
 
 _PLATFORM_LABEL = {"xhs": "小红书", "zhihu": "知乎"}
+_CONTENT_TYPE_LABEL = {"article": "文章", "qa": "问答"}
 _STATUS_LABEL = {
     "running": "运行中",
     "success": "成功",
@@ -92,13 +93,22 @@ def _runs_section(client) -> None:
     df = pd.DataFrame(runs)
     df["platform"] = df["platform"].map(_PLATFORM_LABEL).fillna(df["platform"])
     df["status"] = df["status"].map(_STATUS_LABEL).fillna(df["status"])
+    df["content_type"] = df["content_type"].map(_CONTENT_TYPE_LABEL).fillna(df["content_type"])
+    # Show the account by name, not by id — the raw id means nothing to the
+    # operator. Falls back to the id only for accounts deleted since the run.
+    df["account_name"] = [
+        r.get("account_name")
+        or (f"账号#{r['account_id']}" if r.get("account_id") is not None else "")
+        for r in runs
+    ]
+    df = df.drop(columns=["account_id"])
     st.dataframe(
         df,
         use_container_width=True,
         hide_index=True,
         column_config={
             "platform": st.column_config.TextColumn("平台"),
-            "account_id": st.column_config.NumberColumn("账号ID"),
+            "account_name": st.column_config.TextColumn("账号"),
             "content_type": st.column_config.TextColumn("内容类型"),
             "started_at": st.column_config.DatetimeColumn("开始时间", format="YYYY-MM-DD HH:mm:ss"),
             "finished_at": st.column_config.DatetimeColumn("结束时间", format="YYYY-MM-DD HH:mm:ss"),
