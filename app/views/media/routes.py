@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -186,7 +186,9 @@ async def _sync_one_wechat_account(
         run.status = "success"
         run.posts_upserted = len(posts_seen)
         run.metrics_upserted = metrics_count
-        run.finished_at = datetime.now()
+        # Same server-side clock as MediaSyncRun.started_at's
+        # server_default=func.now() — see app/collector/runs.py's identical fix.
+        run.finished_at = func.now()
         return {
             "account_id": account.id,
             "account_name": account.name,
@@ -197,7 +199,7 @@ async def _sync_one_wechat_account(
     except Exception as exc:
         run.status = "failed"
         run.error_message = str(exc)
-        run.finished_at = datetime.now()
+        run.finished_at = func.now()
         raise
 
 
