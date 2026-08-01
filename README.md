@@ -1,6 +1,6 @@
 # OmniPanel
 
-**Turn your e-commerce and self-media platform exports into clean dashboards, customer analytics, and natural-language queries — self-hosted, zero scraping.**
+**Turn your e-commerce and self-media platform data into clean dashboards, customer analytics, and natural-language queries — self-hosted, zero scraping.**
 
 [![CI](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/github/license/Nanboy-Ronan/OmniPanel)](LICENSE)
@@ -15,27 +15,42 @@
 
 ## What is OmniPanel?
 
-You sell on platforms like Youzan, JD, and Tmall, and you create content on WeChat Official Accounts, Xiaohongshu (XHS), and Zhihu. Each platform lets you export data — but what you get are spreadsheets with dozens of differently-named columns. "Customer" doesn't mean the same thing across platforms. Some metrics are cumulative. The same order might appear in multiple rows and needs de-duplication.
+You sell on platforms like Youzan, JD, and Tmall, and you create content on WeChat Official Accounts, Xiaohongshu (XHS), and Zhihu. Each platform has data you need — but the formats are all different. Dozens of differently-named columns. "Customer" doesn't mean the same thing across platforms. Some metrics are cumulative. The same order might appear in multiple rows and needs de-duplication.
 
 General-purpose BI tools (Tableau, Metabase, etc.) won't handle this for you. They draw charts on whatever schema you hand them — whether the numbers are right is your problem.
 
-**OmniPanel handles the correctness layer for you.** Upload your export files and it automatically:
+**OmniPanel handles the correctness layer for you.** How data gets in depends on the platform:
 
-- 🏷️ **Identifies the platform** — column fingerprinting detects whether a file came from Youzan, JD, or Tmall; no manual selection needed
-- 🔄 **Normalizes** — maps every platform's columns onto one unified schema (customer, amount, date, region, etc.)
-- 📊 **Gives you analytics** — dashboards, customer profiles, cohort retention, cross-platform identity resolution, a SQL console, and natural-language queries
+- **Platforms with an API** (WeChat Official Accounts) — configure once, background sync pulls fresh data daily
+- **Platforms with a creator portal** (XHS, Zhihu) — a built-in collector agent logs in and exports automatically
+- **Export-only platforms** (Youzan, JD, Tmall orders) — upload the spreadsheet, auto-detected by column fingerprint
 
-All data comes from **official platform exports** — the files you already legally own. No scraping, no grey areas. OmniPanel just makes them actually usable.
+Regardless of how it arrives, the data is automatically:
 
-### How it works, in three steps
+- 🏷️ **Identified** — column fingerprinting detects which platform each dataset came from
+- 🔄 **Normalized** — mapped onto one unified schema (customer, amount, date, region, etc.)
+- 📊 **Analyzed** — dashboards, customer profiles, cohort retention, cross-platform identity resolution, a SQL console, and natural-language queries
+
+All data comes through **official channels** (official APIs, official export features) — no scraping, no grey areas.
+
+### How it works
+
+Data arrives through two paths; the analytics experience is the same either way:
 
 ```
-You have export files ──→ Upload ──→ OmniPanel detects, cleans, stores ──→ Dashboards & analytics
+Path A: Auto-sync                  Path B: Manual upload
+(WeChat OA / XHS / Zhihu)          (Youzan / JD / Tmall orders)
+        │                                    │
+        └──────────┬─────────────────────────┘
+                   ▼
+        OmniPanel detects → normalizes → stores
+                   ▼
+        Dashboards · Customer analytics · SQL console · NL queries
 ```
 
-1. **Export** — download your order spreadsheets from Youzan / JD / Tmall, or content data from WeChat OA / XHS / Zhihu
-2. **Upload** — drop them into OmniPanel. It auto-detects the source platform, normalizes everything, and stores it — while keeping the original rows for traceability
-3. **Analyze** — open the dashboards, write SQL in the console, or ask questions in plain Chinese ("what was the repurchase rate in Guangdong last month?")
+- **Auto-sync**: configure a platform account once; the background job pulls fresh data daily with no manual steps
+- **Manual upload**: export a file from the platform's back-office, drop it into OmniPanel — auto-detected and stored (content-hash de-duplication means re-uploads are safe)
+- **Analyze**: open dashboards, write SQL in the console, or ask questions in plain Chinese ("what was the repurchase rate in Guangdong last month?")
 
 ---
 
@@ -92,7 +107,7 @@ You have export files ──→ Upload ──→ OmniPanel detects, cleans, stor
 
 ---
 
-## Why official exports, not scraping?
+## Why official channels, not scraping?
 
 Scraper-based tools have three fundamental problems:
 
@@ -100,14 +115,14 @@ Scraper-based tools have three fundamental problems:
 - **Fragility** — they break every time a platform redesigns its pages or tightens anti-bot measures
 - **Maintenance burden** — you need to track frontend changes across every platform
 
-OmniPanel only ingests the authorized, structured exports you already legally own — stable format, no frontend churn. It spends its effort on the correctness layer that generic BI tools skip, instead of fighting anti-bot systems.
+OmniPanel only pulls data through official channels — APIs where available (WeChat OA), official creator-portal exports where offered (XHS, Zhihu), and platform-provided export features otherwise (e-commerce orders). These are authorized, structurally stable data sources that don't break on frontend redesigns. It spends its effort on the correctness layer that generic BI tools skip, instead of fighting anti-bot systems.
 
 <details>
 <summary>How this compares to similar projects</summary>
 
 | Project | Data source | What it ships |
 |---|---|---|
-| **OmniPanel** (this repo) | Official exports (Youzan/JD/Tmall, WeChat OA/XHS/Zhihu) | Self-hosted app: dashboards, cohort/identity analytics, SQL console, NL-to-SQL |
+| **OmniPanel** (this repo) | Official channels: APIs + official exports (Youzan/JD/Tmall, WeChat OA/XHS/Zhihu) | Self-hosted app: dashboards, cohort/identity analytics, SQL console, NL-to-SQL |
 | [DA_Multi_Agent_Workflow](https://github.com/liuchaoqi-7/DA_Multi_Agent_Workflow) | Platform APIs + crawlers (Douyin Shop, XHS, WeChat Channels, ad platforms) | n8n-orchestrated multi-agent ETL/analytics pipeline synced into Feishu |
 | [ECommerceCrawlers](https://github.com/DropsDevopsOrg/ECommerceCrawlers) | Web scraping (Taobao, Xianyu, Weibo, 20+ sites) | Scraper code samples; not a deployable product |
 | [data-api (Just One API)](https://github.com/justoneapi/data-api) | Web scraping, 40+ platforms | Hosted pay-per-call data feed; no analytics layer |
