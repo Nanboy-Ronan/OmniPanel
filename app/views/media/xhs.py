@@ -53,7 +53,7 @@ async def create_xhs_account(
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
-    return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active}
+    return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active, "pgy_enabled": acc.pgy_enabled}
 
 
 @router.get("/accounts")
@@ -64,15 +64,19 @@ async def list_xhs_accounts(
     rows = (await session.execute(
         select(XhsAccount).order_by(XhsAccount.created_at)
     )).scalars().all()
-    return [{"id": a.id, "name": a.name, "account_type": a.account_type, "is_active": a.is_active} for a in rows]
+    return [
+        {"id": a.id, "name": a.name, "account_type": a.account_type, "is_active": a.is_active, "pgy_enabled": a.pgy_enabled}
+        for a in rows
+    ]
 
 
 class XhsAccountUpdate(BaseModel):
-    name: str
+    name: str | None = None
+    pgy_enabled: bool | None = None
 
 
 @router.patch("/accounts/{account_id}")
-async def rename_xhs_account(
+async def update_xhs_account(
     account_id: int,
     body: XhsAccountUpdate,
     _u=Depends(current_admin_user),
@@ -82,14 +86,17 @@ async def rename_xhs_account(
     acc = await session.get(XhsAccount, account_id)
     if acc is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    acc.name = body.name.strip()
+    if body.name is not None:
+        acc.name = body.name.strip()
+    if body.pgy_enabled is not None:
+        acc.pgy_enabled = body.pgy_enabled
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
-    return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active}
+    return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active, "pgy_enabled": acc.pgy_enabled}
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

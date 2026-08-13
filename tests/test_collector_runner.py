@@ -398,6 +398,17 @@ class TestBuildTargets:
         assert target.account_name == "阳光小铺"
         assert target.label == "小红书·阳光小铺"
 
+    def test_pugongying_only_targets_accounts_with_pgy_enabled(self, sessions):
+        settings = _FakeSettings(
+            collector_xhs_enabled=False, collector_zhihu_enabled=False, collector_pugongying_enabled=True
+        )
+        api = _FakeAPI(xhs_accounts=[
+            {"id": 1, "is_active": True, "pgy_enabled": False},
+            {"id": 2, "is_active": True, "pgy_enabled": True},
+        ])
+        targets = runner.build_targets(api, settings)
+        assert [t.account_id for t in targets] == [2]
+
 
 class TestRunVerify:
     def test_disabled_exits_zero_without_touching_api(self, sessions, _fake_bookkeeping):

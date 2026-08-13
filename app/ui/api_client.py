@@ -452,6 +452,14 @@ class APIClient:
             timeout=self._timeout(),
         )
 
+    def set_xhs_pgy_enabled(self, account_id: int, enabled: bool) -> requests.Response:
+        return self._session.patch(
+            f"{self.base_url}/media/xhs/accounts/{account_id}",
+            json={"pgy_enabled": enabled},
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
     def delete_xhs_account(self, account_id: int) -> requests.Response:
         return self._session.delete(
             f"{self.base_url}/media/xhs/accounts/{account_id}",

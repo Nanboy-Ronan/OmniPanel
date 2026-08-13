@@ -58,6 +58,8 @@ def build_targets(api, settings=None) -> list[Target]:
 
     XHS: one target per active xhs_accounts row, when collector_xhs_enabled.
     Zhihu: article + qa, when collector_zhihu_enabled.
+    Pugongying: one target per active xhs_accounts row with pgy_enabled set,
+    when collector_pugongying_enabled — most XHS accounts have no PGY login.
     A target is still returned when its session file is missing — run_collect
     reports that as a failure (with an alert) rather than silently skipping it.
     """
@@ -91,6 +93,8 @@ def build_targets(api, settings=None) -> list[Target]:
         resp.raise_for_status()
         for acc in resp.json():
             if not acc.get("is_active", True):
+                continue
+            if not acc.get("pgy_enabled", False):
                 continue
             targets.append(Target(
                 platform="pugongying",
