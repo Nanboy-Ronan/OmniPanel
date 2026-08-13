@@ -19,6 +19,9 @@ _PAGE_META: dict[str, tuple[str, str]] = {
     "数据字典":   ("≡",  "字段定义、平台映射与实时覆盖率"),
     "公众号内容分析": ("W",  "微信 API 同步的文章数据与阅读趋势分析"),
     "公众号流量": ("≋",  "微信 API 同步的文章阅读流量分析"),
+    "小红书数据": ("📕", "小红书专业号导出分析"),
+    "蒲公英合作": ("🌸", "小红书蒲公英 KOL/KOC 商业合作投效分析与项目数据管理"),
+    "知乎数据":   ("知", "知乎创作者后台文章与问答分析"),
     "用户管理":   ("⊕",  "创建、编辑和停用用户账号"),
     "操作日志":   ("≡",  "所有用户操作的审计记录"),
     "数据库状态": ("◈",  "数据库健康检查与危险操作区"),
@@ -74,13 +77,15 @@ def _relative_time(dt_str: str | None) -> str:
         return "—"
 
 
-def _page_hero(page: str) -> None:
-    icon, subtitle = _PAGE_META.get(page, ("▸", ""))
+def _page_hero(page: str, subtitle: str | None = None) -> None:
+    default_icon, default_sub = _PAGE_META.get(page, ("▸", ""))
+    icon = default_icon
+    sub = subtitle if subtitle is not None else default_sub
     st.markdown(
         f"<div class='page-hero'>"
         f"<div class='ph-icon'>{icon}</div>"
         f"<div><div class='ph-title'>{page}</div>"
-        f"<div class='ph-sub'>{subtitle}</div></div>"
+        f"<div class='ph-sub'>{sub}</div></div>"
         f"</div>",
         unsafe_allow_html=True,
     )
