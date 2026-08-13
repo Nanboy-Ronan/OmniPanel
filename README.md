@@ -22,7 +22,7 @@ General-purpose BI tools (Tableau, Metabase, etc.) won't handle this for you. Th
 **OmniPanel handles the correctness layer for you.** How data gets in depends on the platform:
 
 - **Platforms with an API** (WeChat Official Accounts) — configure once, background sync pulls fresh data daily
-- **Platforms with a creator portal** (XHS, Zhihu) — a built-in collector agent logs in and exports automatically
+- **Platforms with a creator portal** (XHS, Zhihu, and XHS's Pugongying KOL/KOC collaboration platform) — a built-in collector agent logs in and exports automatically
 - **Export-only platforms** (Youzan, JD, Tmall orders) — upload the spreadsheet, auto-detected by column fingerprint
 
 Regardless of how it arrives, the data is automatically:
@@ -77,6 +77,7 @@ Path A: Auto-sync                  Path B: Manual upload
 | E-commerce orders | Youzan, JD, Tmall | Upload official exports (.xlsx/.xls/.csv); auto-detected by column fingerprint |
 | WeChat OA | WeChat Official Accounts | Automatic API sync (daily scheduled pull), no manual steps needed |
 | Content platforms | Xiaohongshu (XHS), Zhihu | Upload official exports or use the built-in automated collector agent |
+| KOL/KOC collaboration | Pugongying (蒲公英, XHS's official creator-collaboration platform) | Upload official campaign exports or use the same collector agent |
 
 > Content-hash de-duplication means re-uploading the same file is safe — no duplicates.
 
@@ -90,7 +91,9 @@ Path A: Auto-sync                  Path B: Manual upload
 ### Content analytics
 
 - **WeChat traffic** — daily reads, shares, followers; trends and comparisons
-- **Content-to-sales impact** — correlate publish dates with order volume to measure content-driven sales
+- **Content-to-sales impact** — correlate publish dates with order volume to measure content-driven sales, across WeChat, XHS, and Zhihu
+- **Topic-tag diagnostics** — keyword-based content-topic tagging (XHS, Zhihu) for spotting which subjects actually drive engagement
+- **KOL/KOC collaboration analytics (Pugongying)** — a 7-view dashboard covering blogger- and campaign-level ROI (spend, impressions, reads, engagement rate), audience demographics (age/gender/device/region/interest breakdowns), and component-level click performance (text links, bottom bar, interactive stickers, comment-area links)
 
 ### Query layer
 
@@ -103,7 +106,9 @@ Path A: Auto-sync                  Path B: Manual upload
 - **Enterprise WeChat SSO** — optional QR-code login
 - **Audit log** — every query and mutating action is written to an append-only operation log
 - **Background jobs** — scheduled WeChat metric sync and monthly DB backups, leader-elected for multi-worker safety
-- **Watchdog** — daily health check on background pipelines; alerts via WeCom bot if anything stops
+- **Watchdog** — daily health check on every background pipeline (WeChat sync, collector, backups); alerts via WeCom if one stops running altogether, on top of per-run success/failure notifications
+- **Proactive session health check** — the collector's `verify-all` checks every saved creator-portal login on its own, earlier schedule, so an expired session is caught with lead time to fix it instead of discovered mid-run
+- **Granular alert routing** — admins pick exactly who receives WeCom alerts, per user, from the user management page — no `.env` edits needed
 
 ---
 
