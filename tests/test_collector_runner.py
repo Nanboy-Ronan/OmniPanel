@@ -398,6 +398,96 @@ class TestBuildTargets:
         assert target.label == "小红书·阳光小铺"
 
 
+class TestRunVerify:
+    def test_disabled_exits_zero_without_touching_api(self, sessions, _fake_bookkeeping):
+        settings = _FakeSettings(collector_enabled=False)
+        rc = runner.run_verify(settings=settings, api_client=_FakeAPI())
+        assert rc == 0
+        assert _fake_bookkeeping["started"] == []
+
+    def test_all_valid_returns_zero_and_sends_no_alert(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}])
+
+        rc = runner.run_verify(
+            settings=settings, api_client=api,
+            verify_fns={"xhs": lambda p, headless=None: True, "zhihu": lambda p, headless=None: True},
+        )
+        assert rc == 0
+        assert alerts == []
+        assert _fake_bookkeeping["finished"][0]["status"] == "success"
+        assert _fake_bookkeeping["started"][0]["triggered_by"] == "verify"
+
+    def test_expired_session_alerts_and_records_status(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True, "name": "阳光小铺"}])
+
+        rc = runner.run_verify(
+            settings=settings, api_client=api,
+            verify_fns={"xhs": lambda p, headless=None: False, "zhihu": lambda p, headless=None: True},
+        )
+        assert rc == 1
+        assert _fake_bookkeeping["finished"][0]["status"] == "session_expired"
+        assert len(alerts) == 1
+        assert "小红书·阳光小铺" in alerts[0]
+        assert "登录态已过期" in alerts[0]
+
+    def test_zhihu_expired_note_flags_unverified_selectors(self, sessions, _fake_bookkeeping, alerts):
+        settings = _FakeSettings(collector_xhs_enabled=False)
+        _touch(sessions / "zhihu.json")
+        api = _FakeAPI()
+
+        rc = runner.run_verify(
+            settings=settings, api_client=api,
+            verify_fns={"xhs": lambda p, headless=None: True, "zhihu": lambda p, headless=None: False},
+        )
+        assert rc == 1
+        assert "仅供参考" in alerts[0]
+
+    def test_missing_session_file_is_a_problem_without_a_run_row(self, sessions, _fake_bookkeeping, alerts):
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        rc = runner.run_verify(settings=settings, api_client=_FakeAPI())
+        assert rc == 1
+        assert _fake_bookkeeping["started"] == []
+        assert len(alerts) == 1
+        assert "未找到登录态文件" in alerts[0]
+
+    def test_login_failure_alerts_and_returns_nonzero(self, sessions, _fake_bookkeeping, alerts, monkeypatch):
+        import app.ui.api_client as api_client_mod
+
+        class _FailingAPIClient:
+            def __init__(self, base_url=None):
+                pass
+
+            def login(self, email, password):
+                return _Resp(401, text="unauthorized")
+
+        monkeypatch.setattr(api_client_mod, "APIClient", _FailingAPIClient)
+        settings = _FakeSettings()
+        rc = runner.run_verify(settings=settings, api_client=None)
+        assert rc == 1
+        assert len(alerts) == 1
+        assert _fake_bookkeeping["started"] == []
+
+    def test_verify_error_is_recorded_and_reported(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}])
+
+        def raising(path, headless=None):
+            raise RuntimeError("boom")
+
+        rc = runner.run_verify(
+            settings=settings, api_client=api,
+            verify_fns={"xhs": raising, "zhihu": lambda p, headless=None: True},
+        )
+        assert rc == 1
+        assert _fake_bookkeeping["finished"][0]["status"] == "error"
+        assert "巡检本身出错" in alerts[0]
+
+
 class TestTargetLabel:
     def test_xhs_without_name_falls_back_to_id(self):
         target = runner.Target(platform="xhs", session_file=Path("x.json"), account_id=4)

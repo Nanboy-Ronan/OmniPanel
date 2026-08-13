@@ -103,15 +103,27 @@ async def list_collector_sessions(
         platform, account_id = parsed
         stat = f.stat()
 
-        run_stmt = (
-            select(CollectorRun)
-            .where(CollectorRun.platform == platform)
-            .order_by(CollectorRun.started_at.desc())
-            .limit(1)
-        )
-        if platform == "xhs":
-            run_stmt = run_stmt.where(CollectorRun.account_id == account_id)
-        last_run = (await session.execute(run_stmt)).scalars().first()
+        def _run_stmt(*, verify: bool):
+            stmt = (
+                select(CollectorRun)
+                .where(CollectorRun.platform == platform)
+                .order_by(CollectorRun.started_at.desc())
+                .limit(1)
+            )
+            if platform == "xhs":
+                stmt = stmt.where(CollectorRun.account_id == account_id)
+            # "verify" runs (the proactive precheck, see app.collector.runner.
+            # run_verify) never download/upload — keep last_run_status meaning
+            # "last actual collect attempt" and surface precheck results
+            # separately as last_verify_status, rather than mixing the two.
+            if verify:
+                stmt = stmt.where(CollectorRun.triggered_by == "verify")
+            else:
+                stmt = stmt.where(CollectorRun.triggered_by != "verify")
+            return stmt
+
+        last_run = (await session.execute(_run_stmt(verify=False))).scalars().first()
+        last_verify = (await session.execute(_run_stmt(verify=True))).scalars().first()
 
         results.append({
             "platform": platform,
@@ -121,6 +133,8 @@ async def list_collector_sessions(
             "size_bytes": stat.st_size,
             "last_run_status": last_run.status if last_run else None,
             "last_run_at": last_run.started_at.isoformat() if last_run else None,
+            "last_verify_status": last_verify.status if last_verify else None,
+            "last_verify_at": last_verify.started_at.isoformat() if last_verify else None,
         })
     return results
 

@@ -8,6 +8,13 @@
                        the rpa-collector.service unit executes.
     verify-session      Open a saved session against the portal and report
                        whether it's still logged in, without downloading.
+                       Manual, single-target — used when provisioning/
+                       debugging one account.
+    verify-all          Check every enabled target's session (like
+                       verify-session, but all of them at once) and send a
+                       WeCom alert on anything dead/missing. This is what
+                       the rpa-collector-verify.service unit executes, on an
+                       earlier schedule than collect — see docs/collector.md.
 
 `bootstrap-login` deliberately avoids importing anything under app.db /
 app.collector.runner, so it can run from a bare checkout with just
@@ -107,6 +114,12 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_verify_all(args: argparse.Namespace) -> int:
+    from .runner import run_verify
+
+    return run_verify(headless=(False if args.headed else None))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.collector")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -129,6 +142,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_collect.add_argument("--dry-run", action="store_true", help="仅下载不上传")
     p_collect.add_argument("--headed", action="store_true", help="覆盖 COLLECTOR_HEADLESS=false 用于调试")
     p_collect.set_defaults(func=_cmd_collect)
+
+    p_verify_all = sub.add_parser(
+        "verify-all",
+        help="巡检所有已启用目标的登录态是否有效，异常时告警（不下载、不上传）；建议比 collect 更早的时间点运行，留出补登录的时间",
+    )
+    p_verify_all.add_argument("--headed", action="store_true", help="覆盖 COLLECTOR_HEADLESS=false 用于调试")
+    p_verify_all.set_defaults(func=_cmd_verify_all)
 
     return parser
 

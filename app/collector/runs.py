@@ -7,7 +7,7 @@ write API purely for this.
 """
 from __future__ import annotations
 
-import datetime as dt
+from sqlalchemy import func
 
 
 def start_run(
@@ -53,5 +53,9 @@ def finish_run(
         run.rows_upserted = rows_upserted
         run.filename = filename
         run.error_message = error_message
-        run.finished_at = dt.datetime.now()
+        # Same server-side clock as started_at's server_default=func.now(), so
+        # duration is correct regardless of what timezone the app process's
+        # own clock happens to be in (was dt.datetime.now() — a real bug if
+        # the app host's local time isn't UTC, unverified either way).
+        run.finished_at = func.now()
         session.commit()
