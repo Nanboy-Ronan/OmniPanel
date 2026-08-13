@@ -377,6 +377,15 @@ class APIClient:
             timeout=self._timeout(),
         )
 
+    def update_wecom_alert(self, user_id: str, enabled: bool) -> requests.Response:
+        """Toggle whether a user receives WeCom collector/pipeline alerts (admin only)."""
+        return self._session.put(
+            f"{self.base_url}/admin/users/{user_id}/wecom-alert",
+            json={"enabled": enabled},
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
     def list_logs(self, user_id: str | None = None) -> requests.Response:
         """Return operation logs (admin only)."""
         params = {"user_id": user_id} if user_id else {}

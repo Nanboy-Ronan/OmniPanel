@@ -43,10 +43,22 @@ def page_user_management() -> None:
         uid = u["id"]
         is_active = u.get("is_active", True)
         with st.container():
-            col_email, col_role, col_active, col_edit, col_del = st.columns([3, 2, 1, 1, 1])
+            col_email, col_role, col_alert, col_active, col_edit, col_del = st.columns([3, 1.5, 1.5, 1, 1, 1])
             label_style = "" if is_active else "opacity:0.45;"
             col_email.markdown(f"<span style='{label_style}'>**{u['email']}**</span>", unsafe_allow_html=True)
             col_role.markdown(f"`{u['role']}`")
+            if u.get("wecom_linked"):
+                alert_on = col_alert.checkbox(
+                    "采集告警", value=u.get("wecom_alert_enabled", False), key=f"wecom-alert-{uid}"
+                )
+                if alert_on != u.get("wecom_alert_enabled", False):
+                    r_alert = client.update_wecom_alert(uid, alert_on)
+                    if r_alert.status_code == 200:
+                        st.rerun()
+                    else:
+                        show_api_error(r_alert)
+            else:
+                col_alert.caption("未绑定企微")
             active_label = "启用" if is_active else "禁用"
             if col_active.button(active_label, key=f"active-{uid}", use_container_width=True,
                                  help="切换账号启用/禁用状态"):

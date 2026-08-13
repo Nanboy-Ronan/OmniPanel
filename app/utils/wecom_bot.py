@@ -15,6 +15,12 @@ needing group-robot permissions.
 
 Left unconfigured (any of the three env vars missing), alerts are silently
 skipped and nothing else in the app is affected.
+
+Recipients: WECOM_ALERT_TOUSER (env), if set, is an explicit ops override and
+always wins. Otherwise falls back to the admin-togglable per-user opt-in in
+the 用户管理 UI (User.wecom_alert_enabled, requires a linked wecom_userid),
+and finally to "@all" if nobody has opted in (e.g. a fresh deploy before any
+admin has visited the UI).
 """
 from __future__ import annotations
 
@@ -34,11 +40,32 @@ def _env(name: str) -> str | None:
     return value.strip() if value and value.strip() else None
 
 
+def _resolve_touser() -> str:
+    """Who receives alerts: WECOM_ALERT_TOUSER (explicit ops override) first,
+    then the DB opt-in list (用户管理 UI), then "@all"."""
+    override = _env("WECOM_ALERT_TOUSER")
+    if override:
+        return override
+    try:
+        from ..db import SyncSessionLocal
+        from ..db.models import User
+        with SyncSessionLocal() as session:
+            ids = [
+                row[0] for row in session.query(User.wecom_userid).filter(
+                    User.wecom_alert_enabled.is_(True), User.wecom_userid.isnot(None)
+                ).all()
+            ]
+        if ids:
+            return "|".join(ids)
+    except Exception:
+        _logger.warning("wecom_alert_touser_db_lookup_failed", exc_info=True)
+    return "@all"
+
+
 def send_wecom_alert(text: str) -> bool:
     """Send a text message via the WeCom self-built app.
 
-    Recipient defaults to ``@all`` (every user visible to the app); override
-    with WECOM_ALERT_TOUSER (a WeCom userid, or ``|``-separated list).
+    Recipient is resolved by _resolve_touser() — see module docstring.
 
     Returns True if the message was accepted, False otherwise (including
     when WeCom alerting isn't configured). Never raises — callers use this
@@ -50,7 +77,7 @@ def send_wecom_alert(text: str) -> bool:
     secret = _env("WECOM_APP_SECRET")
     if not (corpid and agentid and secret):
         return False
-    touser = _env("WECOM_ALERT_TOUSER") or "@all"
+    touser = _resolve_touser()
 
     try:
         token_resp = httpx.get(
