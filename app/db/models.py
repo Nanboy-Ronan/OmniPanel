@@ -41,6 +41,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     )
     wecom_userid = Column(String(128), nullable=True, unique=True, index=True)
     display_name = Column(String(200), nullable=True)
+    wecom_alert_enabled = Column(Boolean, nullable=False, server_default="false")
 
     # The mixin SQLAlchemyBaseUserTableUUID supplies columns:
     #   id UUID primary key, email, hashed_password, is_active, is_superuser, is_verified

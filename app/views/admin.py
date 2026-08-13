@@ -96,9 +96,14 @@ async def list_users(
     session: AsyncSession = Depends(get_session),
 ):
     """Return all user accounts and their roles."""
-    result = await session.execute(select(User.id, User.email, User.role, User.is_active))
+    result = await session.execute(
+        select(User.id, User.email, User.role, User.is_active, User.wecom_userid, User.wecom_alert_enabled)
+    )
     rows = [
-        {"id": str(r.id), "email": r.email, "role": r.role, "is_active": r.is_active}
+        {
+            "id": str(r.id), "email": r.email, "role": r.role, "is_active": r.is_active,
+            "wecom_linked": r.wecom_userid is not None, "wecom_alert_enabled": r.wecom_alert_enabled,
+        }
         for r in result.all()
     ]
     return rows
@@ -252,6 +257,34 @@ async def update_user_active(
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update active status: {e}")
+
+
+class WecomAlertUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/users/{user_id}/wecom-alert")
+async def update_user_wecom_alert(
+    user_id: str,
+    payload: WecomAlertUpdate,
+    _user=Depends(current_admin_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Toggle whether a user receives WeCom collector/pipeline alerts."""
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.wecom_userid is None and payload.enabled:
+        raise HTTPException(status_code=400, detail="该用户尚未绑定企业微信，无法接收告警")
+    user.wecom_alert_enabled = payload.enabled
+    await session.commit()
+    await log_operation(
+        str(_user.id), "update_wecom_alert",
+        {"target_user": user_id, "enabled": payload.enabled},
+        session=session,
+    )
+    return {"detail": "WeCom alert setting updated"}
 
 
 class PasswordUpdate(BaseModel):
