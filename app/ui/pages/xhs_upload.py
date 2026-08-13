@@ -36,10 +36,19 @@ def _account_section(client, is_admin: bool) -> None:
 
         if accounts:
             for acc in accounts:
-                col_name, col_rename, col_del = st.columns([5, 1, 1])
+                col_name, col_pgy, col_rename, col_del = st.columns([4, 1.5, 1, 1])
                 status_icon = "🟢" if acc["is_active"] else "⚫"
                 type_tag = _TYPE_LABEL.get(acc.get("account_type", "company"), "公司号")
                 col_name.markdown(f"{status_icon} **{acc['name']}** `{type_tag}` `id={acc['id']}`")
+                pgy_on = col_pgy.checkbox(
+                    "蒲公英采集", value=acc.get("pgy_enabled", False), key=f"xhs-pgy-{acc['id']}"
+                )
+                if pgy_on != acc.get("pgy_enabled", False):
+                    r = client.set_xhs_pgy_enabled(acc["id"], pgy_on)
+                    if r.status_code == 200:
+                        st.rerun()
+                    else:
+                        show_api_error(r)
                 if col_rename.button("改名", key=f"xhs-rename-btn-{acc['id']}", use_container_width=True):
                     st.session_state[f"_xhs_rename_{acc['id']}"] = True
                 with col_del:

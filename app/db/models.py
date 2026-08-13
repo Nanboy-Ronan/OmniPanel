@@ -384,6 +384,7 @@ class XhsAccount(Base):
     name = Column(String(200), nullable=False, unique=True)
     account_type = Column(String(20), nullable=False, server_default="company")
     is_active = Column(Boolean, nullable=False, server_default="true")
+    pgy_enabled = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     posts = relationship("XhsPost", back_populates="account", cascade="all, delete-orphan")
