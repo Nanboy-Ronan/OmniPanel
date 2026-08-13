@@ -27,13 +27,13 @@ from app.ui._helpers import (
 )
 from app.ui.pages.kpi_overview import page_kpi_overview
 from app.ui.pages.xhs_upload import page_xhs_upload
+from app.ui.pages.pgy_dashboard import page_pgy_dashboard
 from app.ui.pages.zhihu_upload import page_zhihu_upload
 from app.ui.pages.data_dictionary import page_data_dictionary
 from app.ui.pages.upload import page_upload
 from app.ui.pages.analysis import page_analysis
 from app.ui.pages.media import page_media
 from app.ui.pages.media_traffic import page_media_traffic
-# from app.ui.pages.media_upload import page_media_upload  # disabled xlsx upload 2026-06-01
 from app.ui.pages.content_impact import page_content_impact
 from app.ui.pages.customers import page_customers
 from app.ui.pages.customer_identity import page_customer_identity
@@ -297,11 +297,11 @@ ECOMMERCE_PAGES = {
 }
 
 MEDIA_PAGES = {
-    # "公众号上传": page_media_upload,  # disabled xlsx upload 2026-06-01
     "公众号流量": page_media_traffic,
-    "公众号数据": page_media,
+    "公众号内容分析": page_media,
     "内容带货分析": page_content_impact,
     "小红书数据": page_xhs_upload,
+    "蒲公英合作": page_pgy_dashboard,
     "知乎数据": page_zhihu_upload,
 }
 

@@ -45,13 +45,17 @@ def debug_dir() -> Path:
 def session_path(platform: str, account_id: int | None) -> Path:
     """Return the storage_state.json path for a given target.
 
-    XHS sessions are per-account (``xhs_{account_id}.json``); Zhihu has a
-    single login shared by both content types (``zhihu.json``).
+    XHS/Pugongying sessions are per-account (``{platform}_{account_id}.json``);
+    Zhihu has a single login shared by both content types (``zhihu.json``).
     """
     if platform == "xhs":
         if account_id is None:
             raise ValueError("account_id is required for platform='xhs'")
         return sessions_dir() / f"xhs_{account_id}.json"
+    if platform == "pugongying":
+        if account_id is None:
+            raise ValueError("account_id is required for platform='pugongying'")
+        return sessions_dir() / f"pugongying_{account_id}.json"
     if platform == "zhihu":
         return sessions_dir() / "zhihu.json"
     raise ValueError(f"Unknown platform: {platform!r}")

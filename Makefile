@@ -1,9 +1,13 @@
-.PHONY: help db-upgrade db-downgrade db-check db-new-migration db-history test deps-outdated deps-audit
+.PHONY: help api ui db-upgrade db-downgrade db-check db-new-migration db-history test test-unit deps-outdated deps-audit
 
 PYTHON ?= python
 ALEMBIC = $(PYTHON) -m alembic
 
 help:
+	@echo "Run locally:"
+	@echo "  api                   Start the FastAPI backend (uvicorn --reload, :8000)"
+	@echo "  ui                    Start the Streamlit dashboard (:8501)"
+	@echo ""
 	@echo "Database migration targets:"
 	@echo "  db-upgrade            Apply all pending migrations (alembic upgrade head)"
 	@echo "  db-downgrade          Roll back one migration step (alembic downgrade -1)"
@@ -14,10 +18,17 @@ help:
 	@echo ""
 	@echo "Other targets:"
 	@echo "  test                  Run the full pytest test suite"
+	@echo "  test-unit             Run only the WeChat Work unit tests (no database required)"
 	@echo "  deps-outdated         List pinned requirements that have newer releases"
 	@echo "  deps-audit            Scan pinned requirements for known CVEs (needs pipx)"
 	@echo ""
 	@echo "Dependency upgrade cadence and process: docs/maintenance.md"
+
+api:
+	$(PYTHON) -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+ui:
+	PYTHONPATH=. $(PYTHON) -m streamlit run app/ui/dashboard.py
 
 db-upgrade:
 	$(ALEMBIC) upgrade head
@@ -43,6 +54,9 @@ db-new-migration:
 
 test:
 	$(PYTHON) -m pytest tests/ -q
+
+test-unit:
+	$(PYTHON) -m pytest tests/test_wecom_unit.py -q
 
 deps-outdated:
 	$(PYTHON) -m pip list --outdated

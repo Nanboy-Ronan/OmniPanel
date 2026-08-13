@@ -39,21 +39,26 @@ def _parse_session_filename(name: str) -> tuple[str, int | None] | None:
             return "xhs", int(stem[len("xhs_"):])
         except ValueError:
             return None
+    if stem.startswith("pugongying_"):
+        try:
+            return "pugongying", int(stem[len("pugongying_"):])
+        except ValueError:
+            return None
     return None
 
 
 @router.post("/sessions", status_code=status.HTTP_201_CREATED)
 async def upload_collector_session(
-    platform: Literal["xhs", "zhihu"] = Form(...),
+    platform: Literal["xhs", "zhihu", "pugongying"] = Form(...),
     account_id: int | None = Form(None),
     file: UploadFile = File(...),
     _user=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
 ):
     """Upload a storage_state.json produced by `bootstrap-login`."""
-    if platform == "xhs":
+    if platform in ("xhs", "pugongying"):
         if account_id is None:
-            raise HTTPException(status_code=422, detail="xhs 平台必须提供 account_id")
+            raise HTTPException(status_code=422, detail=f"{platform} 平台必须提供 account_id")
         acc = await session.get(XhsAccount, account_id)
         if acc is None:
             raise HTTPException(status_code=404, detail=f"XHS account {account_id} not found")
@@ -69,7 +74,7 @@ async def upload_collector_session(
     if not isinstance(parsed, dict) or not isinstance(parsed.get("cookies"), list):
         raise HTTPException(status_code=400, detail="不是合法的 storage_state.json（缺少 cookies 字段）。")
 
-    target_path = session_path(platform, account_id if platform == "xhs" else None)
+    target_path = session_path(platform, account_id if platform in ("xhs", "pugongying") else None)
     tmp_path = target_path.with_suffix(".json.tmp")
     tmp_path.write_bytes(raw)
     os.chmod(tmp_path, 0o600)
@@ -110,7 +115,7 @@ async def list_collector_sessions(
                 .order_by(CollectorRun.started_at.desc())
                 .limit(1)
             )
-            if platform == "xhs":
+            if platform in ("xhs", "pugongying"):
                 stmt = stmt.where(CollectorRun.account_id == account_id)
             # "verify" runs (the proactive precheck, see app.collector.runner.
             # run_verify) never download/upload — keep last_run_status meaning
@@ -141,12 +146,12 @@ async def list_collector_sessions(
 
 @router.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_collector_session(
-    platform: Literal["xhs", "zhihu"] = Query(...),
+    platform: Literal["xhs", "zhihu", "pugongying"] = Query(...),
     account_id: int | None = Query(None),
     _user=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
 ):
-    path = session_path(platform, account_id if platform == "xhs" else None)
+    path = session_path(platform, account_id if platform in ("xhs", "pugongying") else None)
     if not path.exists():
         raise HTTPException(status_code=404, detail="登录态文件不存在")
     path.unlink()

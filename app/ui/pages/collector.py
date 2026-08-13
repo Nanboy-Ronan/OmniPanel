@@ -5,7 +5,7 @@ import streamlit as st
 
 from app.ui._helpers import _page_hero, show_api_error
 
-_PLATFORM_LABEL = {"xhs": "小红书", "zhihu": "知乎"}
+_PLATFORM_LABEL = {"xhs": "小红书", "zhihu": "知乎", "pugongying": "小红书蒲公英"}
 _CONTENT_TYPE_LABEL = {"article": "文章", "qa": "问答"}
 _STATUS_LABEL = {
     "running": "运行中",
@@ -61,13 +61,13 @@ def _sessions_section(client) -> None:
     st.markdown("---")
     st.markdown("#### 上传新的登录态")
     st.caption(
-        "在自己的电脑上运行 `python -m app.collector bootstrap-login --platform xhs --out session.json`"
-        "（知乎同理，无需 --account-id），有头浏览器扫码登录后会生成一个 JSON 文件，在此上传。"
+        "在自己的电脑上运行 `python -m app.collector bootstrap-login --platform pugongying --out session.json` "
+        "（小红书/知乎同理），有头浏览器登录后会生成一个 JSON 文件，在此上传。"
     )
     with st.form("collector-session-upload", clear_on_submit=True):
-        platform = st.selectbox("平台", options=["xhs", "zhihu"], format_func=lambda p: _PLATFORM_LABEL[p])
+        platform = st.selectbox("平台", options=["xhs", "zhihu", "pugongying"], format_func=lambda p: _PLATFORM_LABEL[p])
         account_id = None
-        if platform == "xhs":
+        if platform in ("xhs", "pugongying"):
             acc_r = client.xhs_accounts()
             accounts = acc_r.json() if acc_r.status_code == 200 else []
             if accounts:
