@@ -4,8 +4,9 @@
 
 ## 为什么需要这个功能
 
-小红书和知乎都没有公开的数据分析接口。要拿到账号级别的内容指标（曝光、点击率、观看时长等），只能靠人登录创作者后台并手动点击"导出"。这个子系统把这个过程自动化：复用一份保存下来的浏览器登录状态打开后台、触发导出，再把下载到的文件通过**已有的**
-`/media/xhs/upload` / `/media/zhihu/upload` 接口上传——ETL、去重、审计日志和手动上传完全一致。
+小红书、知乎，以及小红书的蒲公英（KOL/KOC 商业合作平台）都没有公开的数据分析接口。要拿到账号级别的内容指标（曝光、点击率、观看时长等）或者投放级别的合作数据（花费、博主表现、受众画像），只能靠人登录对应后台并手动点击"导出"。这个子系统把这个过程自动化：复用一份保存下来的浏览器登录状态打开后台、触发导出，再把下载到的文件通过**已有的**
+`/media/xhs/upload`、`/media/zhihu/upload`、`/media/pgy/upload`
+接口上传——ETL、去重、审计日志和手动上传完全一致。
 
 它**不会**取代手动上传，只是把人已经在做的"点击 → 下载 → 上传"这套动作变成无人值守。
 
@@ -22,6 +23,9 @@
   `app/ui/api_client.py` 的 `APIClient`）——和人在页面上点"上传"走的是完全相同的代码路径。
 - 每次运行的状态直接写入 Postgres（`CollectorRun` / `collector_runs`
   表），与微信自动同步的 `MediaSyncRun` 是同一套模式。
+- `python -m app.collector verify-all` 会主动检查所有已启用目标的登录态是否有效（不下载、不上传），并对失效或缺失的登录态告警——设计为比
+  `collect` 更早的独立调度，这样过期的登录态能被提前发现，给人工重新登录留出时间窗口，而不是等到下一次
+  `collect` 才发现。详见下方"命令行"一节。
 - 可选的 WeCom 告警（`app/utils/wecom_bot.py`）会在会话过期、下载超时或上传失败时触发——通过企业微信自建应用的应用消息接口（`cgi-bin/message/send`）发送，而不是群机器人
   webhook，原因见下方"告警"一节。
 
@@ -41,13 +45,17 @@ python -m app.collector bootstrap-login --platform xhs --out xhs_session.json
 # xhs_session.json（整体超时 8 分钟）。
 
 python -m app.collector bootstrap-login --platform zhihu --out zhihu_session.json
+
+python -m app.collector bootstrap-login --platform pgy --out pgy_session.json
+# pgy.xiaohongshu.com（蒲公英）是一个独立的子域名，有自己独立的登录——不是每个小红书专业号都开通了蒲公英。
+# 只对确实开通了的账号做这一步（见下方"配置"一节的 xhs_accounts.pgy_enabled）。
 ```
 
 然后通过 Streamlit 管理页面「自动采集」（仅管理员可见）上传生成的 JSON
-文件：选择平台（小红书还需要选择对应账号——如果一个手机号关联多个账号，每个账号需要单独一份
+文件：选择平台（小红书/蒲公英还需要选择对应账号——如果一个手机号关联多个账号，每个账号需要单独一份
 session 文件），上传即可。文件会写到服务器端的
-`{COLLECTOR_DIR}/sessions/xhs_{account_id}.json` 或
-`.../zhihu.json`，权限 `0600`。
+`{COLLECTOR_DIR}/sessions/xhs_{account_id}.json`、
+`.../pgy_{account_id}.json` 或 `.../zhihu.json`，权限 `0600`。
 
 **会话有效期**：创作者后台的登录状态通常能维持几周。每次采集成功都会把（已轮换的）cookie
 重新写回同一个文件，实际上会不断延长有效期。当会话最终过期时，采集器能检测到（反复重定向到登录流程且始终无法恢复——为什么*短暂*的重定向是正常现象、不会被误判为过期，见下面"小红书的鉴权是基于
@@ -76,6 +84,19 @@ CAS 的"一节），会在对应的 `CollectorRun` 上记录
   `COLLECTOR_HEADLESS=false`，并在没有显示器的服务器上用虚拟显示（例如
   `xvfb-run`）来运行。
 
+## 蒲公英是独立的子域名、独立的登录
+
+`pgy.xiaohongshu.com` 是小红书官方的 KOL/KOC
+商业合作平台——和 `pro.xiaohongshu.com` / `creator.xiaohongshu.com`
+是不同的子域名，有自己独立的会话（是否和创作者后台共享 CAS SSO
+尚未验证，所以 `app/collector/pugongying.py`
+使用自己独立的 session 文件，而不是假设可以复用小红书创作者后台的登录态）。导出页面在
+`pgy.xiaohongshu.com/solar/post-trade/content-manage`；导出按钮点一下就直接开始下载
+xlsx，没有确认弹窗，也不需要异步导出后再轮询。
+
+只有 `xhs_accounts.pgy_enabled = true` 的账号才会被纳入采集——在「小红书数据」管理页面按账号切换这个开关。不是每个小红书专业号都开通了蒲公英，把一个没开通的账号也纳入采集，只会对一个永远不会存在的
+session 产生持续的 `session_expired` / 缺失会话告警。
+
 ## 配置
 
 所有配置项都是环境变量（也可以放进 `.env`）：
@@ -85,6 +106,7 @@ CAS 的"一节），会在对应的 `CollectorRun` 上记录
 | `COLLECTOR_ENABLED` | `false` | 总开关；为 `false` 时 `collect` 会立即以退出码 0 结束 |
 | `COLLECTOR_XHS_ENABLED` | `true` | 本次运行是否包含小红书账号 |
 | `COLLECTOR_ZHIHU_ENABLED` | `true` | 本次运行是否包含知乎（文章+回答） |
+| `COLLECTOR_PUGONGYING_ENABLED` | `true` | 本次运行是否包含开通了蒲公英的小红书账号（`pgy_enabled=true`） |
 | `COLLECTOR_DIR` | `data/collector` | session / 下载 / 调试文件的根目录 |
 | `COLLECTOR_HEADLESS` | `false` | 目前只有 `false`（配合服务器上的虚拟显示）在小红书上验证通过；真正的无头模式尚未验证，见上文 |
 | `COLLECTOR_API_URL` | `http://127.0.0.1:8000` | 采集器上传数据的目标地址 |
@@ -114,37 +136,46 @@ CAS 的"一节），会在对应的 `CollectorRun` 上记录
 
 **为什么不用群机器人 webhook**（企业微信自定义群机器人）：一些企业微信组织把自定义群机器人的创建权限关闭了，且没有自助开启的方式。用应用消息发送可以完全绕开这个权限——任何自建应用都能给它可见的用户发消息，不需要群机器人权限。
 
-接收人默认是 `WECOM_ALERT_TOUSER=@all`（该应用可见的所有用户）。如果要指定具体的人，使用其企业微信
-userid（对任何曾通过企业微信 OAuth
-登录过的用户，可以用 `SELECT wecom_userid FROM "user" WHERE wecom_userid IS
-NOT NULL` 查到），多个用 `|` 分隔，例如
-`WECOM_ALERT_TOUSER=userid1|userid2`。
+接收人解析按以下优先级：
+
+1. `WECOM_ALERT_TOUSER`（环境变量），如果设置了——作为明确的运维覆盖项，多个用
+   `|` 分隔，例如 `WECOM_ALERT_TOUSER=userid1|userid2`。
+2. 否则，取所有关联了企业微信账号且 `wecom_alert_enabled = true`
+   的用户——在「用户管理」管理页面按用户切换这个开关。这是不改
+   `.env` 就能管理告警接收人的常规方式。
+3. 如果以上两者都没有解析出任何人，退回 `@all`（该应用可见的所有用户）。
 
 ## 命令行
 
 ```bash
 # 本地、每个平台只需一次：
 python -m app.collector bootstrap-login --platform xhs --out xhs_1.json
+python -m app.collector bootstrap-login --platform pgy --out pgy_1.json
 python -m app.collector bootstrap-login --platform zhihu --out zhihu.json
 
 # 手动运行（服务器上，或本地对着本地后端跑）：
 python -m app.collector collect                                # 所有已启用的目标
 python -m app.collector collect --platform xhs --account-id 3
+python -m app.collector collect --platform pgy --account-id 3
 python -m app.collector collect --platform zhihu --content-type article
 python -m app.collector collect --dry-run                       # 只下载不上传
 python -m app.collector collect --headed                        # 强制显示窗口（默认本来就是有头模式，见上方 COLLECTOR_HEADLESS）
 
 # 只检查某个已保存的 session 是否仍然有效，不触发下载：
 python -m app.collector verify-session --platform xhs --account-id 3
+
+# 主动检查所有已启用目标的登录态（不下载、不上传）——设计为比 collect
+# 更早的独立调度，这样能提前发现失效的登录态，留出时间在下次采集前修复：
+python -m app.collector verify-all
 ```
 
 ## 选择器维护（迟早会失效）
 
-`app/collector/xhs.py` 和 `app/collector/zhihu.py`
+`app/collector/xhs.py`、`app/collector/pugongying.py` 和
+`app/collector/zhihu.py`
 都把所有和后台页面相关的 URL / 选择器集中放在文件顶部的一个常量区块里。
 
-**小红书已经端到端完整验证**（登录 → 导出 → 上传 → `xhs_posts`
-入库，且确认重复运行是幂等的）。**知乎的选择器还只是未验证的占位实现**——预计会遇到和小红书当初类似的各种问题（域名不对、登录方式不对、鉴权跳转的时序问题），需要针对真实账号预留真正的调试时间，而不只是改改选择器。
+**小红书和蒲公英都已经端到端完整验证**（登录 → 导出 → 上传 → 入库，且确认重复运行是幂等的）。**知乎的选择器还只是未验证的占位实现**——预计会遇到和小红书、蒲公英当初类似的各种问题（域名不对、登录方式不对、鉴权跳转的时序问题、按钮文字猜错），需要针对真实账号预留真正的调试时间，而不只是改改选择器。
 
 当后台页面改版、运行开始报 `download_failed` 时：
 

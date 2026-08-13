@@ -249,7 +249,7 @@ Changing `RAP_SECRET` directly logs out every user. Use `RAP_SECRET_PREVIOUS` fo
 | [NL-to-SQL](docs/nl-to-sql.md) | How it works, provider registry, adding a provider |
 | [Testing](docs/testing.md) | Running the suite, synthetic dataset |
 | [WeChat auto-sync](docs/wechat-auto-sync.md) | Daily background sync for official-account metrics |
-| [Creator-portal collector](docs/collector.md) | Playwright automation for XHS/Zhihu creator-backend exports |
+| [Creator-portal collector](docs/collector.md) | Playwright automation for XHS/Zhihu/Pugongying creator-backend exports |
 | [Dependency maintenance](docs/maintenance.md) | Upgrade cadence, critical packages |
 | [Project comparison](docs/comparison.md) | Honest pros/cons vs. scraper-based and agent-workflow alternatives |
 

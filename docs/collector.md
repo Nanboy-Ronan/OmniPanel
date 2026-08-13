@@ -4,13 +4,16 @@
 
 ## Why this exists
 
-Xiaohongshu (小红书) and Zhihu (知乎) have no public analytics API. Getting
-account-level content metrics (impressions, click-through, watch time, …)
-requires a human to log into the creator portal and click "export". This
-subsystem automates that: a saved browser login state is reused to open the
-portal, trigger the export, and upload the downloaded file through the
-**existing** `/media/xhs/upload` / `/media/zhihu/upload` endpoints — the ETL,
-dedup, and audit logging are unchanged from a manual upload.
+Xiaohongshu (小红书), Zhihu (知乎), and Xiaohongshu's Pugongying (蒲公英)
+KOL/KOC collaboration platform have no public analytics API. Getting
+account-level content metrics (impressions, click-through, watch time, …) or
+campaign-level collaboration data (spend, blogger performance, audience
+demographics) requires a human to log into the relevant portal and click
+"export". This subsystem automates that: a saved browser login state is
+reused to open the portal, trigger the export, and upload the downloaded
+file through the **existing** `/media/xhs/upload`, `/media/zhihu/upload`, and
+`/media/pgy/upload` endpoints — the ETL, dedup, and audit logging are
+unchanged from a manual upload.
 
 It does **not** replace manual uploads; it's an unattended way to run the same
 click-download-upload sequence a human already does.
@@ -28,6 +31,11 @@ click-download-upload sequence a human already does.
   clicking "upload" in the UI.
 - Run status is written directly to Postgres (`CollectorRun` /
   `collector_runs`, same pattern as `MediaSyncRun` for WeChat auto-sync).
+- `python -m app.collector verify-all` proactively checks every enabled
+  target's saved session (no download, no upload) and alerts on anything dead
+  or missing — meant to run on its own, earlier schedule than `collect`, so a
+  dead session is caught with enough lead time for a human to redo
+  `bootstrap-login` before the next `collect` window. See "CLI" below.
 - Optional WeCom alert (`app/utils/wecom_bot.py`) fires on session expiry,
   download timeout, or upload failure — sent via a WeCom self-built app
   message (`cgi-bin/message/send`), not a group-bot webhook. See "Alerting"
@@ -52,14 +60,20 @@ python -m app.collector bootstrap-login --platform xhs --out xhs_session.json
 # loads (8 min timeout total).
 
 python -m app.collector bootstrap-login --platform zhihu --out zhihu_session.json
+
+python -m app.collector bootstrap-login --platform pgy --out pgy_session.json
+# pgy.xiaohongshu.com (蒲公英) is a separate subdomain with its own login —
+# not necessarily every XHS professional account has a Pugongying presence.
+# Only bootstrap this for accounts that actually do (see
+# xhs_accounts.pgy_enabled in "Configuration" below).
 ```
 
 Then upload the resulting JSON file via the Streamlit admin page ("自动采集",
-only visible to admin users): select the platform (and, for XHS, the account
-it belongs to — one session file per account if the phone number has
+only visible to admin users): select the platform (and, for XHS/PGY, the
+account it belongs to — one session file per account if the phone number has
 several) and upload. It's written server-side to
-`{COLLECTOR_DIR}/sessions/xhs_{account_id}.json` or `.../zhihu.json`, mode
-`0600`.
+`{COLLECTOR_DIR}/sessions/xhs_{account_id}.json`, `.../pgy_{account_id}.json`,
+or `.../zhihu.json`, mode `0600`.
 
 **Session lifetime**: creator-portal sessions typically last a few weeks.
 Every successful collector run re-saves the (rotated) cookies back to the
@@ -98,6 +112,23 @@ narrative in the `app/collector/xhs.py` / `browser.py` module docstrings):
   `COLLECTOR_HEADLESS=false` and run under a virtual display (e.g. `xvfb-run`)
   on a display-less server.
 
+## Pugongying (蒲公英) is a separate subdomain, separate login
+
+`pgy.xiaohongshu.com` is XHS's official KOL/KOC brand-collaboration platform
+— a different subdomain from `pro.xiaohongshu.com` / `creator.xiaohongshu.com`,
+with its own session (whether CAS SSO is shared with the creator portal is
+unverified, so `app/collector/pugongying.py` uses its own session files
+rather than assuming it can reuse an XHS creator-portal one). The export page
+is `pgy.xiaohongshu.com/solar/post-trade/content-manage`; the export button
+is a single click (no confirm dialog, no async export-then-poll step) that
+starts the xlsx download directly.
+
+Only accounts with `xhs_accounts.pgy_enabled = true` are targeted — toggle it
+per account from the 小红书数据 admin page. Not every XHS professional
+account has a Pugongying login, and targeting one that doesn't produces a
+permanent `session_expired`/missing-session alert for a session that will
+never exist.
+
 ## Configuration
 
 All settings are environment variables (also readable from `.env`):
@@ -107,6 +138,7 @@ All settings are environment variables (also readable from `.env`):
 | `COLLECTOR_ENABLED` | `false` | Master kill-switch; `collect` exits 0 immediately when false |
 | `COLLECTOR_XHS_ENABLED` | `true` | Include XHS accounts in a run |
 | `COLLECTOR_ZHIHU_ENABLED` | `true` | Include Zhihu (article+qa) in a run |
+| `COLLECTOR_PUGONGYING_ENABLED` | `true` | Include Pugongying-enabled XHS accounts (`pgy_enabled=true`) in a run |
 | `COLLECTOR_DIR` | `data/collector` | Sessions/downloads/debug root |
 | `COLLECTOR_HEADLESS` | `false` | Only `false` (+ a virtual display on a headless server) is verified against XHS; true headless is untested — see above |
 | `COLLECTOR_API_URL` | `http://127.0.0.1:8000` | Where the collector uploads to |
@@ -148,40 +180,54 @@ group-robot creation disabled with no self-serve way to re-enable it.
 App-message sending sidesteps that permission entirely — any self-built app
 can message its visible users without needing group-robot rights.
 
-Recipient defaults to `WECOM_ALERT_TOUSER=@all` (every user visible to the
-app). To target specific people instead, use their WeCom userid (visible via
-`SELECT wecom_userid FROM "user" WHERE wecom_userid IS NOT NULL` for anyone
-who has logged in via WeCom OAuth at least once), `|`-separated for multiple,
-e.g. `WECOM_ALERT_TOUSER=userid1|userid2`.
+Recipient resolution, in priority order:
+
+1. `WECOM_ALERT_TOUSER` (env), if set — an explicit ops override, `|`-separated
+   for multiple WeCom userids, e.g. `WECOM_ALERT_TOUSER=userid1|userid2`.
+2. Otherwise, every user with a linked WeCom account and
+   `wecom_alert_enabled = true` — toggled per user from the 用户管理 admin
+   page. This is the normal way to manage who gets paged without touching
+   `.env`.
+3. `@all` (every user visible to the app) if neither of the above resolves to
+   anyone.
 
 ## CLI
 
 ```bash
 # Local, one-time, per platform:
 python -m app.collector bootstrap-login --platform xhs --out xhs_1.json
+python -m app.collector bootstrap-login --platform pgy --out pgy_1.json
 python -m app.collector bootstrap-login --platform zhihu --out zhihu.json
 
 # Manual run (server or local against a local backend):
 python -m app.collector collect                                # all enabled targets
 python -m app.collector collect --platform xhs --account-id 3
+python -m app.collector collect --platform pgy --account-id 3
 python -m app.collector collect --platform zhihu --content-type article
 python -m app.collector collect --dry-run                       # download only, skip upload
 python -m app.collector collect --headed                        # force a visible window (default is already headed; see COLLECTOR_HEADLESS above)
 
 # Check whether a saved session is still logged in, without downloading:
 python -m app.collector verify-session --platform xhs --account-id 3
+
+# Proactively check every enabled target's session (no download, no upload) —
+# meant to run on its own, earlier schedule than `collect` so a dead session
+# is caught with lead time to fix before the next collect window:
+python -m app.collector verify-all
 ```
 
 ## Selector maintenance (things will break)
 
-Both `app/collector/xhs.py` and `app/collector/zhihu.py` keep every
-portal-specific URL/selector in one constants block at the top of the file.
+`app/collector/xhs.py`, `app/collector/pugongying.py`, and
+`app/collector/zhihu.py` each keep every portal-specific URL/selector in one
+constants block at the top of the file.
 
-**XHS is fully verified end-to-end** (login → export → upload → `xhs_posts`
-rows, confirmed idempotent on re-run). **Zhihu's selectors remain unverified
-placeholders** — expect the same kind of surprises XHS had (wrong domain,
-wrong login mechanism, transient auth-redirect timing) and budget real
-debugging time against a live account, not just a selector tweak.
+**XHS and Pugongying are fully verified end-to-end** (login → export →
+upload → DB rows, confirmed idempotent on re-run). **Zhihu's selectors
+remain unverified placeholders** — expect the same kind of surprises XHS and
+Pugongying had (wrong domain, wrong login mechanism, transient auth-redirect
+timing, wrong button text) and budget real debugging time against a live
+account, not just a selector tweak.
 
 When the portal changes its UI and a run starts failing with
 `download_failed`:
