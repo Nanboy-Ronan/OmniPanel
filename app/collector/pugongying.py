@@ -1,6 +1,6 @@
 """Pugongying (蒲公英) KOL/KOC collaboration platform export collector.
 
-Downloads the collaboration report xlsx from 蒲公英 → 内容管理 → 带出,
+Downloads the collaboration report xlsx from 蒲公英 → 笔记合作数据 → 导出,
 and returns it unchanged for app/db/etl/pgy.parse_pgy_xlsx to consume.
 
 ── Auth flow ──────────────────────────────────────────────────────────
@@ -11,7 +11,10 @@ and returns it unchanged for app/db/etl/pgy.parse_pgy_xlsx to consume.
    between them is unverified — this module uses its own session files.
 3. The export page is at:
    https://pgy.xiaohongshu.com/solar/post-trade/content-manage
-   Export button text is "带出" (export/take-out).
+   Export button text is "导出" — a single click starts the xlsx download
+   directly, no confirm dialog or async export-then-poll step. Verified
+   live against a real account: rows parsed cleanly by
+   app/db/etl/pgy.parse_pgy_xlsx.
 """
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ from .errors import DownloadTimeoutError, SessionExpiredError
 PGY_HOME_URL = "https://pgy.xiaohongshu.com/"
 PGY_LOGIN_URL = "https://pgy.xiaohongshu.com/"
 PGY_DATA_URL = "https://pgy.xiaohongshu.com/solar/post-trade/content-manage"
-PGY_EXPORT_BUTTON = 'button:has-text("带出")'
+PGY_EXPORT_BUTTON = 'button:has-text("导出")'
 
 _LOGIN_CHECK_POLL_MS = 1000
 _LOGIN_CHECK_MAX_MS = 15000
