@@ -30,10 +30,22 @@ def _sessions_section(client) -> None:
         for s in sessions:
             label = s["account_name"] or _PLATFORM_LABEL.get(s["platform"], s["platform"])
             status = _STATUS_LABEL.get(s["last_run_status"], s["last_run_status"] or "尚未运行")
+            verify_status = s.get("last_verify_status")
+            # last_verify_status reflects the proactive precheck (run_verify),
+            # which runs earlier than collect specifically so a dead session
+            # is caught with lead time — surface it as a badge so an admin
+            # doesn't have to wait for tonight's collect to find out today's
+            # precheck already flagged it.
+            if verify_status == "session_expired":
+                verify_badge = " · :red[巡检：登录态已过期]"
+            elif verify_status == "success":
+                verify_badge = " · :green[巡检：登录态有效]"
+            else:
+                verify_badge = ""
             col_info, col_del = st.columns([5, 1])
             col_info.markdown(
                 f"**{_PLATFORM_LABEL.get(s['platform'], s['platform'])}** · {label} "
-                f"— 最近运行：`{status}` · 更新于 {s['updated_at'][:19]}"
+                f"— 最近运行：`{status}` · 更新于 {s['updated_at'][:19]}{verify_badge}"
             )
             with col_del:
                 st.markdown("<div class='danger-btn'>", unsafe_allow_html=True)

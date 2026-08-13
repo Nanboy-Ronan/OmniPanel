@@ -92,6 +92,24 @@ def _default_collect_fns() -> dict[str, Callable]:
     return {"xhs": collect_xhs, "zhihu": collect_zhihu}
 
 
+def _default_verify_fns() -> dict[str, Callable]:
+    from .xhs import verify_xhs_session
+    from .zhihu import verify_zhihu_session
+    return {"xhs": verify_xhs_session, "zhihu": verify_zhihu_session}
+
+
+def _login_api_client(settings, *, log_prefix: str):
+    """Create and log in the service-account API client used by both
+    run_collect and run_verify. Returns (client, error_message); on failure
+    client is None and error_message is the ready-to-send/log string."""
+    from ..ui.api_client import APIClient
+    api_client = APIClient(base_url=settings.collector_api_url)
+    login_resp = api_client.login(settings.collector_service_email or "", settings.collector_service_password or "")
+    if login_resp.status_code != 200:
+        return None, f"{log_prefix} service-account 登录失败: {login_resp.status_code} {login_resp.text[:300]}"
+    return api_client, None
+
+
 def _collect_one(target: Target, collect_fns: dict[str, Callable], headless: bool | None) -> tuple[bytes, str]:
     if target.platform == "xhs":
         return collect_fns["xhs"](target.session_file, headless=headless)
@@ -155,13 +173,10 @@ def run_collect(
         return 0
 
     if api_client is None:
-        from ..ui.api_client import APIClient
-        api_client = APIClient(base_url=settings.collector_api_url)
-        login_resp = api_client.login(settings.collector_service_email or "", settings.collector_service_password or "")
-        if login_resp.status_code != 200:
-            msg = f"[采集] service-account 登录失败: {login_resp.status_code} {login_resp.text[:300]}"
-            _logger.error(msg)
-            send_wecom_alert(msg)
+        api_client, err = _login_api_client(settings, log_prefix="[采集]")
+        if err:
+            _logger.error(err)
+            send_wecom_alert(err)
             return 1
 
     collect_fns = collect_fns or _default_collect_fns()
@@ -247,5 +262,78 @@ def run_collect(
     if targets and not dry_run and settings.wecom_notify_success:
         header = f"[采集] 本次运行全部成功（{len(successes)}/{len(targets)}）：\n"
         send_wecom_alert(header + "\n".join(f"- {s}" for s in successes))
+
+    return 0
+
+
+def run_verify(
+    *,
+    settings=None,
+    api_client=None,
+    verify_fns: dict[str, Callable] | None = None,
+    headless: bool | None = None,
+) -> int:
+    """Proactively check every enabled target's saved session — no download,
+    no upload — and alert on anything dead or missing.
+
+    This is deliberately a separate entrypoint from run_collect, meant to run
+    on its own, *earlier* schedule (see docs/collector.md): checking at
+    collect time only reports a dead session after that day's data is
+    already unrecoverable. Run early enough (e.g. the evening before) and a
+    human still has time to redo bootstrap-login before the next collect
+    window. Returns 0 if every target's session is valid, 1 otherwise.
+    """
+    settings = settings or _default_settings
+
+    if not settings.collector_enabled:
+        _logger.info("collector_disabled — skipping verify")
+        return 0
+
+    if api_client is None:
+        api_client, err = _login_api_client(settings, log_prefix="[采集巡检]")
+        if err:
+            _logger.error(err)
+            send_wecom_alert(err)
+            return 1
+
+    verify_fns = verify_fns or _default_verify_fns()
+    targets = build_targets(api_client, settings)
+
+    problems: list[str] = []
+
+    for target in targets:
+        if not target.session_file.exists():
+            problems.append(f"{target.label}: 未找到登录态文件 {target.session_file}，请尽快 bootstrap-login 并上传")
+            continue
+
+        run_id = start_run(
+            target.platform,
+            account_id=target.account_id,
+            content_type=target.content_type,
+            triggered_by="verify",
+        )
+        try:
+            valid = verify_fns[target.platform](target.session_file, headless=headless)
+        except Exception as exc:
+            finish_run(run_id, "error", error_message=str(exc))
+            problems.append(f"{target.label}: 巡检本身出错，请人工检查。{exc}")
+            continue
+
+        if valid:
+            finish_run(run_id, "success")
+            continue
+
+        finish_run(run_id, "session_expired")
+        # Zhihu's selectors are still unverified placeholders (see zhihu.py
+        # module docstring) — flag its verify result as best-effort so an
+        # operator doesn't treat a false positive there as gospel the way
+        # they should for XHS.
+        note = "（知乎登录检测选择器尚未完全验证，结果仅供参考）" if target.platform == "zhihu" else ""
+        problems.append(f"{target.label}: 登录态已过期{note}，请尽快本地重新执行 bootstrap-login 并到管理页重传")
+
+    if problems:
+        header = f"[采集巡检] 发现 {len(problems)} 个登录态异常，请尽快处理，避免影响下次采集：\n"
+        send_wecom_alert(header + "\n".join(f"- {p}" for p in problems))
+        return 1
 
     return 0

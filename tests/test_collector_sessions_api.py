@@ -173,6 +173,28 @@ class TestListAndDeleteSessions:
         assert rows[0]["platform"] == "zhihu"
         assert rows[0]["account_id"] is None
         assert rows[0]["last_run_status"] is None
+        assert rows[0]["last_verify_status"] is None
+
+    def test_last_run_and_last_verify_are_reported_separately(self, client, tokens):
+        """A 'verify' run (the proactive precheck) must not be mistaken for
+        an actual collect attempt, and vice versa."""
+        from app.collector.runs import finish_run, start_run
+
+        client.post(
+            "/admin/collector/sessions",
+            data={"platform": "zhihu"},
+            files={"file": ("zhihu.json", _session_bytes(), "application/json")},
+            headers=_auth(tokens["admin"]),
+        )
+        collect_id = start_run("zhihu", content_type=None, triggered_by="schedule")
+        finish_run(collect_id, "success", rows_upserted=5)
+        verify_id = start_run("zhihu", content_type=None, triggered_by="verify")
+        finish_run(verify_id, "session_expired")
+
+        r = client.get("/admin/collector/sessions", headers=_auth(tokens["admin"]))
+        row = r.json()[0]
+        assert row["last_run_status"] == "success"
+        assert row["last_verify_status"] == "session_expired"
 
     def test_list_includes_account_name_for_xhs(self, client, tokens):
         acc = _create_xhs_account(client, tokens["admin"], "带名字的号")
