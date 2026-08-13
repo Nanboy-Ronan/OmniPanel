@@ -19,12 +19,18 @@ def _load_accounts(client) -> list[dict]:
         return []
 
 
-def _parse_float(v) -> float:
+def _parse_pct(v) -> float:
+    if not v or pd.isna(v) or str(v).strip() == "-":
+        return 0.0
+    s = str(v).strip()
+    if s.endswith("%"):
+        try:
+            return float(s.rstrip("%"))
+        except ValueError:
+            return 0.0
     try:
-        if str(v).endswith("%"):
-            return float(str(v).rstrip("%"))
-        return float(v)
-    except (ValueError, TypeError):
+        return float(s) * 100.0 if float(s) <= 1.0 else float(s)
+    except ValueError:
         return 0.0
 
 
@@ -34,24 +40,57 @@ def _generate_insight(df: pd.DataFrame) -> str:
 
     total_notes = len(df)
     total_spend = df["blogger_quote"].sum() + df["service_fee"].sum()
-    total_impressions = df["impressions"].sum()
-    total_interactions = df["interactions"].sum()
-    avg_cpe = df["cost_per_interaction"].mean() if "cost_per_interaction" in df else 0.0
+    total_impressions = int(df["impressions"].sum())
+    total_interactions = int(df["interactions"].sum())
+    avg_cpe = total_spend / total_interactions if total_interactions > 0 else 0.0
 
-    top_interaction_note = df.loc[df["interactions"].idxmax()] if "interactions" in df and not df.empty else None
+    # Best & worst CPE
+    valid_cpe = df[df["interactions"] >= 5]
+    best_cpe_note = valid_cpe.loc[valid_cpe["cost_per_interaction"].idxmin()] if not valid_cpe.empty else None
+    top_int_note = df.loc[df["interactions"].idxmax()] if not df.empty else None
+
+    # Genre breakdown
+    genre_counts = df["note_type"].value_counts().to_dict()
+    genre_str = "、".join([f"{k} {v} 篇" for k, v in genre_counts.items()])
 
     lines = [
-        f"- 本期共分析 **{total_notes}** 篇蒲公英合作笔记，总投放下发金额（含服务费）约 **¥{total_spend:,.2f}**。",
-        f"- 累计带来 **{total_impressions:,}** 次总曝光，**{total_interactions:,}** 次总互动，整体平均互动成本 (CPE) 为 **¥{avg_cpe:.2f}** / 次。",
+        f"- **总体概览**：本期共分析 **{total_notes}** 篇蒲公英合作笔记（体裁涵盖 {genre_str}），"
+        f"总花费 **¥{total_spend:,.2f}**（含服务费）。",
+        f"- **流量与互动**：累计带来 **{total_impressions:,}** 次总曝光，**{total_interactions:,}** 次互动，"
+        f"全盘平均互动成本 (CPE) 为 **¥{avg_cpe:.2f}** / 次。",
     ]
 
-    if top_interaction_note is not None:
+    if top_int_note is not None:
         lines.append(
-            f"- 最热互动笔记：《**{top_interaction_note['note_title']}**》（博主：{top_interaction_note['blogger_nickname']}），"
-            f"产生 **{int(top_interaction_note['interactions']):,}** 次互动，曝光量 **{int(top_interaction_note['impressions']):,}**。"
+            f"- **🔥 最爆款笔记**：《**{top_int_note['note_title']}**》（博主：{top_int_note['blogger_nickname']}），"
+            f"斩获 **{int(top_int_note['interactions']):,}** 次互动与 **{int(top_int_note['impressions']):,}** 次曝光。"
+        )
+
+    if best_cpe_note is not None:
+        lines.append(
+            f"- **💰 最佳 CPE 笔记**：《**{best_cpe_note['note_title']}**》（博主：{best_cpe_note['blogger_nickname']}），"
+            f"CPE 低至 **¥{best_cpe_note['cost_per_interaction']:.2f}** / 次。"
         )
 
     return "\n".join(lines)
+
+
+def _tag_note(row: pd.Series) -> str:
+    tags = []
+    interactions = row.get("interactions", 0)
+    impressions = row.get("impressions", 0)
+    cpe = row.get("cost_per_interaction", 0)
+
+    if interactions >= 300:
+        tags.append("🔥 高互动爆款")
+    if impressions >= 10000:
+        tags.append("🚀 超高曝光")
+    if 0 < cpe <= 5.0 and interactions >= 10:
+        tags.append("💰 高性价比")
+    elif cpe > 30.0 and interactions < 10:
+        tags.append("⚠️ 待优化")
+
+    return " | ".join(tags) if tags else "常规合作"
 
 
 def page_pgy_dashboard() -> None:
@@ -67,23 +106,30 @@ def page_pgy_dashboard() -> None:
     acc_options = {"全部账号": None}
     acc_options.update({a["name"]: a["id"] for a in accounts})
 
-    col_acc, col_date = st.columns([1, 2])
+    col_acc, col_preset, col_search = st.columns([1, 1, 2])
     with col_acc:
         selected_acc_name = st.selectbox("选择账号", list(acc_options.keys()), key="pgy_acc_select")
         selected_account_id = acc_options[selected_acc_name]
 
-    with col_date:
-        today = date.today()
-        default_start = today - timedelta(days=180)
-        date_range = st.date_input(
-            "发布时间范围",
-            value=(default_start, today),
-            key="pgy_date_range",
+    with col_preset:
+        preset_range = st.selectbox(
+            "时间快照范围",
+            ["全部时间", "近 30 天", "近 90 天", "近 180 天", "今年 (2026)"],
+            index=0,
+            key="pgy_date_preset",
         )
-        if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-            start_date, end_date = date_range[0].isoformat(), date_range[1].isoformat()
-        else:
-            start_date, end_date = None, None
+
+    today = date.today()
+    if preset_range == "近 30 天":
+        start_date, end_date = (today - timedelta(days=30)).isoformat(), today.isoformat()
+    elif preset_range == "近 90 天":
+        start_date, end_date = (today - timedelta(days=90)).isoformat(), today.isoformat()
+    elif preset_range == "近 180 天":
+        start_date, end_date = (today - timedelta(days=180)).isoformat(), today.isoformat()
+    elif preset_range == "今年 (2026)":
+        start_date, end_date = "2026-01-01", today.isoformat()
+    else:
+        start_date, end_date = None, None
 
     # Fetch notes data
     res = client.pgy_notes(
@@ -99,17 +145,18 @@ def page_pgy_dashboard() -> None:
 
     notes_data = res.json()
     if not notes_data:
-        st.warning("所选范围内暂无蒲公英合作数据。您可以在右侧或自动采集功能中导入数据文件。")
+        st.warning("所选范围内暂无蒲公英合作数据。您可以在自动采集管理页面上传登录态文件或重新导入数据。")
         return
 
     df = pd.DataFrame(notes_data)
 
-    # Fill default numeric columns
+    # Fill numeric & text defaults
     num_cols = [
         "blogger_quote", "service_fee", "impressions", "reads", "read_uv",
         "interactions", "likes", "collects", "comments", "shares", "follows",
         "cost_per_read", "cost_per_interaction", "organic_impressions",
-        "organic_reads", "paid_impressions", "paid_reads", "boosted_impressions", "boosted_reads"
+        "organic_reads", "paid_impressions", "paid_reads", "boosted_impressions", "boosted_reads",
+        "blogger_fans"
     ]
     for c in num_cols:
         if c in df.columns:
@@ -117,32 +164,36 @@ def page_pgy_dashboard() -> None:
         else:
             df[c] = 0
 
+    df["cooperation_name"] = df["cooperation_name"].fillna("未归类项目")
     df["total_cost"] = df["blogger_quote"] + df["service_fee"]
+    df["note_tag"] = df.apply(_tag_note, axis=1)
 
-    # Render summary metrics
-    m1, m2, m3, m4, m5 = st.columns(5)
+    # Global KPI Cards
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     total_cost = df["total_cost"].sum()
     total_notes = len(df)
     total_impressions = int(df["impressions"].sum())
     total_interactions = int(df["interactions"].sum())
     avg_cpe = total_cost / total_interactions if total_interactions > 0 else 0.0
+    cpm = (total_cost / total_impressions * 1000) if total_impressions > 0 else 0.0
 
     m1.metric("合作笔记数", f"{total_notes} 篇")
-    m2.metric("总消耗金额", f"¥{total_cost:,.2f}")
+    m2.metric("总投放消耗", f"¥{total_cost:,.2f}")
     m3.metric("总曝光量", f"{total_impressions:,}")
     m4.metric("总互动量", f"{total_interactions:,}")
     m5.metric("平均 CPE", f"¥{avg_cpe:.2f}")
+    m6.metric("平均 CPM", f"¥{cpm:.2f}")
 
     st.markdown("---")
 
-    # Tabs
-    tab_overview, tab_notes, tab_bloggers, tab_campaigns, tab_traffic, tab_raw = st.tabs(
-        ["概览分析", "合作笔记", "达人分析", "项目分析", "流量与效率", "数据明细"]
+    # 7 Analysis Tabs
+    tab_overview, tab_notes, tab_bloggers, tab_campaigns, tab_audience, tab_components, tab_raw = st.tabs(
+        ["概览分析", "合作笔记", "达人分析", "项目分析", "受众画像", "组件与流量", "数据明细"]
     )
 
     # ── Tab 1: Overview ────────────────────────────────────────────────────────
     with tab_overview:
-        st.markdown("#### 核心投效洞察")
+        st.markdown("#### 核心投效总结")
         st.markdown(_generate_insight(df))
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -157,7 +208,7 @@ def page_pgy_dashboard() -> None:
                 .encode(
                     x=alt.X("interactions:Q", title="互动量"),
                     y=alt.Y("blogger_nickname:N", sort="-x", title="博主昵称"),
-                    tooltip=["blogger_nickname", "note_title", "interactions", "impressions", "total_cost"],
+                    tooltip=["blogger_nickname", "note_title", "interactions", "impressions", "total_cost", "note_tag"],
                 )
                 .properties(height=320)
             )
@@ -165,7 +216,7 @@ def page_pgy_dashboard() -> None:
 
         with col_c2:
             st.markdown("##### CPE (互动成本) 最优 Top 10 笔记")
-            valid_cpe_df = df[df["interactions"] >= 10].copy()
+            valid_cpe_df = df[df["interactions"] >= 5].copy()
             top10_cpe = valid_cpe_df.sort_values(by="cost_per_interaction", ascending=True).head(10)
             chart_top_cpe = (
                 alt.Chart(top10_cpe)
@@ -173,15 +224,24 @@ def page_pgy_dashboard() -> None:
                 .encode(
                     x=alt.X("cost_per_interaction:Q", title="CPE (元/互动)"),
                     y=alt.Y("blogger_nickname:N", sort="x", title="博主昵称"),
-                    tooltip=["blogger_nickname", "note_title", "cost_per_interaction", "interactions", "total_cost"],
+                    tooltip=["blogger_nickname", "note_title", "cost_per_interaction", "interactions", "total_cost", "note_tag"],
                 )
                 .properties(height=320)
             )
             _styled_chart(chart_top_cpe)
 
+        st.markdown("##### 重点表现与打标笔记")
+        featured_df = df[df["note_tag"] != "常规合作"][
+            ["publish_date", "blogger_nickname", "note_title", "note_type", "total_cost", "impressions", "interactions", "cost_per_interaction", "note_tag"]
+        ]
+        if not featured_df.empty:
+            st.dataframe(featured_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("暂无打标的特别表现笔记。")
+
     # ── Tab 2: Notes ───────────────────────────────────────────────────────────
     with tab_notes:
-        st.markdown("#### 合作笔记明细与效率散点")
+        st.markdown("#### 合作笔记投效与分布")
 
         col_scatter, col_type = st.columns([2, 1])
         with col_scatter:
@@ -190,18 +250,18 @@ def page_pgy_dashboard() -> None:
                 alt.Chart(df)
                 .mark_circle(opacity=0.75)
                 .encode(
-                    x=alt.X("total_cost:Q", title="笔记费用 (元)"),
-                    y=alt.Y("interactions:Q", title="互动量"),
-                    size=alt.Size("impressions:Q", title="曝光量", scale=alt.Scale(range=[50, 800])),
+                    x=alt.X("total_cost:Q", title="笔记总费用 (元)"),
+                    y=alt.Y("interactions:Q", title="产生互动量"),
+                    size=alt.Size("impressions:Q", title="曝光量", scale=alt.Scale(range=[60, 900])),
                     color=alt.Color("note_type:N", title="体裁"),
-                    tooltip=["blogger_nickname", "note_title", "total_cost", "interactions", "impressions", "cost_per_interaction"],
+                    tooltip=["blogger_nickname", "note_title", "total_cost", "interactions", "impressions", "cost_per_interaction", "note_tag"],
                 )
                 .properties(height=350)
             )
             _styled_chart(scatter_chart)
 
         with col_type:
-            st.markdown("##### 图文 vs 视频 体裁分布")
+            st.markdown("##### 图文 vs 视频 消耗占比")
             genre_df = df.groupby("note_type").agg(
                 count=("id", "count"),
                 spend=("total_cost", "sum"),
@@ -210,7 +270,7 @@ def page_pgy_dashboard() -> None:
 
             donut_chart = (
                 alt.Chart(genre_df)
-                .mark_arc(innerRadius=40)
+                .mark_arc(innerRadius=45)
                 .encode(
                     theta=alt.Theta("spend:Q", title="总费用"),
                     color=alt.Color("note_type:N", title="体裁"),
@@ -224,11 +284,11 @@ def page_pgy_dashboard() -> None:
         note_display_cols = [
             "publish_date", "blogger_nickname", "note_title", "note_type",
             "total_cost", "impressions", "reads", "interactions",
-            "cost_per_interaction", "cost_per_read"
+            "cost_per_interaction", "cost_per_read", "note_tag"
         ]
-        available_display_cols = [c for c in note_display_cols if c in df.columns]
+        available_cols = [c for c in note_display_cols if c in df.columns]
         st.dataframe(
-            df[available_display_cols].sort_values(by="publish_date", ascending=False),
+            df[available_cols].sort_values(by="publish_date", ascending=False),
             use_container_width=True,
             hide_index=True,
             column_config={
@@ -241,13 +301,14 @@ def page_pgy_dashboard() -> None:
                 "reads": st.column_config.NumberColumn("阅读量", format="%d"),
                 "interactions": st.column_config.NumberColumn("互动量", format="%d"),
                 "cost_per_interaction": st.column_config.NumberColumn("CPE", format="¥%.2f"),
-                "cost_per_read": st.column_config.NumberColumn("CPM/CPM单价", format="¥%.2f"),
+                "cost_per_read": st.column_config.NumberColumn("阅读单价", format="¥%.2f"),
+                "note_tag": st.column_config.TextColumn("智能标签"),
             },
         )
 
     # ── Tab 3: Bloggers ────────────────────────────────────────────────────────
     with tab_bloggers:
-        st.markdown("#### 博主投放汇总分析")
+        st.markdown("#### 博主投放绩效与复购分析")
 
         blogger_df = df.groupby("blogger_nickname").agg(
             notes_count=("id", "count"),
@@ -264,14 +325,14 @@ def page_pgy_dashboard() -> None:
 
         col_b1, col_b2 = st.columns(2)
         with col_b1:
-            st.markdown("##### 合作费用 Top 博主")
+            st.markdown("##### 合作总费用 Top 博主")
             chart_b_spend = (
                 alt.Chart(blogger_df.sort_values(by="total_spend", ascending=False).head(10))
-                .mark_bar(color="#3B82F6")
+                .mark_bar(color="#3B82F6", cornerRadiusEnd=4)
                 .encode(
                     x=alt.X("total_spend:Q", title="投放总额 (元)"),
                     y=alt.Y("blogger_nickname:N", sort="-x", title="博主"),
-                    tooltip=["blogger_nickname", "notes_count", "total_spend", "total_interactions", "avg_cpe"],
+                    tooltip=["blogger_nickname", "notes_count", "blogger_fans", "total_spend", "total_interactions", "avg_cpe"],
                 )
                 .properties(height=320)
             )
@@ -281,17 +342,17 @@ def page_pgy_dashboard() -> None:
             st.markdown("##### 带来总互动 Top 博主")
             chart_b_int = (
                 alt.Chart(blogger_df.sort_values(by="total_interactions", ascending=False).head(10))
-                .mark_bar(color="#EC4899")
+                .mark_bar(color="#EC4899", cornerRadiusEnd=4)
                 .encode(
                     x=alt.X("total_interactions:Q", title="产生互动量"),
                     y=alt.Y("blogger_nickname:N", sort="-x", title="博主"),
-                    tooltip=["blogger_nickname", "notes_count", "total_spend", "total_interactions", "avg_cpe"],
+                    tooltip=["blogger_nickname", "notes_count", "blogger_fans", "total_spend", "total_interactions", "avg_cpe"],
                 )
                 .properties(height=320)
             )
             _styled_chart(chart_b_int)
 
-        st.markdown("##### 博主合作统计表")
+        st.markdown("##### 达人合作绩效统计表")
         st.dataframe(
             blogger_df.sort_values(by="total_spend", ascending=False),
             use_container_width=True,
@@ -309,7 +370,7 @@ def page_pgy_dashboard() -> None:
 
     # ── Tab 4: Campaigns ──────────────────────────────────────────────────────
     with tab_campaigns:
-        st.markdown("#### 项目 / 合作名称汇总分析")
+        st.markdown("#### 项目 / 合作名称产出对比")
 
         campaign_df = df.groupby("cooperation_name").agg(
             notes_count=("id", "count"),
@@ -323,14 +384,14 @@ def page_pgy_dashboard() -> None:
             axis=1,
         )
 
-        st.markdown("##### 项目预算花费与产出")
+        st.markdown("##### 各项目预算花费分布")
         chart_camp = (
             alt.Chart(campaign_df)
-            .mark_bar(color="#6366F1")
+            .mark_bar(color="#6366F1", cornerRadiusEnd=4)
             .encode(
                 x=alt.X("cooperation_name:N", title="项目名称", sort="-y"),
                 y=alt.Y("total_spend:Q", title="总预算 (元)"),
-                tooltip=["cooperation_name", "notes_count", "total_spend", "total_interactions", "avg_cpe"],
+                tooltip=["cooperation_name", "notes_count", "total_spend", "total_impressions", "total_interactions", "avg_cpe"],
             )
             .properties(height=300)
         )
@@ -350,26 +411,169 @@ def page_pgy_dashboard() -> None:
             },
         )
 
-    # ── Tab 5: Traffic & Efficiency ───────────────────────────────────────────
-    with tab_traffic:
-        st.markdown("#### 流量来源结构 (自然流量 vs 推广流量)")
+    # ── Tab 5: Audience Demographics (受众画像) ──────────────────────────────────
+    with tab_audience:
+        st.markdown("#### 受众画像分析 (粉丝占比 / 性别 / 年龄 / 地域 / 兴趣)")
 
-        organic_imp = df["organic_impressions"].sum()
-        paid_imp = df["paid_impressions"].sum()
-        boosted_imp = df["boosted_impressions"].sum()
+        # Aggregate audience JSON
+        ages = {"<18": 0.0, "18~24": 0.0, "25~34": 0.0, "35~44": 0.0, ">44": 0.0}
+        genders = {"女": 0.0, "男": 0.0}
+        regions = {}
+        devices = {}
+        interests = {}
 
-        traffic_df = pd.DataFrame([
-            {"type": "自然流量曝光", "impressions": organic_imp},
-            {"type": "推广流量曝光", "impressions": paid_imp},
-            {"type": "加热流量曝光", "impressions": boosted_imp},
-        ])
+        valid_aud_count = 0
+        for _, row in df.iterrows():
+            f = _parse_pct(row.get("female_ratio"))
+            m = _parse_pct(row.get("male_ratio"))
+            if f > 0 or m > 0:
+                genders["女"] += f
+                genders["男"] += m
+                valid_aud_count += 1
 
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            st.markdown("##### 曝光流量构成占比")
+            aud_raw = row.get("audience_json")
+            if aud_raw:
+                try:
+                    aud = json.loads(aud_raw) if isinstance(aud_raw, str) else aud_raw
+                    if isinstance(aud, dict):
+                        # Age
+                        for ak, av in aud.get("age", {}).items():
+                            if ak in ages:
+                                ages[ak] += _parse_pct(av)
+
+                        # Devices
+                        for dev in aud.get("device_top3", []):
+                            if isinstance(dev, dict) and dev.get("name"):
+                                name = dev["name"].title()
+                                devices[name] = devices.get(name, 0.0) + _parse_pct(dev.get("ratio"))
+
+                        # Regions
+                        for reg in aud.get("region_top3", []):
+                            if isinstance(reg, dict) and reg.get("name"):
+                                name = reg["name"]
+                                regions[name] = regions.get(name, 0.0) + _parse_pct(reg.get("ratio"))
+
+                        # Interests
+                        for inter in aud.get("interest_top3", []):
+                            if isinstance(inter, dict) and inter.get("name"):
+                                name = inter["name"]
+                                interests[name] = interests.get(name, 0.0) + _parse_pct(inter.get("ratio"))
+                except Exception:
+                    pass
+
+        col_aud1, col_aud2 = st.columns(2)
+
+        with col_aud1:
+            st.markdown("##### 受众性别构成比例")
+            gender_df = pd.DataFrame([{"gender": k, "value": v} for k, v in genders.items() if v > 0])
+            if not gender_df.empty:
+                chart_g = (
+                    alt.Chart(gender_df)
+                    .mark_arc(innerRadius=40)
+                    .encode(
+                        theta=alt.Theta("value:Q"),
+                        color=alt.Color("gender:N", title="性别", scale=alt.Scale(range=["#F43F5E", "#3B82F6"])),
+                        tooltip=["gender", "value"],
+                    )
+                    .properties(height=280)
+                )
+                _styled_chart(chart_g)
+            else:
+                st.info("暂无性别分布数据。")
+
+        with col_aud2:
+            st.markdown("##### 受众年龄段分布占比")
+            age_df = pd.DataFrame([{"age": k, "score": v} for k, v in ages.items()])
+            chart_a = (
+                alt.Chart(age_df)
+                .mark_bar(color="#8B5CF6", cornerRadiusEnd=4)
+                .encode(
+                    x=alt.X("age:N", title="年龄段", sort=["<18", "18~24", "25~34", "35~44", ">44"]),
+                    y=alt.Y("score:Q", title="相对权重"),
+                    tooltip=["age", "score"],
+                )
+                .properties(height=280)
+            )
+            _styled_chart(chart_a)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_reg, col_dev, col_int = st.columns(3)
+
+        with col_reg:
+            st.markdown("##### 受众地域 Top 5")
+            reg_df = pd.DataFrame(sorted(regions.items(), key=lambda x: x[1], reverse=True)[:5], columns=["region", "score"])
+            if not reg_df.empty:
+                chart_r = (
+                    alt.Chart(reg_df)
+                    .mark_bar(color="#10B981", cornerRadiusEnd=4)
+                    .encode(
+                        x=alt.X("score:Q", title="权重"),
+                        y=alt.Y("region:N", sort="-x", title="省/市"),
+                        tooltip=["region", "score"],
+                    )
+                    .properties(height=260)
+                )
+                _styled_chart(chart_r)
+            else:
+                st.info("暂无地域数据。")
+
+        with col_dev:
+            st.markdown("##### 设备品牌 Top 5")
+            dev_df = pd.DataFrame(sorted(devices.items(), key=lambda x: x[1], reverse=True)[:5], columns=["device", "score"])
+            if not dev_df.empty:
+                chart_d = (
+                    alt.Chart(dev_df)
+                    .mark_bar(color="#F59E0B", cornerRadiusEnd=4)
+                    .encode(
+                        x=alt.X("score:Q", title="权重"),
+                        y=alt.Y("device:N", sort="-x", title="品牌"),
+                        tooltip=["device", "score"],
+                    )
+                    .properties(height=260)
+                )
+                _styled_chart(chart_d)
+            else:
+                st.info("暂无设备数据。")
+
+        with col_int:
+            st.markdown("##### 兴趣偏好 Top 5")
+            int_df = pd.DataFrame(sorted(interests.items(), key=lambda x: x[1], reverse=True)[:5], columns=["interest", "score"])
+            if not int_df.empty:
+                chart_i = (
+                    alt.Chart(int_df)
+                    .mark_bar(color="#EC4899", cornerRadiusEnd=4)
+                    .encode(
+                        x=alt.X("score:Q", title="权重"),
+                        y=alt.Y("interest:N", sort="-x", title="兴趣"),
+                        tooltip=["interest", "score"],
+                    )
+                    .properties(height=260)
+                )
+                _styled_chart(chart_i)
+            else:
+                st.info("暂无兴趣数据。")
+
+    # ── Tab 6: Components & Traffic (组件与流量) ──────────────────────────────────
+    with tab_components:
+        st.markdown("#### 流量来源结构与互动/组件转化分析")
+
+        col_tr1, col_tr2 = st.columns(2)
+
+        with col_tr1:
+            st.markdown("##### 曝光流量构成 (自然 vs 推广 vs 加热)")
+            organic_imp = df["organic_impressions"].sum()
+            paid_imp = df["paid_impressions"].sum()
+            boosted_imp = df["boosted_impressions"].sum()
+
+            traffic_df = pd.DataFrame([
+                {"type": "自然流量曝光", "impressions": organic_imp},
+                {"type": "推广流量曝光", "impressions": paid_imp},
+                {"type": "加热流量曝光", "impressions": boosted_imp},
+            ])
+
             chart_t_pie = (
                 alt.Chart(traffic_df)
-                .mark_arc(innerRadius=50)
+                .mark_arc(innerRadius=45)
                 .encode(
                     theta=alt.Theta("impressions:Q"),
                     color=alt.Color("type:N", title="流量来源"),
@@ -379,23 +583,25 @@ def page_pgy_dashboard() -> None:
             )
             _styled_chart(chart_t_pie)
 
-        with col_t2:
-            st.markdown("##### 互动构成 (点赞/收藏/评论/分享)")
+        with col_tr2:
+            st.markdown("##### 互动漏斗构成 (点赞/收藏/评论/分享/关注)")
             likes_sum = df["likes"].sum()
             collects_sum = df["collects"].sum()
             comments_sum = df["comments"].sum()
             shares_sum = df["shares"].sum()
+            follows_sum = df["follows"].sum()
 
             inter_df = pd.DataFrame([
                 {"type": "点赞", "count": likes_sum},
                 {"type": "收藏", "count": collects_sum},
                 {"type": "评论", "count": comments_sum},
                 {"type": "分享", "count": shares_sum},
+                {"type": "关注", "count": follows_sum},
             ])
 
             chart_inter_pie = (
                 alt.Chart(inter_df)
-                .mark_arc(innerRadius=50)
+                .mark_arc(innerRadius=45)
                 .encode(
                     theta=alt.Theta("count:Q"),
                     color=alt.Color("type:N", title="互动类型"),
@@ -405,14 +611,43 @@ def page_pgy_dashboard() -> None:
             )
             _styled_chart(chart_inter_pie)
 
-    # ── Tab 6: Raw Data & Export ──────────────────────────────────────────────
+        st.markdown("##### 蒲公英转化组件效果明细 (正文组件 / 评论区组件 / 搜搜组件)")
+        comp_rows = []
+        for _, row in df.iterrows():
+            comp_raw = row.get("component_json")
+            if comp_raw:
+                try:
+                    comp = json.loads(comp_raw) if isinstance(comp_raw, str) else comp_raw
+                    if isinstance(comp, dict):
+                        for c_loc, c_data in comp.items():
+                            if isinstance(c_data, dict) and c_data.get("type"):
+                                comp_rows.append({
+                                    "blogger_nickname": row.get("blogger_nickname"),
+                                    "note_title": row.get("note_title"),
+                                    "component_location": c_loc,
+                                    "component_type": c_data.get("type"),
+                                    "component_text": c_data.get("text") or c_data.get("title") or "—",
+                                    "impressions": c_data.get("impressions") or c_data.get("impression_users") or "0",
+                                    "clicks": c_data.get("clicks") or c_data.get("participants") or "0",
+                                    "ctr": c_data.get("ctr") or c_data.get("participation_rate") or "0.0%",
+                                })
+                except Exception:
+                    pass
+
+        if comp_rows:
+            comp_df = pd.DataFrame(comp_rows)
+            st.dataframe(comp_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("当前合作笔记中未检测到配置挂载组件的数据。")
+
+    # ── Tab 7: Raw Data & Export ──────────────────────────────────────────────
     with tab_raw:
         st.markdown("#### 数据明细与 CSV 导出")
         st.dataframe(df, use_container_width=True)
 
         csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
-            label="下载蒲公英合作明细 CSV",
+            label="下载蒲公英合作明细 CSV (UTF-8 Excel 兼容)",
             data=csv_bytes,
             file_name=f"pgy_notes_{selected_acc_name}_{date.today().isoformat()}.csv",
             mime="text/csv",
