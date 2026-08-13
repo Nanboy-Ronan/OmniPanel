@@ -387,6 +387,7 @@ class XhsAccount(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     posts = relationship("XhsPost", back_populates="account", cascade="all, delete-orphan")
+    pgy_notes = relationship('PgyNote', back_populates='account', cascade='all, delete-orphan')
 
 
 class XhsPost(Base):
@@ -477,4 +478,91 @@ class SavedQuery(Base):
     __table_args__ = (
         Index("ix_saved_query_user_id", "user_id"),
         Index("ix_saved_query_shared", "is_shared"),
+    )
+
+
+class PgyNote(Base):
+    __tablename__ = "pgy_notes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey('xhs_accounts.id', ondelete='CASCADE'), nullable=False)
+    
+    # Blogger fields
+    blogger_nickname = Column(String(200), nullable=True)
+    blogger_url = Column(String(500), nullable=True)
+    blogger_fans = Column(Integer, nullable=True)
+    blogger_health = Column(String(50), nullable=True)
+    
+    # Note fields
+    note_title = Column(String(500), nullable=True)
+    note_url = Column(String(500), nullable=True)
+    note_type = Column(String(32), nullable=True)
+    publish_date = Column(Date, nullable=True)
+    note_source = Column(String(50), nullable=True)
+    note_id = Column(String(100), nullable=False)
+    content_tag = Column(String(100), nullable=True)
+    
+    # Order fields
+    order_id = Column(String(100), nullable=True)
+    cooperation_name = Column(String(500), nullable=True)
+    report_brand = Column(String(200), nullable=True)
+    order_account = Column(String(200), nullable=True)
+    blogger_quote = Column(Float, nullable=True)
+    service_fee = Column(Float, nullable=True)
+    is_premium_mode = Column(String(10), nullable=True)
+    
+    # SPU
+    spu_name = Column(String(200), nullable=True)
+    
+    # Traffic
+    impressions = Column(Integer, nullable=True)
+    reads = Column(Integer, nullable=True)
+    read_uv = Column(Integer, nullable=True)
+    play_rate_5s = Column(String(20), nullable=True)
+    read_rate_3s = Column(String(20), nullable=True)
+    video_duration = Column(Float, nullable=True)
+    avg_view_duration = Column(Float, nullable=True)
+    video_completion_rate = Column(String(20), nullable=True)
+    
+    # Engagement
+    interactions = Column(Integer, nullable=True)
+    interaction_rate = Column(String(20), nullable=True)
+    likes = Column(Integer, nullable=True)
+    collects = Column(Integer, nullable=True)
+    comments = Column(Integer, nullable=True)
+    shares = Column(Integer, nullable=True)
+    follows = Column(Integer, nullable=True)
+    
+    # Organic/paid
+    organic_impressions = Column(Integer, nullable=True)
+    organic_reads = Column(Integer, nullable=True)
+    paid_impressions = Column(Integer, nullable=True)
+    paid_reads = Column(Integer, nullable=True)
+    boosted_impressions = Column(Integer, nullable=True)
+    boosted_reads = Column(Integer, nullable=True)
+    
+    # Cost
+    cost_per_read = Column(Float, nullable=True)
+    cost_per_interaction = Column(Float, nullable=True)
+    
+    # Audience
+    fan_ratio = Column(String(20), nullable=True)
+    female_ratio = Column(String(20), nullable=True)
+    male_ratio = Column(String(20), nullable=True)
+    
+    # JSON blobs
+    audience_json = Column(Text, nullable=True)
+    component_json = Column(Text, nullable=True)
+    
+    # Timestamps
+    data_date = Column(Date, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    account = relationship('XhsAccount', back_populates='pgy_notes')
+
+    __table_args__ = (
+        UniqueConstraint('account_id', 'note_id', name='uq_pgy_notes_account_note_id'),
+        Index('ix_pgy_notes_account_id', 'account_id'),
+        Index('ix_pgy_notes_publish_date', 'publish_date'),
     )

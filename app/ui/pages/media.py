@@ -69,7 +69,7 @@ def _generate_overall_analysis(df, overview):
 
 
 def page_media() -> None:
-    _page_hero("公众号数据")
+    _page_hero("公众号内容分析")
     client = st.session_state["client"]
 
     default_end = date.today()

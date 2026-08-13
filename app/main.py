@@ -40,6 +40,7 @@ from .views.ecommerce   import upload_router, analysis_router, orders_all_router
 from .views.media       import media_router, media_upload_router
 from .views.media.xhs    import router as xhs_router              # POST /media/xhs/upload
 from .views.media.zhihu  import router as zhihu_router            # POST /media/zhihu/upload
+from .views.media.pgy    import router as pgy_router              # POST /media/pgy/upload
 # Platform
 from .views.admin         import router as admin_router          # POST /admin/clear-db
 from .views.collector_admin import router as collector_admin_router  # /admin/collector/*
@@ -150,9 +151,10 @@ app.include_router(identity_router)      # /analysis/identity/clusters
 app.include_router(admin_router)         # /admin/clear-db
 app.include_router(collector_admin_router)  # /admin/collector/*
 app.include_router(media_router)         # /media/
-app.include_router(media_upload_router)   # /media/upload, /media/uploads, /media/accounts (POST)
+app.include_router(media_upload_router)   # /media/accounts (POST)
 app.include_router(xhs_router)            # /media/xhs/upload
 app.include_router(zhihu_router)          # /media/zhihu/upload
+app.include_router(pgy_router)            # /media/pgy/*
 app.include_router(saved_queries_router)  # /saved-queries/
 
 # ─── Health check ───────────────────────────────────────────────────────────

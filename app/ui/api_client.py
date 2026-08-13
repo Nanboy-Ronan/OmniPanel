@@ -491,6 +491,35 @@ class APIClient:
             timeout=self._timeout(),
         )
 
+    # ── Pugongying (蒲公英) ──────────────────────────────────────────────
+    
+    def upload_pgy(self, file_bytes: bytes, filename: str, account_id: int) -> requests.Response:
+        """Upload a Pugongying xlsx export for upsert into pgy_notes."""
+        return self._session.post(
+            f"{self.base_url}/media/pgy/upload",
+            data={"account_id": account_id},
+            files={"file": (filename, file_bytes, "application/octet-stream")},
+            headers={k: v for k, v in self._headers().items() if k != "Content-Type"},
+            timeout=self._timeout(60),
+        )
+    
+    def pgy_notes(self, account_id=None, start_date=None, end_date=None, limit=500):
+        params = {"limit": limit}
+        if account_id is not None: params["account_id"] = account_id
+        if start_date: params["start_date"] = start_date
+        if end_date: params["end_date"] = end_date
+        return self._session.get(f"{self.base_url}/media/pgy/notes", params=params, headers=self._headers(), timeout=self._timeout())
+    
+    def pgy_bloggers(self, account_id=None, limit=100):
+        params = {"limit": limit}
+        if account_id is not None: params["account_id"] = account_id
+        return self._session.get(f"{self.base_url}/media/pgy/bloggers", params=params, headers=self._headers(), timeout=self._timeout())
+    
+    def pgy_campaigns(self, account_id=None, limit=100):
+        params = {"limit": limit}
+        if account_id is not None: params["account_id"] = account_id
+        return self._session.get(f"{self.base_url}/media/pgy/campaigns", params=params, headers=self._headers(), timeout=self._timeout())
+
     # ── Zhihu ─────────────────────────────────────────────────────────────────
 
     def upload_zhihu(self, file_bytes: bytes, filename: str, content_type: str) -> requests.Response:
@@ -589,28 +618,6 @@ class APIClient:
             headers=self._headers(),
             timeout=self._timeout(),
         )
-
-    # def media_upload(                          # disabled xlsx upload 2026-06-01
-    #     self,
-    #     filename: str,
-    #     data: bytes,
-    #     account_id: int,
-    # ) -> requests.Response:
-    #     return self._session.post(
-    #         f"{self.base_url}/media/upload",
-    #         files={"file": (filename, data)},
-    #         data={"account_id": str(account_id)},
-    #         headers=self._headers(),
-    #         timeout=self._timeout(60),
-    #     )
-
-    # def media_uploads(self, limit: int = 20) -> requests.Response:  # disabled xlsx upload 2026-06-01
-    #     return self._session.get(
-    #         f"{self.base_url}/media/uploads",
-    #         params={"limit": limit},
-    #         headers=self._headers(),
-    #         timeout=self._timeout(),
-    #     )
 
     def media_sync_wechat(
         self,

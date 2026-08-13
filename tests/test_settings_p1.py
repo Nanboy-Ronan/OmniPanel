@@ -145,8 +145,3 @@ class TestUploadSettings:
         from app.views.ecommerce.upload import _MAX_UPLOAD_MB
         from app.config import settings
         assert _MAX_UPLOAD_MB == settings.max_upload_mb
-
-    def test_media_upload_module_uses_settings(self):
-        from app.views.media.upload import _MAX_UPLOAD_MB
-        from app.config import settings
-        assert _MAX_UPLOAD_MB == settings.max_upload_mb

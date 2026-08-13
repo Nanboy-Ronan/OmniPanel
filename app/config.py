@@ -162,6 +162,7 @@ class Settings(BaseSettings):
     collector_enabled: bool = False
     collector_xhs_enabled: bool = True
     collector_zhihu_enabled: bool = True
+    collector_pugongying_enabled: bool = True
     # Base directory for saved login sessions, scratch downloads, and
     # failure-debug artifacts. On the VM this is under /var/lib/rpa (the only
     # path writable by the hardened rpa-backend/rpa-collector systemd units).

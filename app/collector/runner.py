@@ -32,7 +32,7 @@ _ZHIHU_CONTENT_LABEL = {"article": "文章", "qa": "问答"}
 
 @dataclasses.dataclass
 class Target:
-    platform: Literal["xhs", "zhihu"]
+    platform: Literal["xhs", "zhihu", "pugongying"]
     session_file: Path
     account_id: int | None = None
     content_type: str | None = None
@@ -47,6 +47,9 @@ class Target:
         if self.platform == "xhs":
             who = self.account_name or f"账号#{self.account_id}"
             return f"小红书·{who}"
+        if self.platform == "pugongying":
+            who = self.account_name or f"账号#{self.account_id}"
+            return f"蒲公英·{who}"
         return f"知乎·{_ZHIHU_CONTENT_LABEL.get(self.content_type, self.content_type)}"
 
 
@@ -83,19 +86,34 @@ def build_targets(api, settings=None) -> list[Target]:
                 session_file=zhihu_session,
             ))
 
+    if getattr(settings, "collector_pugongying_enabled", False):
+        resp = api.xhs_accounts()
+        resp.raise_for_status()
+        for acc in resp.json():
+            if not acc.get("is_active", True):
+                continue
+            targets.append(Target(
+                platform="pugongying",
+                account_id=acc["id"],
+                account_name=acc.get("name"),
+                session_file=session_path("pugongying", acc["id"]),
+            ))
+
     return targets
 
 
 def _default_collect_fns() -> dict[str, Callable]:
+    from .pugongying import collect_pugongying
     from .xhs import collect_xhs
     from .zhihu import collect_zhihu
-    return {"xhs": collect_xhs, "zhihu": collect_zhihu}
+    return {"xhs": collect_xhs, "zhihu": collect_zhihu, "pugongying": collect_pugongying}
 
 
 def _default_verify_fns() -> dict[str, Callable]:
+    from .pugongying import verify_pugongying_session
     from .xhs import verify_xhs_session
     from .zhihu import verify_zhihu_session
-    return {"xhs": verify_xhs_session, "zhihu": verify_zhihu_session}
+    return {"xhs": verify_xhs_session, "zhihu": verify_zhihu_session, "pugongying": verify_pugongying_session}
 
 
 def _login_api_client(settings, *, log_prefix: str):
@@ -113,6 +131,8 @@ def _login_api_client(settings, *, log_prefix: str):
 def _collect_one(target: Target, collect_fns: dict[str, Callable], headless: bool | None) -> tuple[bytes, str]:
     if target.platform == "xhs":
         return collect_fns["xhs"](target.session_file, headless=headless)
+    if target.platform == "pugongying":
+        return collect_fns["pugongying"](target.session_file, headless=headless)
     return collect_fns["zhihu"](target.session_file, target.content_type, headless=headless)
 
 
@@ -145,6 +165,8 @@ def _collect_with_retry(
 def _upload_one(api, target: Target, data: bytes, filename: str) -> dict:
     if target.platform == "xhs":
         resp = api.upload_xhs(data, filename, target.account_id)
+    elif target.platform == "pugongying":
+        resp = api.upload_pgy(data, filename, target.account_id)
     else:
         resp = api.upload_zhihu(data, filename, target.content_type)
     if resp.status_code != 200:

@@ -29,10 +29,11 @@ import sys
 
 def _cmd_bootstrap_login(args: argparse.Namespace) -> int:
     from .browser import fresh_context, looks_like_login, visible_text
+    from .pugongying import PGY_HOME_URL
     from .xhs import XHS_LOGIN_URL, XHS_SELECT_ACCOUNT_URL_MARKER
     from .zhihu import ZHIHU_DATA_URL
 
-    portal_url = {"xhs": XHS_LOGIN_URL, "zhihu": ZHIHU_DATA_URL}[args.platform]
+    portal_url = {"xhs": XHS_LOGIN_URL, "zhihu": ZHIHU_DATA_URL, "pugongying": PGY_HOME_URL}[args.platform]
 
     print(f"打开 {args.platform} 登录页，请在弹出的浏览器窗口中完成登录"
           f"（小红书专业号目前是手机号+短信验证码，不是扫码）……")
@@ -83,6 +84,7 @@ def _cmd_bootstrap_login(args: argparse.Namespace) -> int:
 
 def _cmd_verify_session(args: argparse.Namespace) -> int:
     from .paths import session_path
+    from .pugongying import verify_pugongying_session
     from .xhs import verify_xhs_session
     from .zhihu import verify_zhihu_session
 
@@ -91,7 +93,7 @@ def _cmd_verify_session(args: argparse.Namespace) -> int:
         print(f"未找到登录态文件: {path}", file=sys.stderr)
         return 1
 
-    verify_fn = {"xhs": verify_xhs_session, "zhihu": verify_zhihu_session}[args.platform]
+    verify_fn = {"xhs": verify_xhs_session, "zhihu": verify_zhihu_session, "pugongying": verify_pugongying_session}[args.platform]
     valid = verify_fn(path, headless=not args.headed)
 
     if not valid:
@@ -125,18 +127,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_bootstrap = sub.add_parser("bootstrap-login", help="本地有头浏览器扫码登录，生成 storage_state.json")
-    p_bootstrap.add_argument("--platform", required=True, choices=["xhs", "zhihu"])
+    p_bootstrap.add_argument("--platform", required=True, choices=["xhs", "zhihu", "pugongying"])
     p_bootstrap.add_argument("--out", required=True, help="storage_state.json 输出路径")
     p_bootstrap.set_defaults(func=_cmd_bootstrap_login)
 
     p_verify = sub.add_parser("verify-session", help="检查已保存的登录态是否仍然有效")
-    p_verify.add_argument("--platform", required=True, choices=["xhs", "zhihu"])
+    p_verify.add_argument("--platform", required=True, choices=["xhs", "zhihu", "pugongying"])
     p_verify.add_argument("--account-id", type=int, default=None)
     p_verify.add_argument("--headed", action="store_true")
     p_verify.set_defaults(func=_cmd_verify_session)
 
     p_collect = sub.add_parser("collect", help="执行一次采集（默认：全部已启用目标）")
-    p_collect.add_argument("--platform", choices=["xhs", "zhihu"], default=None)
+    p_collect.add_argument("--platform", choices=["xhs", "zhihu", "pugongying"], default=None)
     p_collect.add_argument("--account-id", type=int, default=None)
     p_collect.add_argument("--content-type", choices=["article", "qa"], default=None)
     p_collect.add_argument("--dry-run", action="store_true", help="仅下载不上传")

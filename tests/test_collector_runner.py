@@ -19,6 +19,7 @@ class _FakeSettings:
     collector_enabled: bool = True
     collector_xhs_enabled: bool = True
     collector_zhihu_enabled: bool = True
+    collector_pugongying_enabled: bool = False
     collector_api_url: str = "http://fake"
     collector_service_email: str | None = "svc@example.com"
     collector_service_password: str | None = "pw"
