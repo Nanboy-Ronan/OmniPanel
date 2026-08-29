@@ -264,7 +264,8 @@ MINIMAX_API_KEY=eyJ...             # 或 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY �
 
 正在推进：
 
-- **抖音小店 & 视频号** —— 两个平台尚无稳定的官方导出，持续跟踪
+- **视频号 / 抖音 / 微博 / B 站** —— 扩展短视频与社交平台的数据分析，持续跟踪各平台稳定的官方 API / 导出能力，成熟后再接入
+- **小红书商城订单** —— 在现有的内容/KOL 数据基础上，接入小红书自营电商的订单分析
 - **飞书 / 钉钉推送** —— 将已保存的查询结果推送到团队协作工具
 
 考虑中（欢迎在 [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions) 参与讨论）：

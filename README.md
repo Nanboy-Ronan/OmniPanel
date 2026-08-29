@@ -264,7 +264,8 @@ Changing `RAP_SECRET` directly logs out every user. Use `RAP_SECRET_PREVIOUS` fo
 
 In progress:
 
-- **Douyin Shop & WeChat Video Channels** — tracking for stable official export availability
+- **Video & social platform expansion (WeChat Video Channels, Douyin, Weibo, Bilibili)** — tracking for stable official API/export availability on each platform before building the connector
+- **Xiaohongshu (XHS) Marketplace orders** — e-commerce order analytics for XHS's own marketplace, alongside its existing content/KOL data
 - **Feishu / DingTalk push** — send saved query results to team collaboration tools
 
 Under consideration (join the [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions)):
