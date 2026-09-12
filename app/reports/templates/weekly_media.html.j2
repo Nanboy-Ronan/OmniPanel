@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>周报 {{ context.bounds.this_week_start }} ~ {{ context.bounds.this_week_end }}</title>
+<style>
+  :root {
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-secondary: #52514e;
+    --ink-muted: #898781;
+    --gridline: #e1e0d9;
+    --border: rgba(11,11,11,0.10);
+    --accent: #2a78d6;
+    --accent-wash: #eaf2fc;
+    --good: #0ca30c;
+    --good-text: #006300;
+    --good-bg: #e6f5e6;
+    --critical: #d03b3b;
+    --critical-bg: #fbe9e8;
+    --neutral-bg: #f0efec;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1120px; margin: 0 auto; padding: 32px 20px 64px; }
+
+  h1 { font-size: 26px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 {
+    font-size: 17px; font-weight: 650; color: var(--ink); margin: 40px 0 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  h2::before { content: ""; width: 4px; height: 16px; background: var(--accent); border-radius: 2px; display: inline-block; }
+  h3 { font-size: 16px; font-weight: 650; margin: 0; }
+  h4 { font-size: 13px; font-weight: 650; color: var(--ink-secondary); margin: 22px 0 10px; text-transform: none; }
+
+  .meta { color: var(--ink-muted); font-size: 13px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
+
+  .narrative {
+    background: var(--accent-wash); border: 1px solid #d3e3f8; border-radius: 10px;
+    padding: 16px 18px; margin: 20px 0 8px; white-space: pre-wrap; font-size: 14px;
+    color: var(--ink);
+  }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 22px 22px; margin-bottom: 20px;
+  }
+  .card-header {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 14px;
+  }
+
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin: 4px 0 18px; }
+  .kpi {
+    background: var(--page); border-radius: 8px; padding: 12px 14px;
+  }
+  .kpi-label { font-size: 12px; color: var(--ink-muted); }
+  .kpi-value { font-size: 24px; font-weight: 650; margin-top: 3px; letter-spacing: -0.01em; }
+  .kpi-delta { font-size: 12px; margin-top: 4px; color: var(--ink-muted); }
+  .kpi-delta .arrow-up { color: var(--good-text); font-weight: 650; }
+  .kpi-delta .arrow-down { color: var(--critical); font-weight: 650; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
+  .table-scroll { overflow-x: auto; }
+  th, td {
+    text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }
+  th {
+    color: var(--ink-muted); font-weight: 600; font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: 0.02em;
+  }
+  td.title { white-space: normal; max-width: 340px; color: var(--ink); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:nth-child(even) { background: var(--page); }
+  tbody tr.row-muted td { color: var(--ink-muted); }
+
+  .badge {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 7px;
+    border-radius: 100px; margin-left: 6px; white-space: nowrap;
+  }
+  .badge.good { background: var(--good-bg); color: var(--good-text); }
+  .badge.critical { background: var(--critical-bg); color: var(--critical); }
+  .badge.neutral { background: var(--neutral-bg); color: var(--ink-secondary); }
+  .dim { color: var(--ink-muted); }
+
+  .caveat { font-size: 12.5px; color: var(--ink-muted); margin: 8px 0 0; }
+  .sparkline { display: block; }
+
+  details.long-tail { margin-top: 10px; }
+  details.long-tail > summary {
+    cursor: pointer; font-size: 12.5px; color: var(--accent); font-weight: 600;
+    padding: 6px 0; list-style: none;
+  }
+  details.long-tail > summary::-webkit-details-marker { display: none; }
+  details.long-tail > summary::before { content: "▸ "; }
+  details.long-tail[open] > summary::before { content: "▾ "; }
+  details.long-tail table { margin-top: 8px; }
+
+  .empty-note { color: var(--ink-muted); font-size: 13px; padding: 8px 0; }
+  footer.report-footer { margin-top: 36px; font-size: 12px; color: var(--ink-muted); text-align: center; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>公众号 + 小红书 周报</h1>
+<div class="meta-row">
+  <span>本周：{{ context.bounds.this_week_start }} ~ {{ context.bounds.this_week_end }}</span>
+  <span>上周：{{ context.bounds.last_week_start }} ~ {{ context.bounds.last_week_end }}</span>
+  <span>生成时间：{{ context.generated_at | fmt_date }}</span>
+</div>
+
+{% if narrative %}
+<div class="narrative">{{ narrative }}</div>
+{% endif %}
+
+<h2>公众号</h2>
+{% for section in context.wechat_sections %}
+{% set totals_this = section.totals_this_week %}
+{% set totals_last = section.totals_last_week %}
+<div class="card">
+  <div class="card-header">
+    <h3>{{ section.account.name }}</h3>
+    {% set snap = section.snapshot_range_used %}
+    {% if snap[0] and snap[1] %}
+      <span class="meta">取数快照：{{ snap[0] }} ~ {{ snap[1] }}</span>
+    {% endif %}
+    {% if section.last_sync_at %}
+      <span class="meta">· 最近同步成功：{{ section.last_sync_at | fmt_date }}</span>
+    {% endif %}
+  </div>
+
+  <div class="kpi-row">
+    {% for field, label in [("read_user_count","阅读人数"), ("like_user","点赞"), ("share_user_count","转发"), ("comment_count","评论"), ("collection_user","收藏")] %}
+    {% set this_v = totals_this[field] %}
+    {% set last_v = totals_last[field] %}
+    {% set diff = this_v - last_v %}
+    <div class="kpi">
+      <div class="kpi-label">{{ label }}（本周）</div>
+      <div class="kpi-value">{{ this_v | fmt_int }}</div>
+      <div class="kpi-delta">
+        {% if diff > 0 %}<span class="arrow-up">▲ {{ diff | fmt_int }}</span>{% elif diff < 0 %}<span class="arrow-down">▼ {{ (-diff) | fmt_int }}</span>{% else %}持平{% endif %}
+        <span class="dim">· 上周 {{ last_v | fmt_int }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <h4>关注数据（账号整体） <span class="badge neutral">无法归因到单篇文章</span></h4>
+  {% if section.follower.available %}
+  {% set fw = section.follower %}
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-label">本周新增关注</div><div class="kpi-value">{{ fw.this_week.new_user | fmt_int }}</div><div class="kpi-delta dim">上周 {{ fw.last_week.new_user | fmt_int }}</div></div>
+    <div class="kpi"><div class="kpi-label">本周取消关注</div><div class="kpi-value">{{ fw.this_week.cancel_user | fmt_int }}</div><div class="kpi-delta dim">上周 {{ fw.last_week.cancel_user | fmt_int }}</div></div>
+    <div class="kpi"><div class="kpi-label">本周净增关注</div><div class="kpi-value">{{ fw.this_week.net | fmt_int }}</div><div class="kpi-delta dim">上周 {{ fw.last_week.net | fmt_int }}</div></div>
+  </div>
+  {% if fw.by_scene %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>关注来源渠道</th><th class="num">本周新增关注数</th></tr></thead>
+    <tbody>
+    {% for label, count in fw.by_scene %}
+      <tr><td>{{ label }}</td><td class="num">{{ count | fmt_int }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  {% if fw.daily_table %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>日期</th><th class="num">新增关注</th><th class="num">取消关注</th></tr></thead>
+    <tbody>
+    {% for day, counts in fw.daily_table %}
+      <tr><td>{{ day | fmt_date }}</td><td class="num">{{ counts.new_user | fmt_int }}</td><td class="num">{{ counts.cancel_user | fmt_int }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="caveat">本周关注数据获取失败：{{ section.follower.error }}</p>
+  {% endif %}
+
+  {% set top_articles = section.articles[:12] %}
+  {% set rest_articles = section.articles[12:] %}
+  <h4>单篇文章明细（按本周阅读人数排序{% if section.articles|length > 12 %}，仅展示前 12{% endif %}）</h4>
+  {% if section.articles %}
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>标题</th><th>发布日期</th><th class="num">本周新增阅读</th><th class="num">上周新增阅读</th>
+        <th class="num">截至本周末完读率</th><th class="num">截至本周末人均阅读时长(分钟)</th><th>新增关注</th><th>近14天趋势</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for a in top_articles %}
+      <tr class="{{ 'row-muted' if not a.complete else '' }}">
+        <td class="title">{{ a.title }}
+          {% if a.is_new_this_week %}<span class="badge good">本周新发</span>{% endif %}
+          {% if not a.complete %}<span class="badge critical">数据不完整</span>{% endif %}
+        </td>
+        <td>{{ a.publish_date | fmt_date }}</td>
+        <td class="num">{{ a.counts_this_week.read_user_count | fmt_int }}</td>
+        <td class="num">{{ a.counts_last_week.read_user_count | fmt_int }}</td>
+        <td class="num">{{ a.rates_as_of_this_week.read_finish_rate | fmt_pct }}</td>
+        <td class="num">{{ a.rates_as_of_this_week.read_avg_time | fmt_num }}</td>
+        <td class="dim">—</td>
+        <td>{% if a.daily_reads is defined %}{{ a.daily_reads | sparkline | safe }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if rest_articles %}
+  <details class="long-tail">
+    <summary>其余 {{ rest_articles | length }} 篇文章（本周阅读量较低，点击展开）</summary>
+    <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>标题</th><th>发布日期</th><th class="num">本周新增阅读</th><th class="num">上周新增阅读</th><th class="num">截至本周末完读率</th></tr>
+      </thead>
+      <tbody>
+      {% for a in rest_articles %}
+        <tr class="{{ 'row-muted' if not a.complete else '' }}">
+          <td class="title">{{ a.title }}
+            {% if a.is_new_this_week %}<span class="badge good">本周新发</span>{% endif %}
+            {% if not a.complete %}<span class="badge critical">数据不完整</span>{% endif %}
+          </td>
+          <td>{{ a.publish_date | fmt_date }}</td>
+          <td class="num">{{ a.counts_this_week.read_user_count | fmt_int }}</td>
+          <td class="num">{{ a.counts_last_week.read_user_count | fmt_int }}</td>
+          <td class="num">{{ a.rates_as_of_this_week.read_finish_rate | fmt_pct }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+  {% endif %}
+  <p class="caveat">"新增关注"列：微信官方 API 不提供单篇文章的关注归因，只有账号整体数据（见上方"关注数据"）。</p>
+  {% else %}
+  <p class="empty-note">本周及上周窗口内没有文章数据。</p>
+  {% endif %}
+</div>
+{% else %}
+<p class="empty-note">没有已配置且启用的公众号账号。</p>
+{% endfor %}
+
+<h2>小红书</h2>
+{% if context.xhs_last_collector_run %}
+<p class="meta" style="margin-bottom: 12px;">最近一次成功采集：{{ context.xhs_last_collector_run | fmt_date }}</p>
+{% endif %}
+{% for section in context.xhs_sections %}
+<div class="card">
+  <div class="card-header"><h3>{{ section.account.name }}</h3></div>
+
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-label">本周新发布</div><div class="kpi-value">{{ section.this_week_summary.count | fmt_int }}</div><div class="kpi-delta dim">上周 {{ section.last_week_summary.count | fmt_int }}</div></div>
+    <div class="kpi"><div class="kpi-label">平均观看量</div><div class="kpi-value">{{ section.this_week_summary.avg_views | fmt_int }}</div><div class="kpi-delta dim">上周 {{ section.last_week_summary.avg_views | fmt_int }}</div></div>
+    <div class="kpi"><div class="kpi-label">平均观看时长(秒)</div><div class="kpi-value">{{ section.this_week_summary.avg_watch_time | fmt_num }}</div><div class="kpi-delta dim">上周 {{ section.last_week_summary.avg_watch_time | fmt_num }}</div></div>
+    <div class="kpi"><div class="kpi-label">累计涨粉</div><div class="kpi-value">{{ section.this_week_summary.total_new_followers | fmt_int }}</div><div class="kpi-delta dim">上周 {{ section.last_week_summary.total_new_followers | fmt_int }}</div></div>
+  </div>
+  <p class="caveat">{{ section.wow_caveat }}</p>
+
+  <h4>本周新发布内容单篇数据</h4>
+  {% if section.this_week_posts %}
+  <div class="table-scroll">
+  <table>
+    <thead>
+      <tr>
+        <th>标题</th><th>发布日期</th><th class="num">观看量</th><th class="num">人均观看时长(秒)</th>
+        <th class="num">观看总时长(秒) <span class="badge neutral">推算</span></th>
+        <th class="num">涨粉</th><th class="num">点赞</th><th class="num">评论</th><th class="num">收藏</th><th class="num">分享</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for p in section.this_week_posts %}
+      <tr>
+        <td class="title">{{ p.title }}</td>
+        <td>{{ p.publish_date | fmt_date }}</td>
+        <td class="num">{{ p.views | fmt_int }}</td>
+        <td class="num">{{ p.avg_watch_time | fmt_num }}</td>
+        <td class="num">{{ p.estimated_total_watch_time | fmt_int }}</td>
+        <td class="num">{{ p.new_followers | fmt_int }}</td>
+        <td class="num">{{ p.likes | fmt_int }}</td>
+        <td class="num">{{ p.comments | fmt_int }}</td>
+        <td class="num">{{ p.collects | fmt_int }}</td>
+        <td class="num">{{ p.shares | fmt_int }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty-note">本周没有新发布内容。</p>
+  {% endif %}
+  <p class="caveat">{{ section.estimated_watch_time_caveat }}</p>
+
+  <h4>近30天涨粉来源 Top 5 <span class="badge neutral">累计口径</span></h4>
+  {% if section.top_follower_sources %}
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>标题</th><th>发布日期</th><th class="num">涨粉</th></tr></thead>
+    <tbody>
+    {% for p in section.top_follower_sources %}
+      <tr><td class="title">{{ p.title }}</td><td>{{ p.publish_date | fmt_date }}</td><td class="num">{{ p.new_followers | fmt_int }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty-note">近30天没有数据。</p>
+  {% endif %}
+  <p class="caveat">{{ section.follower_source_caveat }}</p>
+
+  <h4>未采集指标</h4>
+  <p>
+    {% for m in section.not_collected %}<span class="badge critical">{{ m }}</span>{% endfor %}
+  </p>
+  <p class="caveat">数据在小红书创作者中心"数据概览"页面，采集器暂未覆盖（Phase 2 计划）。</p>
+</div>
+{% else %}
+<p class="empty-note">没有已配置且启用的小红书账号。</p>
+{% endfor %}
+
+<footer class="report-footer">由 OmniPanel 自动生成</footer>
+</div>
+</body>
+</html>

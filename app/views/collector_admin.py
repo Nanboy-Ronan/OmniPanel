@@ -1,4 +1,4 @@
-"""Admin endpoints for the creator-portal export agent (小红书/知乎自动采集).
+"""Admin endpoints for saved-session browser collectors.
 
 Session files (Playwright storage_state.json) are produced locally by
 `python -m app.collector bootstrap-login` and uploaded here so the collector
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import current_admin_user
 from ..db import get_session
-from ..db.models import CollectorRun, XhsAccount
+from ..db.models import CollectorRun, WxChannelsAccount, XhsAccount
 from ..collector.paths import session_path, sessions_dir
 from ..utils.logger import log_operation
 
@@ -28,12 +28,12 @@ _MAX_SESSION_BYTES = 1024 * 1024  # storage_state.json is a few KB; 1MB is gener
 
 
 def _parse_session_filename(name: str) -> tuple[str, int | None] | None:
-    """xhs_{id}.json -> ("xhs", id); zhihu.json -> ("zhihu", None); else None."""
+    """Parse supported per-account and single-session collector filenames."""
     stem = name[:-5] if name.endswith(".json") else None
     if stem is None:
         return None
-    if stem == "zhihu":
-        return "zhihu", None
+    if stem in ("zhihu", "jd"):
+        return stem, None
     if stem.startswith("xhs_"):
         try:
             return "xhs", int(stem[len("xhs_"):])
@@ -44,24 +44,31 @@ def _parse_session_filename(name: str) -> tuple[str, int | None] | None:
             return "pugongying", int(stem[len("pugongying_"):])
         except ValueError:
             return None
+    if stem.startswith("channels_"):
+        try:
+            return "channels", int(stem[len("channels_"):])
+        except ValueError:
+            return None
     return None
 
 
 @router.post("/sessions", status_code=status.HTTP_201_CREATED)
 async def upload_collector_session(
-    platform: Literal["xhs", "zhihu", "pugongying"] = Form(...),
+    platform: Literal["xhs", "zhihu", "pugongying", "channels", "jd"] = Form(...),
     account_id: int | None = Form(None),
     file: UploadFile = File(...),
     _user=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
 ):
     """Upload a storage_state.json produced by `bootstrap-login`."""
-    if platform in ("xhs", "pugongying"):
+    _PER_ACCOUNT_PLATFORMS = ("xhs", "pugongying", "channels")
+    if platform in _PER_ACCOUNT_PLATFORMS:
         if account_id is None:
             raise HTTPException(status_code=422, detail=f"{platform} 平台必须提供 account_id")
-        acc = await session.get(XhsAccount, account_id)
+        account_model = WxChannelsAccount if platform == "channels" else XhsAccount
+        acc = await session.get(account_model, account_id)
         if acc is None:
-            raise HTTPException(status_code=404, detail=f"XHS account {account_id} not found")
+            raise HTTPException(status_code=404, detail=f"{platform} account {account_id} not found")
 
     raw = await file.read(_MAX_SESSION_BYTES + 1)
     if len(raw) > _MAX_SESSION_BYTES:
@@ -74,7 +81,7 @@ async def upload_collector_session(
     if not isinstance(parsed, dict) or not isinstance(parsed.get("cookies"), list):
         raise HTTPException(status_code=400, detail="不是合法的 storage_state.json（缺少 cookies 字段）。")
 
-    target_path = session_path(platform, account_id if platform in ("xhs", "pugongying") else None)
+    target_path = session_path(platform, account_id if platform in _PER_ACCOUNT_PLATFORMS else None)
     tmp_path = target_path.with_suffix(".json.tmp")
     tmp_path.write_bytes(raw)
     os.chmod(tmp_path, 0o600)
@@ -95,10 +102,19 @@ async def list_collector_sessions(
     session: AsyncSession = Depends(get_session),
 ):
     """List saved session files plus each target's most recent run status."""
-    accounts = {
+    xhs_accounts = {
         a.id: a.name
         for a in (await session.execute(select(XhsAccount))).scalars().all()
     }
+    channels_accounts = {
+        a.id: a.name
+        for a in (await session.execute(select(WxChannelsAccount))).scalars().all()
+    }
+
+    def _account_name(platform: str, account_id: int | None) -> str | None:
+        if account_id is None:
+            return None
+        return channels_accounts.get(account_id) if platform == "channels" else xhs_accounts.get(account_id)
 
     results = []
     for f in sorted(sessions_dir().glob("*.json")):
@@ -115,7 +131,7 @@ async def list_collector_sessions(
                 .order_by(CollectorRun.started_at.desc())
                 .limit(1)
             )
-            if platform in ("xhs", "pugongying"):
+            if platform in ("xhs", "pugongying", "channels"):
                 stmt = stmt.where(CollectorRun.account_id == account_id)
             # "verify" runs (the proactive precheck, see app.collector.runner.
             # run_verify) never download/upload — keep last_run_status meaning
@@ -133,7 +149,7 @@ async def list_collector_sessions(
         results.append({
             "platform": platform,
             "account_id": account_id,
-            "account_name": accounts.get(account_id) if account_id is not None else None,
+            "account_name": _account_name(platform, account_id),
             "updated_at": dt.datetime.fromtimestamp(stat.st_mtime).isoformat(),
             "size_bytes": stat.st_size,
             "last_run_status": last_run.status if last_run else None,
@@ -146,12 +162,12 @@ async def list_collector_sessions(
 
 @router.delete("/sessions", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_collector_session(
-    platform: Literal["xhs", "zhihu", "pugongying"] = Query(...),
+    platform: Literal["xhs", "zhihu", "pugongying", "channels", "jd"] = Query(...),
     account_id: int | None = Query(None),
     _user=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
 ):
-    path = session_path(platform, account_id if platform in ("xhs", "pugongying") else None)
+    path = session_path(platform, account_id if platform in ("xhs", "pugongying", "channels") else None)
     if not path.exists():
         raise HTTPException(status_code=404, detail="登录态文件不存在")
     path.unlink()
@@ -174,16 +190,23 @@ async def list_collector_runs(
     )).scalars().all()
     # Runs outlive the accounts they reference (CollectorRun.account_id has no
     # FK by design), so a deleted account simply resolves to None here.
-    accounts = {
+    xhs_accounts = {
         a.id: a.name
         for a in (await session.execute(select(XhsAccount))).scalars().all()
+    }
+    channels_accounts = {
+        a.id: a.name
+        for a in (await session.execute(select(WxChannelsAccount))).scalars().all()
     }
     return [
         {
             "id": r.id,
             "platform": r.platform,
             "account_id": r.account_id,
-            "account_name": accounts.get(r.account_id) if r.account_id is not None else None,
+            "account_name": (
+                (channels_accounts.get(r.account_id) if r.platform == "channels" else xhs_accounts.get(r.account_id))
+                if r.account_id is not None else None
+            ),
             "content_type": r.content_type,
             "started_at": r.started_at.isoformat(),
             "finished_at": r.finished_at.isoformat() if r.finished_at else None,

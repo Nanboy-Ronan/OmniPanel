@@ -5,7 +5,7 @@ import streamlit as st
 
 from app.ui._helpers import _page_hero, show_api_error
 
-_PLATFORM_LABEL = {"xhs": "小红书", "zhihu": "知乎", "pugongying": "小红书蒲公英"}
+_PLATFORM_LABEL = {"xhs": "小红书", "zhihu": "知乎", "pugongying": "小红书蒲公英", "channels": "视频号", "jd": "京东订单"}
 _CONTENT_TYPE_LABEL = {"article": "文章", "qa": "问答"}
 _STATUS_LABEL = {
     "running": "运行中",
@@ -13,6 +13,8 @@ _STATUS_LABEL = {
     "session_expired": "登录态过期",
     "download_failed": "下载失败",
     "upload_failed": "上传失败",
+    "empty_export": "没有可采集数据",
+    "wrong_account": "账号不匹配",
     "error": "未知错误",
 }
 
@@ -62,10 +64,11 @@ def _sessions_section(client) -> None:
     st.markdown("#### 上传新的登录态")
     st.caption(
         "在自己的电脑上运行 `python -m app.collector bootstrap-login --platform pugongying --out session.json` "
-        "（小红书/知乎同理），有头浏览器登录后会生成一个 JSON 文件，在此上传。"
+        "（小红书/知乎/京东同理；视频号是扫码登录，见 app/collector/channels.py），"
+        "有头浏览器登录后会生成一个 JSON 文件，在此上传。"
     )
     with st.form("collector-session-upload", clear_on_submit=True):
-        platform = st.selectbox("平台", options=["xhs", "zhihu", "pugongying"], format_func=lambda p: _PLATFORM_LABEL[p])
+        platform = st.selectbox("平台", options=["xhs", "zhihu", "pugongying", "channels", "jd"], format_func=lambda p: _PLATFORM_LABEL[p])
         account_id = None
         if platform in ("xhs", "pugongying"):
             acc_r = client.xhs_accounts()
@@ -76,13 +79,22 @@ def _sessions_section(client) -> None:
                 account_id = acc_options[acc_label]
             else:
                 st.warning("请先在「小红书数据」页面创建账号。")
+        elif platform == "channels":
+            acc_r = client.wx_channels_accounts()
+            accounts = acc_r.json() if acc_r.status_code == 200 else []
+            if accounts:
+                acc_options = {a["name"]: a["id"] for a in accounts}
+                acc_label = st.selectbox("视频号账号", list(acc_options.keys()))
+                account_id = acc_options[acc_label]
+            else:
+                st.warning("请先在「视频号数据」页面创建账号。")
         uploaded = st.file_uploader("storage_state.json", type=["json"])
         submitted = st.form_submit_button("上传")
     if submitted:
         if uploaded is None:
             st.warning("请先选择文件。")
-        elif platform == "xhs" and account_id is None:
-            st.warning("小红书登录态必须关联一个账号。")
+        elif platform in ("xhs", "pugongying", "channels") and account_id is None:
+            st.warning("该平台的登录态必须关联一个账号。")
         else:
             r2 = client.upload_collector_session(uploaded.read(), uploaded.name, platform, account_id)
             if r2.status_code == 201:
@@ -134,7 +146,7 @@ def _runs_section(client) -> None:
 
 def page_collector() -> None:
     _page_hero("自动采集")
-    st.caption("小红书 / 知乎创作者后台自动导出与上传。首次使用需在本地扫码登录并上传登录态；过期后企微群会收到告警。")
+    st.caption("小红书 / 知乎 / 蒲公英 / 视频号 / 京东后台自动采集与上传。首次使用需在本地完成登录并上传登录态；过期后企微群会收到告警。")
     _sessions_section(st.session_state["client"])
     st.markdown("---")
     _runs_section(st.session_state["client"])
