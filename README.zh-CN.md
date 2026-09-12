@@ -273,6 +273,7 @@ MINIMAX_API_KEY=eyJ...             # 或 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY �
 - **小红书商城订单** —— 在现有的内容/KOL 数据基础上，接入小红书自营电商的订单分析
 - **飞书 / 钉钉推送** —— 将已保存的查询结果推送到团队协作工具
 - **海外平台（Amazon、Lazada、Shopify）** —— 把订单数据同步从国内电商平台扩展到跨境销售渠道
+- **与企业级智能体平台联动（如 workbuddy）** —— 接入企业级 AI 智能体平台，让 OmniPanel 的数据能在这些工作流里被查询和调用
 
 考虑中（欢迎在 [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions) 参与讨论）：
 

@@ -273,6 +273,7 @@ In progress:
 - **Xiaohongshu (XHS) Marketplace orders** — e-commerce order analytics for XHS's own marketplace, alongside its existing content/KOL data
 - **Feishu / DingTalk push** — send saved query results to team collaboration tools
 - **Overseas platforms (Amazon, Lazada, Shopify)** — extend order data sync beyond domestic marketplaces to cross-border sales channels
+- **Enterprise agent platform integration (e.g. workbuddy)** — connect with enterprise-grade AI agent platforms so OmniPanel's data can be queried/acted on from within those workflows
 
 Under consideration (join the [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions)):
 
