@@ -13,6 +13,8 @@
 
 ---
 
+> 🤖 **Built for the agent era.** We're on the roadmap to connect OmniPanel with enterprise-grade AI agent platforms (e.g. workbuddy), so your data can be queried and acted on directly from agent workflows — not just from dashboards. See [Roadmap](#roadmap).
+
 ## What is OmniPanel?
 
 You sell on platforms like Youzan, JD, and Tmall, and you create content on WeChat Official Accounts, Xiaohongshu (XHS), and Zhihu. Each platform has data you need — but the formats are all different. Dozens of differently-named columns. "Customer" doesn't mean the same thing across platforms. Some metrics are cumulative. The same order might appear in multiple rows and needs de-duplication.
