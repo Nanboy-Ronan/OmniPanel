@@ -1,4 +1,4 @@
-"""Orchestrates one collector run across every enabled XHS account + Zhihu
+"""Orchestrates one collector run across every enabled creator/order portal
 content type, uploading through the existing API and recording a
 CollectorRun per target. This is what `python -m app.collector collect`
 (and, on the VM, the rpa-collector.service oneshot unit) executes.
@@ -16,7 +16,14 @@ from typing import Callable, Literal
 
 from ..config import settings as _default_settings
 from ..utils.wecom_bot import send_wecom_alert
-from .errors import DownloadTimeoutError, SessionExpiredError, UploadFailedError
+from .errors import (
+    DownloadTimeoutError,
+    EmptyExportError,
+    SessionExpiredError,
+    UploadFailedError,
+    WrongAccountError,
+    XhsApiError,
+)
 from .paths import session_path
 from .runs import finish_run, start_run
 
@@ -32,7 +39,7 @@ _ZHIHU_CONTENT_LABEL = {"article": "文章", "qa": "问答"}
 
 @dataclasses.dataclass
 class Target:
-    platform: Literal["xhs", "zhihu", "pugongying"]
+    platform: Literal["xhs", "zhihu", "pugongying", "channels", "jd"]
     session_file: Path
     account_id: int | None = None
     content_type: str | None = None
@@ -46,20 +53,31 @@ class Target:
         """
         if self.platform == "xhs":
             who = self.account_name or f"账号#{self.account_id}"
+            if self.content_type == "overview":
+                return f"小红书数据概览·{who}"
             return f"小红书·{who}"
         if self.platform == "pugongying":
             who = self.account_name or f"账号#{self.account_id}"
             return f"蒲公英·{who}"
+        if self.platform == "channels":
+            who = self.account_name or f"账号#{self.account_id}"
+            return f"视频号·{who}"
+        if self.platform == "jd":
+            return "京东订单"
         return f"知乎·{_ZHIHU_CONTENT_LABEL.get(self.content_type, self.content_type)}"
 
 
 def build_targets(api, settings=None) -> list[Target]:
     """Enumerate every target that should be collected this run.
 
-    XHS: one target per active xhs_accounts row, when collector_xhs_enabled.
+    XHS: one target per active xhs_accounts row, when collector_xhs_enabled;
+    plus a second "数据概览" target per account when collector_xhs_overview_enabled.
     Zhihu: article + qa, when collector_zhihu_enabled.
     Pugongying: one target per active xhs_accounts row with pgy_enabled set,
     when collector_pugongying_enabled — most XHS accounts have no PGY login.
+    Channels: one target per active wx_channels_accounts row, when
+    collector_channels_enabled.
+    JD: a single order-list target, when collector_jd_enabled.
     A target is still returned when its session file is missing — run_collect
     reports that as a failure (with an alert) rather than silently skipping it.
     """
@@ -78,6 +96,17 @@ def build_targets(api, settings=None) -> list[Target]:
                 account_name=acc.get("name"),
                 session_file=session_path("xhs", acc["id"]),
             ))
+            if getattr(settings, "collector_xhs_overview_enabled", False):
+                # Same session file/account as the export target above — the
+                # "数据概览" JSON APIs are collected via a second pass on the
+                # same authenticated session, not a separate login.
+                targets.append(Target(
+                    platform="xhs",
+                    content_type="overview",
+                    account_id=acc["id"],
+                    account_name=acc.get("name"),
+                    session_file=session_path("xhs", acc["id"]),
+                ))
 
     if settings.collector_zhihu_enabled:
         zhihu_session = session_path("zhihu", None)
@@ -103,21 +132,50 @@ def build_targets(api, settings=None) -> list[Target]:
                 session_file=session_path("pugongying", acc["id"]),
             ))
 
+    if getattr(settings, "collector_channels_enabled", False):
+        resp = api.wx_channels_accounts()
+        resp.raise_for_status()
+        for acc in resp.json():
+            if not acc.get("is_active", True):
+                continue
+            targets.append(Target(
+                platform="channels",
+                account_id=acc["id"],
+                account_name=acc.get("name"),
+                session_file=session_path("channels", acc["id"]),
+            ))
+
+    if getattr(settings, "collector_jd_enabled", False):
+        targets.append(Target(
+            platform="jd",
+            session_file=session_path("jd", None),
+        ))
+
     return targets
 
 
 def _default_collect_fns() -> dict[str, Callable]:
+    from .channels import collect_channels
+    from .jd import collect_jd
     from .pugongying import collect_pugongying
-    from .xhs import collect_xhs
+    from .xhs import collect_xhs, collect_xhs_overview
     from .zhihu import collect_zhihu
-    return {"xhs": collect_xhs, "zhihu": collect_zhihu, "pugongying": collect_pugongying}
+    return {
+        "xhs": collect_xhs, "xhs_overview": collect_xhs_overview, "zhihu": collect_zhihu,
+        "pugongying": collect_pugongying, "channels": collect_channels, "jd": collect_jd,
+    }
 
 
 def _default_verify_fns() -> dict[str, Callable]:
+    from .channels import verify_channels_session
+    from .jd import verify_jd_session
     from .pugongying import verify_pugongying_session
     from .xhs import verify_xhs_session
     from .zhihu import verify_zhihu_session
-    return {"xhs": verify_xhs_session, "zhihu": verify_zhihu_session, "pugongying": verify_pugongying_session}
+    return {
+        "xhs": verify_xhs_session, "zhihu": verify_zhihu_session, "pugongying": verify_pugongying_session,
+        "channels": verify_channels_session, "jd": verify_jd_session,
+    }
 
 
 def _login_api_client(settings, *, log_prefix: str):
@@ -133,10 +191,16 @@ def _login_api_client(settings, *, log_prefix: str):
 
 
 def _collect_one(target: Target, collect_fns: dict[str, Callable], headless: bool | None) -> tuple[bytes, str]:
+    if target.platform == "xhs" and target.content_type == "overview":
+        return collect_fns["xhs_overview"](target.session_file, headless=headless)
     if target.platform == "xhs":
         return collect_fns["xhs"](target.session_file, headless=headless)
     if target.platform == "pugongying":
         return collect_fns["pugongying"](target.session_file, headless=headless)
+    if target.platform == "channels":
+        return collect_fns["channels"](target.session_file, headless=headless)
+    if target.platform == "jd":
+        return collect_fns["jd"](target.session_file, headless=headless)
     return collect_fns["zhihu"](target.session_file, target.content_type, headless=headless)
 
 
@@ -166,16 +230,59 @@ def _collect_with_retry(
             attempt += 1
 
 
-def _upload_one(api, target: Target, data: bytes, filename: str) -> dict:
-    if target.platform == "xhs":
+def _upload_one(
+    api, target: Target, data: bytes, filename: str, *, timeout_seconds: float = 120,
+) -> dict:
+    if target.platform == "xhs" and target.content_type == "overview":
+        resp = api.upload_xhs_overview(data, filename, target.account_id)
+    elif target.platform == "xhs":
         resp = api.upload_xhs(data, filename, target.account_id)
     elif target.platform == "pugongying":
         resp = api.upload_pgy(data, filename, target.account_id)
+    elif target.platform == "channels":
+        resp = api.upload_channels(data, filename, target.account_id)
+    elif target.platform == "jd":
+        resp = api.upload_jd(data, filename)
     else:
         resp = api.upload_zhihu(data, filename, target.content_type)
-    if resp.status_code != 200:
+    if resp.status_code == 400 and "未解析到有效行" in resp.text:
+        # Server-side check shared by all 4 upload endpoints (app/views/media/
+        # {xhs,pgy,channels,zhihu}.py) — a distinct, stable signal that the
+        # exported file had zero data rows. Kept separate from
+        # UploadFailedError: this is not "the API rejected bad data", it's
+        # "there was nothing to upsert", which can mean the account has no
+        # recent posts OR that the session silently points at the wrong
+        # account (see WrongAccountError / xhs.py) and every export from it
+        # is empty. Either way the operator needs a different next step than
+        # a generic upload failure.
+        raise EmptyExportError(f"empty export: {resp.status_code} {resp.text[:500]}")
+    expected_status = 202 if target.platform == "jd" else 200
+    if resp.status_code != expected_status:
         raise UploadFailedError(f"upload rejected: {resp.status_code} {resp.text[:500]}")
-    return resp.json()
+    result = resp.json()
+    if target.platform != "jd":
+        return result
+
+    batch_id = result.get("batch_id")
+    if not isinstance(batch_id, int):
+        raise UploadFailedError(f"JD upload response had no batch_id: {result!r}")
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        batch_resp = api.upload_batch(batch_id)
+        if batch_resp.status_code != 200:
+            raise UploadFailedError(
+                f"JD upload batch {batch_id} poll failed: {batch_resp.status_code} {batch_resp.text[:500]}"
+            )
+        batch = batch_resp.json()
+        status = batch.get("status")
+        if status == "completed":
+            return {**batch, "upserted": batch.get("inserted_orders", 0)}
+        if status == "failed":
+            raise UploadFailedError(
+                f"JD upload batch {batch_id} failed: {batch.get('error_message') or 'unknown ETL error'}"
+            )
+        _sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+    raise UploadFailedError(f"JD upload batch {batch_id} did not finish within {timeout_seconds:g}s")
 
 
 def run_collect(
@@ -242,7 +349,10 @@ def run_collect(
                 finish_run(run_id, "success", rows_upserted=0, filename=filename)
                 continue
 
-            result = _upload_one(api_client, target, data, filename)
+            result = _upload_one(
+                api_client, target, data, filename,
+                timeout_seconds=getattr(settings, "collector_upload_timeout_seconds", 120),
+            )
             rows = result.get("upserted", 0)
             finish_run(
                 run_id, "success",
@@ -257,15 +367,45 @@ def run_collect(
             _logger.error(msg)
             failures.append(msg)
 
+        except WrongAccountError as exc:
+            finish_run(run_id, "wrong_account", error_message=str(exc))
+            msg = (
+                f"{target.label}: 登录态有效，但账号不对（很可能选错了子账号）。"
+                f"请重新执行 bootstrap-login 并明确选择正确的账号后重传——直接重跑采集不会修复。{exc}"
+            )
+            _logger.error(msg)
+            failures.append(msg)
+
         except DownloadTimeoutError as exc:
             finish_run(run_id, "download_failed", error_message=str(exc))
             msg = f"{target.label}: 导出下载超时或失败。{exc}"
             _logger.error(msg)
             failures.append(msg)
 
+        except EmptyExportError as exc:
+            finish_run(run_id, "empty_export", error_message=str(exc))
+            if target.platform == "jd":
+                msg = f"{target.label}: 最近六个月的订单列表为空或无法解析，请人工确认京麦订单页。{exc}"
+            else:
+                msg = (
+                    f"{target.label}: 导出为空（未解析到任何数据行）。"
+                    f"可能是该账号近期没有新内容，也可能登录态指向了错误的账号，请人工确认后再决定是否需要重新登录。{exc}"
+                )
+            _logger.error(msg)
+            failures.append(msg)
+
         except UploadFailedError as exc:
             finish_run(run_id, "upload_failed", error_message=str(exc))
             msg = f"{target.label}: 上传失败。{exc}"
+            _logger.error(msg, exc_info=exc)
+            failures.append(msg)
+
+        except XhsApiError as exc:
+            finish_run(run_id, "api_error", error_message=str(exc))
+            msg = (
+                f"{target.label}: 登录态有效，但数据接口拒绝或未按预期返回（不是登录过期，"
+                f"重新 bootstrap-login 不一定能解决）。请查看采集调试截图/HTML 排查。{exc}"
+            )
             _logger.error(msg, exc_info=exc)
             failures.append(msg)
 
@@ -340,6 +480,13 @@ def run_verify(
         )
         try:
             valid = verify_fns[target.platform](target.session_file, headless=headless)
+        except WrongAccountError as exc:
+            finish_run(run_id, "wrong_account", error_message=str(exc))
+            problems.append(
+                f"{target.label}: 登录态存在但账号不对（很可能选错了子账号），"
+                f"请重新执行 bootstrap-login 并选择正确的账号——不要只是重传现有登录态。{exc}"
+            )
+            continue
         except Exception as exc:
             finish_run(run_id, "error", error_message=str(exc))
             problems.append(f"{target.label}: 巡检本身出错，请人工检查。{exc}")
@@ -350,12 +497,7 @@ def run_verify(
             continue
 
         finish_run(run_id, "session_expired")
-        # Zhihu's selectors are still unverified placeholders (see zhihu.py
-        # module docstring) — flag its verify result as best-effort so an
-        # operator doesn't treat a false positive there as gospel the way
-        # they should for XHS.
-        note = "（知乎登录检测选择器尚未完全验证，结果仅供参考）" if target.platform == "zhihu" else ""
-        problems.append(f"{target.label}: 登录态已过期{note}，请尽快本地重新执行 bootstrap-login 并到管理页重传")
+        problems.append(f"{target.label}: 登录态已过期，请尽快本地重新执行 bootstrap-login 并到管理页重传")
 
     if problems:
         header = f"[采集巡检] 发现 {len(problems)} 个登录态异常，请尽快处理，避免影响下次采集：\n"

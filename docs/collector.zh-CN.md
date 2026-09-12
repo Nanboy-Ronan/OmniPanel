@@ -4,9 +4,9 @@
 
 ## 为什么需要这个功能
 
-小红书、知乎，以及小红书的蒲公英（KOL/KOC 商业合作平台）都没有公开的数据分析接口。要拿到账号级别的内容指标（曝光、点击率、观看时长等）或者投放级别的合作数据（花费、博主表现、受众画像），只能靠人登录对应后台并手动点击"导出"。这个子系统把这个过程自动化：复用一份保存下来的浏览器登录状态打开后台、触发导出，再把下载到的文件通过**已有的**
-`/media/xhs/upload`、`/media/zhihu/upload`、`/media/pgy/upload`
-接口上传——ETL、去重、审计日志和手动上传完全一致。
+小红书、知乎、小红书的蒲公英（KOL/KOC 商业合作平台）、视频号都没有公开的数据分析接口；京东的订单明细导出需要短信验证码解密，不适合无人值守。要拿到账号级别的内容指标（曝光、点击率、观看时长等）、投放级别的合作数据（花费、博主表现、受众画像），或者这些平台的订单数据，只能靠人登录对应后台并手动点击"导出"（京东则是直接读取已渲染的订单列表）。这个子系统把这个过程自动化：复用一份保存下来的浏览器登录状态打开后台、触发导出（或读取已渲染页面），再把结果通过**已有的**
+`/media/xhs/upload`、`/media/zhihu/upload`、`/media/pgy/upload`、`/media/channels/upload`
+以及通用电商上传接口上传——ETL、去重、审计日志和手动上传完全一致。
 
 它**不会**取代手动上传，只是把人已经在做的"点击 → 下载 → 上传"这套动作变成无人值守。
 
@@ -49,6 +49,12 @@ python -m app.collector bootstrap-login --platform zhihu --out zhihu_session.jso
 python -m app.collector bootstrap-login --platform pgy --out pgy_session.json
 # pgy.xiaohongshu.com（蒲公英）是一个独立的子域名，有自己独立的登录——不是每个小红书专业号都开通了蒲公英。
 # 只对确实开通了的账号做这一步（见下方"配置"一节的 xhs_accounts.pgy_enabled）。
+
+python -m app.collector bootstrap-login --platform channels --out channels_session.json
+# channels.weixin.qq.com（视频号助手）——微信扫码登录，用绑定该视频号的微信账号扫码。
+
+python -m app.collector bootstrap-login --platform jd --out jd_session.json
+# 京麦商家中心（shop.jd.com）商家登录。
 ```
 
 然后通过 Streamlit 管理页面「自动采集」（仅管理员可见）上传生成的 JSON
@@ -97,6 +103,24 @@ xlsx，没有确认弹窗，也不需要异步导出后再轮询。
 只有 `xhs_accounts.pgy_enabled = true` 的账号才会被纳入采集——在「小红书数据」管理页面按账号切换这个开关。不是每个小红书专业号都开通了蒲公英，把一个没开通的账号也纳入采集，只会对一个永远不会存在的
 session 产生持续的 `session_expired` / 缺失会话告警。
 
+## 视频号：直接调用 JSON 接口，不点导出按钮
+
+`app/collector/channels.py` 不点击"下载表格"导出按钮。抓包发现这个按钮其实是对一个普通鉴权 JSON 接口（`POST /micro/statistic/cgi-bin/mmfinderassistant-bin/statistic/download_post_data`）的前端包装，该接口挂在"数据中心 → 视频数据"页面的一个 iframe 里。用一个很宽的时间范围直接调用这个接口，完全绕开脆弱的日期选择器自动化，并且能一次性拿到全部账号历史，而不是 UI 按钮默认的"近7天"。唯一的缺口：这份 JSON 完全没有企微链接点击/添加到通讯录相关字段——这四列只存在于人工点击按钮后拿到的 CSV 里，所以 `app/db/etl/channels.py` 仍然支持手动上传那份 CSV，与采集器的 JSON 路径并存。
+
+只有 `wx_channels_accounts` 中激活的账号会被采集，每个账号都需要单独执行一次 `bootstrap-login --platform channels`（和小红书一样按账号区分）。
+
+## 京东：读取已渲染的订单列表，无需导出密码
+
+京东的订单明细导出即使勾选"不含收货人信息"也需要短信验证码解密，不适合无人值守场景。`app/collector/jd.py` 改为直接读取京麦商家中心 → 订单管理 → 订单列表里已经渲染、已脱敏的订单卡片，转换成与现有手动上传格式一致的 CSV。它从不请求导出密码，也不会尝试还原被脱敏的个人信息。页面默认的近六个月窗口每次运行都会全量采集，现有入库流程的行/订单去重逻辑保证重复采集是安全的。
+
+京东是一个平台级（非按账号）的单一采集目标——只需执行一次 `bootstrap-login --platform jd`。
+
+## 小红书"数据概览"（Phase 2）：账号级每日指标，同样是接口调用
+
+`collect_xhs_overview()`（在 `app/collector/xhs.py` 里，与按笔记采集的 `collect_xhs()` 并存）覆盖账号级的"数据概览"页面（`/statistics/account/v2`）——每日涨粉/掉粉、观看时长、完播率，以及按笔记采集（`XhsPost`）无法表达的观众来源渠道构成。和视频号一样，这里读取的是 SPA 自身的 JSON 接口（`account/base`、`audience/source/account`），而不是点导出按钮——但和视频号不同的是，直接对这些 URL 发起鉴权 GET 请求会被拒绝（HTTP 406），所以采集器改为在导航前注册一个 `page.on("response")` 监听器，捕获 SPA 自己发出的请求。
+
+这是同一个小红书账号上的**第二次、独立的采集**——同一个 session 文件多一个 `Target`，由独立的 `COLLECTOR_XHS_OVERVIEW_ENABLED` 开关控制（默认关闭，不影响上面按笔记的导出）。上传走 `/media/xhs/upload_overview`，payload 是 JSON 而不是 xlsx，写入 `xhs_account_daily_metrics` / `xhs_audience_source_daily`。
+
 ## 配置
 
 所有配置项都是环境变量（也可以放进 `.env`）：
@@ -105,8 +129,11 @@ session 产生持续的 `session_expired` / 缺失会话告警。
 |---|---|---|
 | `COLLECTOR_ENABLED` | `false` | 总开关；为 `false` 时 `collect` 会立即以退出码 0 结束 |
 | `COLLECTOR_XHS_ENABLED` | `true` | 本次运行是否包含小红书账号 |
+| `COLLECTOR_XHS_OVERVIEW_ENABLED` | `false` | 是否同时采集每个小红书账号的"数据概览"（同一 session 上的第二次采集），见上文 |
 | `COLLECTOR_ZHIHU_ENABLED` | `true` | 本次运行是否包含知乎（文章+回答） |
 | `COLLECTOR_PUGONGYING_ENABLED` | `true` | 本次运行是否包含开通了蒲公英的小红书账号（`pgy_enabled=true`） |
+| `COLLECTOR_CHANNELS_ENABLED` | `false` | 本次运行是否包含视频号账号——在创建 `wx_channels_accounts` 记录并完成 bootstrap-login 之前保持关闭 |
+| `COLLECTOR_JD_ENABLED` | `false` | 本次运行是否包含京东订单采集目标——在配置好 `jd.json` 之前保持关闭 |
 | `COLLECTOR_DIR` | `data/collector` | session / 下载 / 调试文件的根目录 |
 | `COLLECTOR_HEADLESS` | `false` | 目前只有 `false`（配合服务器上的虚拟显示）在小红书上验证通过；真正的无头模式尚未验证，见上文 |
 | `COLLECTOR_API_URL` | `http://127.0.0.1:8000` | 采集器上传数据的目标地址 |
@@ -115,6 +142,7 @@ session 产生持续的 `session_expired` / 缺失会话告警。
 | `COLLECTOR_DOWNLOAD_TIMEOUT_SECONDS` | `120` | 等待导出文件下载完成的时长 |
 | `COLLECTOR_DEBUG_KEEP` | `20` | 失败时保留的截图+HTML 组合数量上限 |
 | `COLLECTOR_COLLECT_RETRIES` | `1` | 下载超时（临时性失败）在判定整次运行失败前的重试次数 |
+| `COLLECTOR_UPLOAD_TIMEOUT_SECONDS` | `120` | 仅京东——等待后台电商 ETL 批次完成的最长时间 |
 | `WECOM_ALERT_TOUSER` | `@all`（可选） | 通知接收人，见下方"告警"一节 |
 | `WECOM_NOTIFY_SUCCESS` | `true` | 运行全部成功时是否也发送 WeCom 通知——设为 `false` 则只在失败时告警 |
 
@@ -152,12 +180,17 @@ session 产生持续的 `session_expired` / 缺失会话告警。
 python -m app.collector bootstrap-login --platform xhs --out xhs_1.json
 python -m app.collector bootstrap-login --platform pgy --out pgy_1.json
 python -m app.collector bootstrap-login --platform zhihu --out zhihu.json
+python -m app.collector bootstrap-login --platform channels --out channels_1.json
+python -m app.collector bootstrap-login --platform jd --out jd.json
 
 # 手动运行（服务器上，或本地对着本地后端跑）：
 python -m app.collector collect                                # 所有已启用的目标
 python -m app.collector collect --platform xhs --account-id 3
+python -m app.collector collect --platform xhs --account-id 3 --content-type overview  # 只跑"数据概览"这一次采集
 python -m app.collector collect --platform pgy --account-id 3
 python -m app.collector collect --platform zhihu --content-type article
+python -m app.collector collect --platform channels --account-id 3
+python -m app.collector collect --platform jd
 python -m app.collector collect --dry-run                       # 只下载不上传
 python -m app.collector collect --headed                        # 强制显示窗口（默认本来就是有头模式，见上方 COLLECTOR_HEADLESS）
 
@@ -171,11 +204,13 @@ python -m app.collector verify-all
 
 ## 选择器维护（迟早会失效）
 
-`app/collector/xhs.py`、`app/collector/pugongying.py` 和
-`app/collector/zhihu.py`
+`app/collector/xhs.py`、`app/collector/pugongying.py`、`app/collector/zhihu.py`
+和 `app/collector/jd.py`
 都把所有和后台页面相关的 URL / 选择器集中放在文件顶部的一个常量区块里。
+`app/collector/channels.py` 以及 `xhs.py` 里的 `collect_xhs_overview()`
+则是直接调用 JSON 接口而不是点击 UI 元素——前端改版对它们的影响更小，但后端接口形状变化（字段改名/新增、错误信封变了）仍然会让它们失效。
 
-**小红书和蒲公英都已经端到端完整验证**（登录 → 导出 → 上传 → 入库，且确认重复运行是幂等的）。**知乎的选择器还只是未验证的占位实现**——预计会遇到和小红书、蒲公英当初类似的各种问题（域名不对、登录方式不对、鉴权跳转的时序问题、按钮文字猜错），需要针对真实账号预留真正的调试时间，而不只是改改选择器。
+**小红书、蒲公英、知乎、视频号、京东目前都已经端到端完整验证**（登录 → 导出/接口调用 → 上传 → 入库，且确认重复运行是幂等的）。以后接入新平台或新的导出流程时，务必针对真实账号预留真正的调试时间再上生产——目前遇到的坑全部是各平台自己的特殊情况（域名不对、登录方式不对、鉴权跳转的时序问题、按钮文字猜错、一个导出按钮其实是 JSON 接口的前端包装），提前看 DOM 完全防不住。
 
 当后台页面改版、运行开始报 `download_failed` 时：
 

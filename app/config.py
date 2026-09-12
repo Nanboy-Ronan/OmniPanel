@@ -156,13 +156,31 @@ class Settings(BaseSettings):
     # Hour of the day (0-23) in app_timezone at which the sync runs.
     wechat_auto_sync_hour: int = 3
 
-    # ── Creator-portal collector (小红书/知乎自动取数) ─────────────────────────
+    # ── Creator-portal collector (小红书/知乎/京东等自动取数) ─────────────────
     # Master kill-switch. When false, `python -m app.collector collect` exits
     # 0 immediately without touching the network or the DB.
     collector_enabled: bool = False
     collector_xhs_enabled: bool = True
+    # Separate switch from collector_xhs_enabled: collect_xhs_overview()
+    # (app/collector/xhs.py) is new and unverified end-to-end in production
+    # (unlike collect_xhs()'s xlsx export, which has run daily for months).
+    # Defaults off per the same "build it, verify it manually once, then
+    # flip on" convention as collector_channels_enabled.
+    collector_xhs_overview_enabled: bool = False
     collector_zhihu_enabled: bool = True
     collector_pugongying_enabled: bool = True
+    # Defaults to False, unlike the other three: channels.py's flow is
+    # verified (see its module docstring), but no wx_channels_accounts row +
+    # bootstrap-login session has been provisioned yet. Leaving this True
+    # would make build_targets() enumerate accounts with no session file, and
+    # run_collect treats a missing session file as a failure that sends a
+    # WeCom alert. Flip on after creating the account and running
+    # bootstrap-login --platform channels.
+    collector_channels_enabled: bool = False
+    # JD requires one bootstrapped 京麦 session. Keep it off until jd.json is
+    # provisioned; enabling it earlier intentionally produces a missing-session
+    # alert instead of silently skipping order collection.
+    collector_jd_enabled: bool = False
     # Base directory for saved login sessions, scratch downloads, and
     # failure-debug artifacts. On the VM this is under /var/lib/rpa (the only
     # path writable by the hardened rpa-backend/rpa-collector systemd units).
@@ -180,6 +198,9 @@ class Settings(BaseSettings):
     collector_service_password: str | None = None
     collector_nav_timeout_seconds: int = 45
     collector_download_timeout_seconds: int = 120
+    # JD uses the generic ecommerce upload endpoint, whose ETL finishes in a
+    # background task. This is the maximum time the collector waits for it.
+    collector_upload_timeout_seconds: int = 120
     # Total attempts (not extra retries) for a transient DownloadTimeoutError
     # within one target — session expiry/upload failures are never retried.
     # 1 = no retry.
@@ -187,6 +208,19 @@ class Settings(BaseSettings):
     collector_retry_delay_seconds: int = 60
     # Max number of failure screenshot+HTML pairs kept under collector_dir/debug.
     collector_debug_keep: int = 20
+
+    # ── Weekly media report (公众号 + 小红书 周报) ────────────────────────────
+    # Set WEEKLY_REPORT_ENABLED=true to enable the daily background check that
+    # generates + pushes the report once a complete ISO week is due.
+    weekly_report_enabled: bool = False
+    # Hour of the day (0-23) in app_timezone at which the daily due-check runs.
+    report_hour: int = 9
+    # Publicly reachable URL recipients open from the WeCom push — the domain
+    # your deployment is served on (port 8000/FastAPI is not exposed
+    # externally; see app/views/reports.py docstring). Not used to build a
+    # clickable report link — WeCom text messages just point here so the
+    # recipient logs in and opens 周报 from the nav, same as any other page.
+    public_base_url: str = "https://example.com"
 
     @property
     def cors_origins_list(self) -> list[str]:

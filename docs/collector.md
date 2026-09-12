@@ -4,16 +4,20 @@
 
 ## Why this exists
 
-Xiaohongshu (小红书), Zhihu (知乎), and Xiaohongshu's Pugongying (蒲公英)
-KOL/KOC collaboration platform have no public analytics API. Getting
-account-level content metrics (impressions, click-through, watch time, …) or
-campaign-level collaboration data (spend, blogger performance, audience
-demographics) requires a human to log into the relevant portal and click
-"export". This subsystem automates that: a saved browser login state is
-reused to open the portal, trigger the export, and upload the downloaded
-file through the **existing** `/media/xhs/upload`, `/media/zhihu/upload`, and
-`/media/pgy/upload` endpoints — the ETL, dedup, and audit logging are
-unchanged from a manual upload.
+Xiaohongshu (小红书), Zhihu (知乎), Xiaohongshu's Pugongying (蒲公英) KOL/KOC
+collaboration platform, and WeChat Channels (视频号) have no public analytics
+API; JD's (京东) order-detail export requires an SMS-delivered password
+unsuitable for an unattended job. Getting account-level content metrics
+(impressions, click-through, watch time, …), campaign-level collaboration
+data (spend, blogger performance, audience demographics), or order data from
+these platforms requires a human to log into the relevant portal and click
+"export" (or, for JD, read the already-rendered order list). This subsystem
+automates that: a saved browser login state is reused to open the portal,
+trigger the export (or read the rendered page), and upload the result
+through the **existing** `/media/xhs/upload`, `/media/zhihu/upload`,
+`/media/pgy/upload`, `/media/channels/upload`, and generic ecommerce upload
+endpoints — the ETL, dedup, and audit logging are unchanged from a manual
+upload.
 
 It does **not** replace manual uploads; it's an unattended way to run the same
 click-download-upload sequence a human already does.
@@ -66,6 +70,13 @@ python -m app.collector bootstrap-login --platform pgy --out pgy_session.json
 # not necessarily every XHS professional account has a Pugongying presence.
 # Only bootstrap this for accounts that actually do (see
 # xhs_accounts.pgy_enabled in "Configuration" below).
+
+python -m app.collector bootstrap-login --platform channels --out channels_session.json
+# channels.weixin.qq.com (视频号助手) — WeChat QR-code login, scanned with the
+# account bound to the video account.
+
+python -m app.collector bootstrap-login --platform jd --out jd_session.json
+# 京麦商家中心 (shop.jd.com) merchant login.
 ```
 
 Then upload the resulting JSON file via the Streamlit admin page ("自动采集",
@@ -129,6 +140,59 @@ account has a Pugongying login, and targeting one that doesn't produces a
 permanent `session_expired`/missing-session alert for a session that will
 never exist.
 
+## WeChat Channels (视频号): a direct JSON API, not a UI click
+
+`app/collector/channels.py` doesn't click the "下载表格" export button.
+Network inspection found that the button is client-side sugar over a plain
+authenticated JSON endpoint
+(`POST /micro/statistic/cgi-bin/mmfinderassistant-bin/statistic/download_post_data`)
+served from an iframe on the 数据中心 → 视频数据 page. Calling it directly
+with a wide date range sidesteps a fragile calendar-widget automation
+entirely and returns full account history in one call, instead of the UI
+button's own 近7天 default. The one gap: that JSON has no
+企微链接点击/添加到通讯录 fields at all — those four columns exist only in
+the CSV a human gets from actually clicking the button, so
+`app/db/etl/channels.py` still supports uploading that CSV manually
+alongside the collector's JSON path.
+
+Only active `wx_channels_accounts` rows are targeted, and each such account
+needs its own `bootstrap-login --platform channels` session (per-account,
+like XHS).
+
+## JD (京东): reads the rendered order list, no export password
+
+JD's order-detail export requires an SMS-delivered decryption password even
+when "不含收货人信息" is selected — unsuitable for an unattended job.
+`app/collector/jd.py` instead reads the already-rendered, masked order cards
+from 京麦商家中心 → 订单管理 → 订单列表 and turns them into a CSV matching
+the existing manual-upload JD format. It never requests an export password
+and never attempts to recover unmasked personal information. The page's
+default six-month window is collected on every run; row/order deduplication
+in the existing ingestion pipeline makes re-collecting the same orders safe.
+
+JD is a single platform-wide target (no XHS-style per-account session) —
+`bootstrap-login --platform jd` once.
+
+## XHS "数据概览" (Phase 2): account-level daily metrics, also API-based
+
+`collect_xhs_overview()` (in `app/collector/xhs.py`, alongside the per-note
+`collect_xhs()`) covers the account-level 数据概览 page
+(`/statistics/account/v2`) — daily follower gain/loss, view time, completion
+rate, and a 观众来源 (audience-source) channel breakdown that the per-note
+export (`XhsPost`) can't express. Like WeChat Channels, this reads the SPA's
+own JSON APIs (`account/base`, `audience/source/account`) rather than
+clicking an export button — but unlike Channels, a bare authenticated GET on
+those URLs is rejected (HTTP 406), so the collector instead registers a
+`page.on("response")` listener before navigating and captures the SPA's own
+requests as they land.
+
+This is a **separate, second collect pass** on the same XHS session — a
+second `Target` per account, same session file, gated by its own
+`COLLECTOR_XHS_OVERVIEW_ENABLED` switch (off by default; the per-note export
+above is unaffected either way). Uploads go to
+`/media/xhs/upload_overview`, a JSON payload rather than an xlsx, upserted
+into `xhs_account_daily_metrics` / `xhs_audience_source_daily`.
+
 ## Configuration
 
 All settings are environment variables (also readable from `.env`):
@@ -137,8 +201,11 @@ All settings are environment variables (also readable from `.env`):
 |---|---|---|
 | `COLLECTOR_ENABLED` | `false` | Master kill-switch; `collect` exits 0 immediately when false |
 | `COLLECTOR_XHS_ENABLED` | `true` | Include XHS accounts in a run |
+| `COLLECTOR_XHS_OVERVIEW_ENABLED` | `false` | Also collect each XHS account's 数据概览 (a second pass on the same session) — see above |
 | `COLLECTOR_ZHIHU_ENABLED` | `true` | Include Zhihu (article+qa) in a run |
 | `COLLECTOR_PUGONGYING_ENABLED` | `true` | Include Pugongying-enabled XHS accounts (`pgy_enabled=true`) in a run |
+| `COLLECTOR_CHANNELS_ENABLED` | `false` | Include WeChat Channels accounts in a run — keep off until a `wx_channels_accounts` row + bootstrap-login session exist |
+| `COLLECTOR_JD_ENABLED` | `false` | Include the JD order-list target in a run — keep off until `jd.json` is provisioned |
 | `COLLECTOR_DIR` | `data/collector` | Sessions/downloads/debug root |
 | `COLLECTOR_HEADLESS` | `false` | Only `false` (+ a virtual display on a headless server) is verified against XHS; true headless is untested — see above |
 | `COLLECTOR_API_URL` | `http://127.0.0.1:8000` | Where the collector uploads to |
@@ -147,6 +214,7 @@ All settings are environment variables (also readable from `.env`):
 | `COLLECTOR_DOWNLOAD_TIMEOUT_SECONDS` | `120` | How long to wait for the export file |
 | `COLLECTOR_DEBUG_KEEP` | `20` | Max failure screenshot+HTML pairs retained |
 | `COLLECTOR_COLLECT_RETRIES` | `1` | Retries for a transient download timeout before failing the run |
+| `COLLECTOR_UPLOAD_TIMEOUT_SECONDS` | `120` | JD only — max time to wait for the background ecommerce ETL batch to finish after upload |
 | `WECOM_ALERT_TOUSER` | `@all` (optional) | Who receives notifications — see "Alerting" below |
 | `WECOM_NOTIFY_SUCCESS` | `true` | Also send a WeCom notification when a run completes with no failures — set `false` for failure-only alerting |
 
@@ -198,12 +266,17 @@ Recipient resolution, in priority order:
 python -m app.collector bootstrap-login --platform xhs --out xhs_1.json
 python -m app.collector bootstrap-login --platform pgy --out pgy_1.json
 python -m app.collector bootstrap-login --platform zhihu --out zhihu.json
+python -m app.collector bootstrap-login --platform channels --out channels_1.json
+python -m app.collector bootstrap-login --platform jd --out jd.json
 
 # Manual run (server or local against a local backend):
 python -m app.collector collect                                # all enabled targets
 python -m app.collector collect --platform xhs --account-id 3
+python -m app.collector collect --platform xhs --account-id 3 --content-type overview  # 数据概览 pass only
 python -m app.collector collect --platform pgy --account-id 3
 python -m app.collector collect --platform zhihu --content-type article
+python -m app.collector collect --platform channels --account-id 3
+python -m app.collector collect --platform jd
 python -m app.collector collect --dry-run                       # download only, skip upload
 python -m app.collector collect --headed                        # force a visible window (default is already headed; see COLLECTOR_HEADLESS above)
 
@@ -218,16 +291,22 @@ python -m app.collector verify-all
 
 ## Selector maintenance (things will break)
 
-`app/collector/xhs.py`, `app/collector/pugongying.py`, and
-`app/collector/zhihu.py` each keep every portal-specific URL/selector in one
-constants block at the top of the file.
+`app/collector/xhs.py`, `app/collector/pugongying.py`, `app/collector/zhihu.py`,
+and `app/collector/jd.py` each keep every portal-specific URL/selector in one
+constants block at the top of the file. `app/collector/channels.py` and
+`collect_xhs_overview()` (also in `xhs.py`) call a direct JSON API instead of
+clicking a UI element — a portal frontend redesign is less likely to break
+these, but a backend API-shape change (new/renamed field, different error
+envelope) still will.
 
-**XHS and Pugongying are fully verified end-to-end** (login → export →
-upload → DB rows, confirmed idempotent on re-run). **Zhihu's selectors
-remain unverified placeholders** — expect the same kind of surprises XHS and
-Pugongying had (wrong domain, wrong login mechanism, transient auth-redirect
-timing, wrong button text) and budget real debugging time against a live
-account, not just a selector tweak.
+**XHS, Pugongying, Zhihu, WeChat Channels, and JD are all verified
+end-to-end** (login → export/API call → upload → DB rows, confirmed
+idempotent on re-run). When a new platform or export flow is added here,
+budget real debugging time against a live account before trusting it in
+production — the failure modes so far have all been portal-specific
+surprises (wrong domain, wrong login mechanism, transient auth-redirect
+timing, wrong button text, an export button that's sugar over a JSON
+endpoint) that no amount of reading the DOM in advance caught.
 
 When the portal changes its UI and a run starts failing with
 `download_failed`:

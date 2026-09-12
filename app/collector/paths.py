@@ -1,7 +1,7 @@
 """Filesystem layout under settings.collector_dir.
 
     {collector_dir}/
-    ├── sessions/    xhs_{account_id}.json, zhihu.json  (chmod 700 dir, 0600 files)
+    ├── sessions/    xhs_{account_id}.json, zhihu.json, jd.json  (chmod 700 dir, 0600 files)
     ├── downloads/   per-run scratch, safe to clear any time
     └── debug/       failure screenshot+HTML pairs, pruned to collector_debug_keep
 """
@@ -45,8 +45,9 @@ def debug_dir() -> Path:
 def session_path(platform: str, account_id: int | None) -> Path:
     """Return the storage_state.json path for a given target.
 
-    XHS/Pugongying sessions are per-account (``{platform}_{account_id}.json``);
-    Zhihu has a single login shared by both content types (``zhihu.json``).
+    XHS/Pugongying/Channels sessions are per-account
+    (``{platform}_{account_id}.json``); Zhihu has a single login shared by
+    both content types (``zhihu.json``).
     """
     if platform == "xhs":
         if account_id is None:
@@ -56,8 +57,12 @@ def session_path(platform: str, account_id: int | None) -> Path:
         if account_id is None:
             raise ValueError("account_id is required for platform='pugongying'")
         return sessions_dir() / f"pugongying_{account_id}.json"
-    if platform == "zhihu":
-        return sessions_dir() / "zhihu.json"
+    if platform == "channels":
+        if account_id is None:
+            raise ValueError("account_id is required for platform='channels'")
+        return sessions_dir() / f"channels_{account_id}.json"
+    if platform in ("zhihu", "jd"):
+        return sessions_dir() / f"{platform}.json"
     raise ValueError(f"Unknown platform: {platform!r}")
 
 

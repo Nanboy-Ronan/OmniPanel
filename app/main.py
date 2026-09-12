@@ -29,7 +29,7 @@ if settings.app_timezone in ("Asia/Shanghai", "Asia/Beijing", "PRC", "CST"):
 from .db import Base, engine
 import app.db.models  # noqa: F401 — register models with Base.metadata
 from .auth import fastapi_users, auth_backend, UserRead, UserCreate
-from .scheduler import monthly_backup_loop, wechat_auto_sync_loop, watchdog_loop
+from .scheduler import monthly_backup_loop, wechat_auto_sync_loop, watchdog_loop, weekly_report_loop
 from .utils.leader import try_become_leader
 from .utils.rate_limiter import login_rate_limiter, get_client_ip
 
@@ -41,12 +41,14 @@ from .views.media       import media_router, media_upload_router
 from .views.media.xhs    import router as xhs_router              # POST /media/xhs/upload
 from .views.media.zhihu  import router as zhihu_router            # POST /media/zhihu/upload
 from .views.media.pgy    import router as pgy_router              # POST /media/pgy/upload
+from .views.media.channels import router as channels_router       # POST /media/channels/upload
 # Platform
 from .views.admin         import router as admin_router          # POST /admin/clear-db
 from .views.collector_admin import router as collector_admin_router  # /admin/collector/*
 from .views.register      import router as register_router       # POST /auth/register
 from .views.wecom_auth    import router as wecom_auth_router     # Enterprise WeChat OAuth
 from .views.saved_queries import router as saved_queries_router  # GET/POST/DELETE /saved-queries/
+from .views.reports import router as reports_router, admin_router as reports_admin_router  # /reports/weekly, /admin/reports/weekly/run
 
 # ─── Lifespan ───────────────────────────────────────────────────────────────
 
@@ -59,6 +61,8 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(wechat_auto_sync_loop(settings))
         if settings.watchdog_enabled:
             asyncio.create_task(watchdog_loop(settings))
+        if settings.weekly_report_enabled:
+            asyncio.create_task(weekly_report_loop(settings))
     yield
 
 # ─── FastAPI instance ───────────────────────────────────────────────────────
@@ -155,7 +159,10 @@ app.include_router(media_upload_router)   # /media/accounts (POST)
 app.include_router(xhs_router)            # /media/xhs/upload
 app.include_router(zhihu_router)          # /media/zhihu/upload
 app.include_router(pgy_router)            # /media/pgy/*
+app.include_router(channels_router)       # /media/channels/*
 app.include_router(saved_queries_router)  # /saved-queries/
+app.include_router(reports_router)        # /reports/weekly
+app.include_router(reports_admin_router)  # /admin/reports/weekly/run
 
 # ─── Health check ───────────────────────────────────────────────────────────
 
