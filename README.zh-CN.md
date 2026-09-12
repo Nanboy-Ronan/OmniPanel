@@ -272,6 +272,7 @@ MINIMAX_API_KEY=eyJ...             # 或 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY �
 - **抖音 / 微博 / B 站** —— 持续跟踪各平台稳定的官方 API / 导出能力，成熟后再接入
 - **小红书商城订单** —— 在现有的内容/KOL 数据基础上，接入小红书自营电商的订单分析
 - **飞书 / 钉钉推送** —— 将已保存的查询结果推送到团队协作工具
+- **海外平台（Amazon、Lazada、Shopify）** —— 把订单数据同步从国内电商平台扩展到跨境销售渠道
 
 考虑中（欢迎在 [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions) 参与讨论）：
 
