@@ -40,6 +40,16 @@ def _create_xhs_account(client, admin_token: str, name: str = "采集测试号")
 
 
 class TestUploadSession:
+    def test_admin_can_upload_jd_session(self, client, tokens, _collector_dir):
+        r = client.post(
+            "/admin/collector/sessions",
+            data={"platform": "jd"},
+            files={"file": ("jd.json", _session_bytes(), "application/json")},
+            headers=_auth(tokens["admin"]),
+        )
+        assert r.status_code == 201, r.text
+        assert (_collector_dir / "sessions" / "jd.json").exists()
+
     def test_admin_can_upload_zhihu_session(self, client, tokens):
         r = client.post(
             "/admin/collector/sessions",

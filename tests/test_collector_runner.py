@@ -11,15 +11,17 @@ from pathlib import Path
 import pytest
 
 from app.collector import runner
-from app.collector.errors import DownloadTimeoutError, SessionExpiredError
+from app.collector.errors import DownloadTimeoutError, EmptyExportError, SessionExpiredError, WrongAccountError
 
 
 @dataclasses.dataclass
 class _FakeSettings:
     collector_enabled: bool = True
     collector_xhs_enabled: bool = True
+    collector_xhs_overview_enabled: bool = False
     collector_zhihu_enabled: bool = True
     collector_pugongying_enabled: bool = False
+    collector_jd_enabled: bool = False
     collector_api_url: str = "http://fake"
     collector_service_email: str | None = "svc@example.com"
     collector_service_password: str | None = "pw"
@@ -27,6 +29,7 @@ class _FakeSettings:
     # Retry-specific tests override this and monkeypatch runner._sleep.
     collector_collect_retries: int = 1
     collector_retry_delay_seconds: int = 0
+    collector_upload_timeout_seconds: int = 120
     wecom_notify_success: bool = True
 
 
@@ -62,9 +65,21 @@ class _FakeAPI:
         self.uploads.append(("xhs", account_id, filename))
         return _Resp(self._upload_status, self._upload_body, text="upload error")
 
+    def upload_xhs_overview(self, data, filename, account_id):
+        self.uploads.append(("xhs_overview", account_id, filename))
+        return _Resp(self._upload_status, self._upload_body, text="upload error")
+
     def upload_zhihu(self, data, filename, content_type):
         self.uploads.append(("zhihu", content_type, filename))
         return _Resp(self._upload_status, self._upload_body, text="upload error")
+
+    def upload_jd(self, data, filename):
+        self.uploads.append(("jd", None, filename))
+        return _Resp(202, {"batch_id": 7})
+
+    def upload_batch(self, batch_id):
+        assert batch_id == 7
+        return _Resp(200, {"status": "completed", "inserted_orders": 2})
 
 
 @pytest.fixture(autouse=True)
@@ -108,7 +123,7 @@ def sessions(tmp_path, monkeypatch):
     def _session_path(platform, account_id):
         if platform == "xhs":
             return tmp_path / f"xhs_{account_id}.json"
-        return tmp_path / "zhihu.json"
+        return tmp_path / f"{platform}.json"
 
     monkeypatch.setattr(runner, "session_path", _session_path)
     return tmp_path
@@ -127,6 +142,27 @@ class TestRunCollectDisabled:
 
 
 class TestRunCollectSuccess:
+    def test_jd_upload_waits_for_background_etl_and_records_inserted_orders(
+        self, sessions, _fake_bookkeeping, alerts,
+    ):
+        _touch(sessions / "jd.json")
+        settings = _FakeSettings(
+            collector_xhs_enabled=False,
+            collector_zhihu_enabled=False,
+            collector_jd_enabled=True,
+        )
+        api = _FakeAPI()
+
+        rc = runner.run_collect(
+            settings=settings,
+            api_client=api,
+            collect_fns={"jd": lambda p, headless=None: (b"csv", "jd.csv")},
+        )
+
+        assert rc == 0
+        assert api.uploads == [("jd", None, "jd.csv")]
+        assert _fake_bookkeeping["finished"][0]["rows_upserted"] == 2
+
     def test_success_records_run_and_rows(self, sessions, _fake_bookkeeping, alerts):
         _touch(sessions / "xhs_1.json")
         settings = _FakeSettings(collector_zhihu_enabled=False)
@@ -145,6 +181,30 @@ class TestRunCollectSuccess:
         assert len(finished) == 1
         assert finished[0]["status"] == "success"
         assert finished[0]["rows_upserted"] == 1
+
+    def test_xhs_overview_target_dispatches_to_its_own_collect_and_upload_fns(
+        self, sessions, _fake_bookkeeping, alerts,
+    ):
+        """Both targets share platform == "xhs" (same account, same session
+        file), but the overview one must reach collect_fns["xhs_overview"]
+        and api.upload_xhs_overview — never the plain xlsx collect/upload
+        path, and vice versa."""
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False, collector_xhs_overview_enabled=True)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}])
+
+        rc = runner.run_collect(
+            settings=settings, api_client=api,
+            collect_fns={
+                "xhs": lambda storage_path, headless=None: (b"filebytes", "export.xlsx"),
+                "xhs_overview": lambda storage_path, headless=None: (b'{"daily":[]}', "overview.json"),
+            },
+        )
+        assert rc == 0
+        assert sorted(api.uploads) == sorted([
+            ("xhs", 1, "export.xlsx"),
+            ("xhs_overview", 1, "overview.json"),
+        ])
 
     def test_success_sends_wecom_notification(self, sessions, _fake_bookkeeping, alerts):
         _touch(sessions / "xhs_1.json")
@@ -233,6 +293,87 @@ class TestRunCollectFailureClassification:
         _touch(sessions / "xhs_1.json")
         settings = _FakeSettings(collector_zhihu_enabled=False)
         api = _FakeAPI(upload_status=500)
+
+        rc = runner.run_collect(
+            settings=settings, api_client=api,
+            collect_fns={"xhs": lambda p, headless=None: (b"x", "f.xlsx"), "zhihu": lambda *a, **kw: (b"", "x")},
+        )
+        assert rc == 1
+        assert _fake_bookkeeping["finished"][0]["status"] == "upload_failed"
+
+    def test_wrong_account_records_distinct_status_not_session_expired(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+
+        def raising(storage_path, headless=None):
+            raise WrongAccountError("wrong sub-account")
+
+        rc = runner.run_collect(
+            settings=settings, api_client=_FakeAPI(),
+            collect_fns={"xhs": raising, "zhihu": lambda *a, **kw: (b"", "x")},
+        )
+        assert rc == 1
+        assert _fake_bookkeeping["finished"][0]["status"] == "wrong_account"
+        assert len(alerts) == 1
+        # Must not tell the operator to just re-run bootstrap-login and
+        # re-upload the same thing — that reproduces the bug.
+        assert "选错" in alerts[0] or "账号不对" in alerts[0]
+
+    def test_empty_export_records_distinct_status_not_upload_failed(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI(upload_status=400, upload_body={})
+
+        def upload_xhs(data, filename, account_id):
+            return _Resp(400, {}, text="文件中未解析到有效行，请确认格式正确。")
+
+        api.upload_xhs = upload_xhs
+
+        rc = runner.run_collect(
+            settings=settings, api_client=api,
+            collect_fns={"xhs": lambda p, headless=None: (b"x", "f.xlsx"), "zhihu": lambda *a, **kw: (b"", "x")},
+        )
+        assert rc == 1
+        assert _fake_bookkeeping["finished"][0]["status"] == "empty_export"
+        assert len(alerts) == 1
+        assert "空" in alerts[0]
+
+    def test_xhs_api_error_records_distinct_status_not_unknown_error(self, sessions, _fake_bookkeeping, alerts):
+        """XhsApiError (collect_xhs_overview's data-API-refused-us case) must
+        not fall through to the generic except Exception branch — that
+        branch's "未知错误" message tells the operator nothing about what
+        went wrong or what to check next."""
+        from app.collector.errors import XhsApiError
+
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False, collector_xhs_overview_enabled=True)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}])
+
+        def raising_overview(storage_path, headless=None):
+            raise XhsApiError("account/base never returned parseable JSON within budget")
+
+        rc = runner.run_collect(
+            settings=settings, api_client=api,
+            collect_fns={
+                "xhs": lambda p, headless=None: (b"x", "f.xlsx"),
+                "xhs_overview": raising_overview,
+            },
+        )
+        assert rc == 1
+        statuses = {f["status"] for f in _fake_bookkeeping["finished"]}
+        assert "api_error" in statuses
+        assert "error" not in statuses  # the generic except Exception fallback status
+        assert any("登录态有效" in a for a in alerts)
+
+    def test_400_with_other_reason_is_still_upload_failed(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI(upload_status=400, upload_body={})
+
+        def upload_xhs(data, filename, account_id):
+            return _Resp(400, {}, text="文件过大（上限 50 MB）。")
+
+        api.upload_xhs = upload_xhs
 
         rc = runner.run_collect(
             settings=settings, api_client=api,
@@ -375,6 +516,19 @@ class TestRunCollectRetry:
 
 
 class TestBuildTargets:
+    def test_jd_produces_one_platform_level_target(self, sessions):
+        settings = _FakeSettings(
+            collector_xhs_enabled=False,
+            collector_zhihu_enabled=False,
+            collector_jd_enabled=True,
+        )
+        targets = runner.build_targets(_FakeAPI(), settings)
+        assert len(targets) == 1
+        assert targets[0].platform == "jd"
+        assert targets[0].account_id is None
+        assert targets[0].session_file.name == "jd.json"
+        assert targets[0].label == "京东订单"
+
     def test_zhihu_produces_article_and_qa_targets(self, sessions):
         settings = _FakeSettings(collector_xhs_enabled=False)
         targets = runner.build_targets(_FakeAPI(), settings)
@@ -408,6 +562,31 @@ class TestBuildTargets:
         ])
         targets = runner.build_targets(api, settings)
         assert [t.account_id for t in targets] == [2]
+
+    def test_xhs_overview_disabled_by_default_adds_no_extra_target(self, sessions):
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True}])
+        targets = runner.build_targets(api, settings)
+        assert len(targets) == 1
+        assert targets[0].content_type is None
+
+    def test_xhs_overview_enabled_adds_second_target_per_account_same_session(self, sessions):
+        settings = _FakeSettings(collector_zhihu_enabled=False, collector_xhs_overview_enabled=True)
+        api = _FakeAPI(xhs_accounts=[{"id": 5, "is_active": True, "name": "阳光小铺"}])
+        targets = runner.build_targets(api, settings)
+        assert len(targets) == 2
+        by_content_type = {t.content_type: t for t in targets}
+        assert set(by_content_type) == {None, "overview"}
+        # Same account, same session file — a second pass on the same
+        # authenticated session, not a separate login.
+        assert by_content_type[None].session_file == by_content_type["overview"].session_file
+        assert by_content_type["overview"].label == "小红书数据概览·阳光小铺"
+
+    def test_xhs_overview_enabled_skips_inactive_accounts(self, sessions):
+        settings = _FakeSettings(collector_zhihu_enabled=False, collector_xhs_overview_enabled=True)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": False}])
+        targets = runner.build_targets(api, settings)
+        assert targets == []
 
 
 class TestRunVerify:
@@ -446,7 +625,7 @@ class TestRunVerify:
         assert "小红书·阳光小铺" in alerts[0]
         assert "登录态已过期" in alerts[0]
 
-    def test_zhihu_expired_note_flags_unverified_selectors(self, sessions, _fake_bookkeeping, alerts):
+    def test_zhihu_expired_reported_like_any_other_platform(self, sessions, _fake_bookkeeping, alerts):
         settings = _FakeSettings(collector_xhs_enabled=False)
         _touch(sessions / "zhihu.json")
         api = _FakeAPI()
@@ -456,7 +635,8 @@ class TestRunVerify:
             verify_fns={"xhs": lambda p, headless=None: True, "zhihu": lambda p, headless=None: False},
         )
         assert rc == 1
-        assert "仅供参考" in alerts[0]
+        assert "登录态已过期" in alerts[0]
+        assert "仅供参考" not in alerts[0]
 
     def test_missing_session_file_is_a_problem_without_a_run_row(self, sessions, _fake_bookkeeping, alerts):
         settings = _FakeSettings(collector_zhihu_enabled=False)
@@ -482,6 +662,25 @@ class TestRunVerify:
         assert rc == 1
         assert len(alerts) == 1
         assert _fake_bookkeeping["started"] == []
+
+    def test_wrong_account_is_distinct_from_session_expired(self, sessions, _fake_bookkeeping, alerts):
+        _touch(sessions / "xhs_1.json")
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True, "name": "阳光小铺"}])
+
+        def raising(path, headless=None):
+            raise WrongAccountError("wrong sub-account")
+
+        rc = runner.run_verify(
+            settings=settings, api_client=api,
+            verify_fns={"xhs": raising, "zhihu": lambda p, headless=None: True},
+        )
+        assert rc == 1
+        assert _fake_bookkeeping["finished"][0]["status"] == "wrong_account"
+        # Must not carry the "session expired, re-run bootstrap-login and
+        # re-upload" wording — the fix is different (pick the right account).
+        assert "登录态已过期" not in alerts[0]
+        assert "选错" in alerts[0] or "账号不对" in alerts[0]
 
     def test_verify_error_is_recorded_and_reported(self, sessions, _fake_bookkeeping, alerts):
         _touch(sessions / "xhs_1.json")
