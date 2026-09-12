@@ -272,6 +272,7 @@ In progress:
 - **Douyin, Weibo, Bilibili** — tracking for stable official API/export availability on each platform before building the connector
 - **Xiaohongshu (XHS) Marketplace orders** — e-commerce order analytics for XHS's own marketplace, alongside its existing content/KOL data
 - **Feishu / DingTalk push** — send saved query results to team collaboration tools
+- **Overseas platforms (Amazon, Lazada, Shopify)** — extend order data sync beyond domestic marketplaces to cross-border sales channels
 
 Under consideration (join the [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions)):
 
