@@ -24,8 +24,8 @@ General-purpose BI tools (Tableau, Metabase, etc.) won't handle this for you. Th
 **OmniPanel handles the correctness layer for you.** How data gets in depends on the platform:
 
 - **Platforms with an API** (WeChat Official Accounts) — configure once, background sync pulls fresh data daily
-- **Platforms with a creator portal** (XHS, Zhihu, and XHS's Pugongying KOL/KOC collaboration platform) — a built-in collector agent logs in and exports automatically
-- **Export-only platforms** (Youzan, JD, Tmall orders) — upload the spreadsheet, auto-detected by column fingerprint
+- **Platforms with a login portal** (XHS, Zhihu, WeChat Channels, XHS's Pugongying KOL/KOC collaboration platform, and JD's merchant back-office) — a built-in collector agent logs in and exports automatically
+- **Export-only platforms** (Youzan, Tmall orders) — upload the spreadsheet, auto-detected by column fingerprint (JD also accepts a manual export as a fallback)
 
 Regardless of how it arrives, the data is automatically:
 
