@@ -39,7 +39,8 @@ Data arrives through two paths; the analytics experience is the same either way:
 
 ```
 Path A: Auto-sync                  Path B: Manual upload
-(WeChat OA / XHS / Zhihu)          (Youzan / JD / Tmall orders)
+(WeChat OA / XHS / Zhihu /         (Youzan / Tmall orders)
+ WeChat Channels / JD)
         │                                    │
         └──────────┬─────────────────────────┘
                    ▼
@@ -74,9 +75,10 @@ Path A: Auto-sync                  Path B: Manual upload
 
 | Type | Platforms | How |
 |---|---|---|
-| E-commerce orders | Youzan, JD, Tmall | Upload official exports (.xlsx/.xls/.csv); auto-detected by column fingerprint |
+| E-commerce orders | Youzan, Tmall | Upload official exports (.xlsx/.xls/.csv); auto-detected by column fingerprint |
+| E-commerce orders | JD | Upload official exports, **or** the built-in collector agent reads the merchant back-office's rendered (already-masked) order list — no export password needed |
 | WeChat OA | WeChat Official Accounts | Automatic API sync (daily scheduled pull), no manual steps needed |
-| Content platforms | Xiaohongshu (XHS), Zhihu | Upload official exports or use the built-in automated collector agent |
+| Content platforms | Xiaohongshu (XHS), Zhihu, WeChat Channels (视频号) | Upload official exports or use the built-in automated collector agent |
 | KOL/KOC collaboration | Pugongying (蒲公英, XHS's official creator-collaboration platform) | Upload official campaign exports or use the same collector agent |
 
 > Content-hash de-duplication means re-uploading the same file is safe — no duplicates.
@@ -90,10 +92,13 @@ Path A: Auto-sync                  Path B: Manual upload
 
 ### Content analytics
 
-- **WeChat traffic** — daily reads, shares, followers; trends and comparisons
+- **WeChat traffic** — daily reads, shares, followers; trends and comparisons, with a follower acquisition-scene breakdown (search, QR scan, article menu, …)
+- **WeChat Channels (视频号) analytics** — per-video plays, the two distinct "like" signals (推荐/喜欢), completion rate, and a WeCom-integration engagement cluster (link clicks, added-to-contacts, set-as-ringtone/status) unique to this platform
+- **XHS account-level overview** — daily fan gain/loss, watch time, and completion rate at the account level (not just per-note), plus a 7-/30-day audience-source channel breakdown
 - **Content-to-sales impact** — correlate publish dates with order volume to measure content-driven sales, across WeChat, XHS, and Zhihu
 - **Topic-tag diagnostics** — keyword-based content-topic tagging (XHS, Zhihu) for spotting which subjects actually drive engagement
 - **KOL/KOC collaboration analytics (Pugongying)** — a 7-view dashboard covering blogger- and campaign-level ROI (spend, impressions, reads, engagement rate), audience demographics (age/gender/device/region/interest breakdowns), and component-level click performance (text links, bottom bar, interactive stickers, comment-area links)
+- **Weekly media report** — an automated 公众号 + 小红书 report generated on a schedule, with an optional one-paragraph LLM narrative highlight, pushed via WeCom and viewable in-app
 
 ### Query layer
 
@@ -264,7 +269,7 @@ Changing `RAP_SECRET` directly logs out every user. Use `RAP_SECRET_PREVIOUS` fo
 
 In progress:
 
-- **Video & social platform expansion (WeChat Video Channels, Douyin, Weibo, Bilibili)** — tracking for stable official API/export availability on each platform before building the connector
+- **Douyin, Weibo, Bilibili** — tracking for stable official API/export availability on each platform before building the connector
 - **Xiaohongshu (XHS) Marketplace orders** — e-commerce order analytics for XHS's own marketplace, alongside its existing content/KOL data
 - **Feishu / DingTalk push** — send saved query results to team collaboration tools
 
