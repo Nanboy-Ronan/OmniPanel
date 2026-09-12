@@ -165,7 +165,10 @@ Core tables (see `app/db/models.py` for the authoritative definitions):
 | `media_article_traffic` | Traffic-source breakdown per article |
 | `media_sync_runs` | Audit trail of each sync (manual or scheduled), with status and counts |
 | `xhs_accounts` / `xhs_posts` | 小红书 (Xiaohongshu) accounts and notes |
+| `xhs_account_daily_metrics` / `xhs_audience_source_daily` | XHS account-level "数据概览" (daily overview metrics, audience source breakdown) |
 | `zhihu_posts` | 知乎 (Zhihu) articles/answers |
+| `wx_channels_accounts` / `wx_channels_posts` | WeChat Channels (视频号) accounts and videos |
+| `weekly_report_runs` | One row per generated weekly media report (status, rendered HTML, WeCom push result) |
 | `operation_log` | Append-only audit log of queries and mutating actions |
 | `saved_query` | User-saved SQL console queries |
 
@@ -222,7 +225,8 @@ Routers are mounted in `app/main.py`. Grouped by domain:
 | `/upload` | E-commerce ingestion | Upload a file; poll `upload_batches/{id}` for status |
 | `/analysis` | E-commerce analytics | Overview, customer breakdowns, repurchase rate, cohort retention (`/analysis/cohort_retention`), cross-platform customer identity (`/analysis/identity/clusters`), field coverage, the SQL console (`/analysis/sql`) and NL-to-SQL (`/analysis/nl-sql`) |
 | `/orders_all` | E-commerce | Raw order listing/export |
-| `/media`, `/media/xhs`, `/media/zhihu` | Self-media | Accounts, posts, metrics, traffic, WeChat sync trigger |
+| `/media`, `/media/xhs`, `/media/zhihu`, `/media/channels` | Self-media | Accounts, posts, metrics, traffic, WeChat sync trigger, WeChat Channels (视频号) accounts/uploads |
+| `/reports` | Weekly media report | List/detail/manual-trigger for the WeChat + XHS weekly report (see [Collector agent](collector.md)) |
 | `/admin` | Admin | User management, `/admin/clear-db` |
 | `/saved-queries` | SQL console | Save/list/delete a user's saved queries |
 | `/health`, `/ping` | Ops | Liveness/readiness for a reverse proxy or monitoring |
@@ -261,6 +265,10 @@ when scaled horizontally:
 - **WeChat auto-sync loop** (`app/scheduler.py:wechat_auto_sync_loop`) —
   see [WeChat auto-sync](wechat-auto-sync.md) for why this exists and how
   it's configured.
+- **Weekly report loop** (`app/scheduler.py:weekly_report_loop`) — generates
+  and pushes the weekly WeChat + XHS media report; see
+  [Collector agent](collector.md) for the aggregation → narrative → render
+  pipeline.
 
 ## Configuration reference
 
@@ -308,6 +316,13 @@ documents the commonly-changed ones inline; the full set, with defaults:
 | `WECHAT_AUTO_SYNC_ENABLED` | `false` | Enable the daily background WeChat sync |
 | `WECHAT_AUTO_SYNC_WINDOW_DAYS` | `170` | Days of history covered per run |
 | `WECHAT_AUTO_SYNC_HOUR` | `3` | Hour (0–23, `APP_TIMEZONE`) the sync runs |
+| `COLLECTOR_XHS_OVERVIEW_ENABLED` | `false` | Enable the collector's XHS "数据概览" (account-level overview) target |
+| `COLLECTOR_CHANNELS_ENABLED` | `false` | Enable the collector's WeChat Channels (视频号) target |
+| `COLLECTOR_JD_ENABLED` | `false` | Enable the collector's JD (京东) order-list target |
+| `COLLECTOR_UPLOAD_TIMEOUT_SECONDS` | `120` | Timeout for a collector run's upload-and-wait-for-ETL step |
+| `WEEKLY_REPORT_ENABLED` | `false` | Enable the background weekly media report loop |
+| `REPORT_HOUR` | `9` | Hour (0–23, `APP_TIMEZONE`) the weekly report check runs |
+| `PUBLIC_BASE_URL` | `https://example.com` | Base URL used to build absolute links in the weekly report (e.g. the WeCom push) |
 
 WeChat/WeCom per-account credentials (`WECHAT_APP_ID_N`,
 `WECHAT_APP_SECRET_N`, `WECHAT_ACCOUNT_NAME_N`, `WECOM_CORP_ID`,

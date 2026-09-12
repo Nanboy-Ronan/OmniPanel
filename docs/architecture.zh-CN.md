@@ -147,7 +147,10 @@ FastAPI 后端（`app/`）内部组织为：
 | `media_article_traffic` | 每篇文章的流量来源拆解 |
 | `media_sync_runs` | 每次同步（手动或定时）的审计记录，含状态和计数 |
 | `xhs_accounts` / `xhs_posts` | 小红书账号和笔记 |
+| `xhs_account_daily_metrics` / `xhs_audience_source_daily` | 小红书账号级"数据概览"（每日概览指标、来源人群拆解） |
 | `zhihu_posts` | 知乎文章/回答 |
+| `wx_channels_accounts` / `wx_channels_posts` | 视频号账号和视频 |
+| `weekly_report_runs` | 每份生成的周报一行（状态、渲染后的 HTML、企微推送结果） |
 | `operation_log` | 查询与写操作的只追加审计日志 |
 | `saved_query` | 用户保存的 SQL 查询台查询 |
 
@@ -190,7 +193,8 @@ ID）——完整的业务口径参考见 `app/utils/nl_to_sql.py` 中的 `SCHEM
 | `/upload` | 电商摄入 | 上传文件；通过 `upload_batches/{id}` 轮询状态 |
 | `/analysis` | 电商分析 | 总览、客户拆分、复购率、队列留存（`/analysis/cohort_retention`）、跨平台客户身份（`/analysis/identity/clusters`）、字段覆盖率、SQL 查询台（`/analysis/sql`）、中文问数据（`/analysis/nl-sql`） |
 | `/orders_all` | 电商 | 原始订单列表/导出 |
-| `/media`, `/media/xhs`, `/media/zhihu` | 自媒体 | 账号、图文/笔记、指标、流量、微信同步触发 |
+| `/media`, `/media/xhs`, `/media/zhihu`, `/media/channels` | 自媒体 | 账号、图文/笔记、指标、流量、微信同步触发、视频号账号/上传 |
+| `/reports` | 周报 | 微信+小红书周报的列表/详情/手动触发（见[采集代理](collector.zh-CN.md)） |
 | `/admin` | 管理 | 用户管理、`/admin/clear-db` |
 | `/saved-queries` | SQL 查询台 | 保存/列出/删除用户保存的查询 |
 | `/health`, `/ping` | 运维 | 供反向代理或监控用的健康检查 |
@@ -220,6 +224,8 @@ ID）——完整的业务口径参考见 `app/utils/nl_to_sql.py` 中的 `SCHEM
   dump，除非设置了 `RAP_DISABLE_MONTHLY_BACKUP=true`。
 - **微信自动同步循环**（`app/scheduler.py:wechat_auto_sync_loop`）——为什么需要它、如何配置见
   [微信自动同步](wechat-auto-sync.zh-CN.md)。
+- **周报循环**（`app/scheduler.py:weekly_report_loop`）——生成并推送微信+小红书周报；聚合
+  → 文案 → 渲染的完整流程见[采集代理](collector.zh-CN.md)。
 
 ## 配置参考
 
@@ -266,6 +272,13 @@ ID）——完整的业务口径参考见 `app/utils/nl_to_sql.py` 中的 `SCHEM
 | `WECHAT_AUTO_SYNC_ENABLED` | `false` | 启用每日后台微信同步 |
 | `WECHAT_AUTO_SYNC_WINDOW_DAYS` | `170` | 每次同步覆盖的历史天数 |
 | `WECHAT_AUTO_SYNC_HOUR` | `3` | 同步运行的小时数（0–23，按 `APP_TIMEZONE`） |
+| `COLLECTOR_XHS_OVERVIEW_ENABLED` | `false` | 启用采集代理的小红书"数据概览"（账号级概览）目标 |
+| `COLLECTOR_CHANNELS_ENABLED` | `false` | 启用采集代理的视频号目标 |
+| `COLLECTOR_JD_ENABLED` | `false` | 启用采集代理的京东订单列表目标 |
+| `COLLECTOR_UPLOAD_TIMEOUT_SECONDS` | `120` | 采集运行中"上传并等待 ETL 完成"步骤的超时时间 |
+| `WEEKLY_REPORT_ENABLED` | `false` | 启用后台周报生成循环 |
+| `REPORT_HOUR` | `9` | 周报检查运行的小时数（0–23，按 `APP_TIMEZONE`） |
+| `PUBLIC_BASE_URL` | `https://example.com` | 周报（如企微推送）中用于拼接绝对链接的基础 URL |
 
 微信/企业微信的每账号凭证（`WECHAT_APP_ID_N`、`WECHAT_APP_SECRET_N`、
 `WECHAT_ACCOUNT_NAME_N`、`WECOM_CORP_ID`、`WECOM_AGENT_ID`、
