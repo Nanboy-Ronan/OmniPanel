@@ -18,9 +18,18 @@ _logger = logging.getLogger(__name__)
 
 # Pin to a current desktop Chrome UA matching the Playwright-bundled Chromium
 # major version — update alongside the `playwright` pin in requirements.txt.
+#
+# This drifting out of sync is a real bug, not just cosmetic: Playwright's
+# `user_agent` context option only overrides the UA *string*/navigator.userAgent.
+# It does NOT touch Client Hints (`sec-ch-ua`, `navigator.userAgentData`),
+# which the real Chromium engine reports honestly regardless of the spoofed
+# UA string. A stale UA here next to a real, newer engine version (from the
+# bundled Chrome for Testing) is exactly the kind of version mismatch
+# anti-bot risk control looks for — hit live as Zhihu's "请升级客户端后重新
+# 尝试" (error 10001) blocking bootstrap-login.
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/148.0.7778.96 Safari/537.36"
 )
 VIEWPORT = {"width": 1440, "height": 900}
 LOCALE = "zh-CN"
@@ -45,6 +54,13 @@ LOGIN_URL_MARKERS = ("login", "passport")
 LOGIN_DOM_MARKERS = (
     "二维码", "扫码登录", "扫码登陆",
     "短信登录", "发送验证码", "验证码登录",
+    # Zhihu's risk-control gate (`/account/unhuman?...need_login=true`), hit
+    # live testing a logged-out context: the URL doesn't contain
+    # "login"/"passport" so only this DOM text catches it. Kept as a DOM
+    # marker only (not also a URL marker) — "unhuman" as a substring is a
+    # needless risk to XHS/PGY/channels/JD, which all share this tuple, for
+    # no gain over the text already being specific enough on its own.
+    "系统监测到您的网络环境存在异常",
 )
 
 
