@@ -430,6 +430,87 @@ class XhsPost(Base):
     )
 
 
+class XhsAccountDailyMetric(Base):
+    """One account-level daily snapshot from XHS's "数据概览" page
+    (`/statistics/account/v2`), collected via collect_xhs_overview().
+
+    Unlike XhsPost (overwritten, no history), this is a true daily
+    time series: each collection run re-submits the last 30 days from the
+    platform's own "thirty"-window daily lists (verified to be genuine
+    per-day values, not a running total — see collect_xhs_overview), and
+    each day is upserted independently. A single missed collection day
+    self-heals the next time this runs, as long as the gap is under 30 days.
+
+    view_time_total_seconds / avg_view_time_seconds are seconds;
+    cover_click_rate / video_full_view_rate are percentages (0-100).
+    """
+
+    __tablename__ = "xhs_account_daily_metrics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("xhs_accounts.id", ondelete="CASCADE"), nullable=False)
+    metric_date = Column(Date, nullable=False)
+    rise_fans_count = Column(Integer, nullable=True)
+    loss_fans_count = Column(Integer, nullable=True)
+    net_rise_fans_count = Column(Integer, nullable=True)
+    view_count = Column(Integer, nullable=True)
+    view_time_total_seconds = Column(Integer, nullable=True)
+    avg_view_time_seconds = Column(Float, nullable=True)
+    home_view_count = Column(Integer, nullable=True)
+    like_count = Column(Integer, nullable=True)
+    collect_count = Column(Integer, nullable=True)
+    comment_count = Column(Integer, nullable=True)
+    share_count = Column(Integer, nullable=True)
+    danmaku_count = Column(Integer, nullable=True)
+    cover_click_rate = Column(Float, nullable=True)
+    video_full_view_rate = Column(Float, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    account = relationship("XhsAccount")
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "metric_date", name="uq_xhs_account_daily_metrics_account_date"),
+        Index("ix_xhs_account_daily_metrics_account_id", "account_id"),
+        Index("ix_xhs_account_daily_metrics_metric_date", "metric_date"),
+    )
+
+
+class XhsAudienceSourceDaily(Base):
+    """One day's snapshot of XHS's 观众来源/涨粉来源 channel breakdown
+    (`audience/source/account`), for both the 7-day and 30-day windows the
+    platform itself computes. Unlike XhsAccountDailyMetric's fields, the
+    platform does not expose a daily list for this — each entry here is a
+    percentage share (0-100, summing to ~100 within one account/window/
+    snapshot_date) "as of" the day it was collected, not a per-day delta.
+    """
+
+    __tablename__ = "xhs_audience_source_daily"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("xhs_accounts.id", ondelete="CASCADE"), nullable=False)
+    snapshot_date = Column(Date, nullable=False)
+    # Named window_label, not window — `window` is a reserved word in
+    # Postgres (window functions) and fails at DDL time even quoted-free in
+    # most contexts; caught live running this migration locally.
+    window_label = Column(String(8), nullable=False)  # "seven" | "thirty"
+    source_type = Column(Integer, nullable=False)
+    title = Column(String(64), nullable=True)
+    value_pct = Column(Float, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    account = relationship("XhsAccount")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "account_id", "snapshot_date", "window_label", "source_type",
+            name="uq_xhs_audience_source_daily_account_date_window_source",
+        ),
+        Index("ix_xhs_audience_source_daily_account_id", "account_id"),
+    )
+
+
 class ZhihuPost(Base):
     """One Zhihu post (article or Q&A) with its traffic metrics.
 
@@ -461,6 +542,83 @@ class ZhihuPost(Base):
                          name="uq_zhihu_posts_type_title_date"),
         Index("ix_zhihu_posts_content_type", "content_type"),
         Index("ix_zhihu_posts_publish_date", "publish_date"),
+    )
+
+
+class WxChannelsAccount(Base):
+    """A WeChat Channels (视频号) account managed by this platform.
+
+    Like XhsAccount there is no public analytics API — data comes from the
+    视频号助手 (channels.weixin.qq.com/platform) creator backend, either via
+    the automated collector (QR-scan session) or a manual xlsx/csv upload.
+    """
+
+    __tablename__ = "wx_channels_accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False, unique=True)
+    is_active = Column(Boolean, nullable=False, server_default="true")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    posts = relationship("WxChannelsPost", back_populates="account", cascade="all, delete-orphan")
+
+
+class WxChannelsPost(Base):
+    """One WeChat Channels (视频号) video with its traffic metrics.
+
+    Schema verified live 2026-08-13 against a real 视频号 account, via
+    视频号助手 → 数据中心 → 视频数据 → 单篇视频 tab → 下载表格 (real button
+    label; NOT "导出" — see app/collector/channels.py). Sample export kept
+    at data/channels_example.csv (mirrors data/pgy_example.xlsx's role).
+
+    Dedup key: video_id, the real 视频ID column in the export (e.g.
+    "export/UzFfBgAAxOOgWDk7Rwy...") — a stable ID, unlike XhsPost's
+    (account_id, title, publish_date) composite. No synthetic hash needed;
+    this is the same shape as PgyNote.note_id. Numeric metrics are
+    overwritten on each upsert; posts absent from the current upload are kept.
+
+    The export has no 曝光/收藏 columns (unlike XHS/PGY) — 视频号 exposes a
+    different metric vocabulary, including two distinct "like" signals
+    (推荐/likes here vs 喜欢/likes_thumb) and a set of WeCom-integration
+    engagement actions (设为铃声/状态/朋友圈封面, 企微链接点击, 添加到通讯录)
+    that have no equivalent on the other collected platforms.
+    """
+
+    __tablename__ = "wx_channels_posts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("wx_channels_accounts.id", ondelete="CASCADE"), nullable=False)
+    video_id = Column(String(255), nullable=False)      # 视频ID
+    title = Column(Text, nullable=False)                # 视频描述 (can be long, multi-line w/ hashtags)
+    publish_date = Column(Date, nullable=True)           # 发布时间
+    # ── traffic metrics (overwritten on each upsert; verified column set) ──
+    plays = Column(Integer, nullable=True)                     # 播放量
+    recommends = Column(Integer, nullable=True)                # 推荐 (♡ icon in the UI)
+    likes_thumb = Column(Integer, nullable=True)                # 喜欢 (👍 icon in the UI — distinct from 推荐)
+    comments = Column(Integer, nullable=True)                   # 评论量
+    shares = Column(Integer, nullable=True)                     # 分享量
+    new_fans = Column(Integer, nullable=True)                   # 关注量
+    forwards_chat_moments = Column(Integer, nullable=True)      # 转发聊天和朋友圈
+    set_as_ringtone = Column(Integer, nullable=True)            # 设为铃声
+    set_as_status = Column(Integer, nullable=True)              # 设为状态
+    set_as_moments_cover = Column(Integer, nullable=True)       # 设为朋友圈封面
+    wecom_link_clicks = Column(Integer, nullable=True)          # 企微链接点击次数
+    wecom_link_click_users = Column(Integer, nullable=True)     # 企微链接点击人数
+    added_to_contacts = Column(Integer, nullable=True)          # 添加到通讯录次数
+    added_to_contacts_users = Column(Integer, nullable=True)    # 添加到通讯录人数
+    avg_watch_duration = Column(Float, nullable=True)           # 平均播放时长（秒，导出为"14.73秒"字符串）
+    completion_rate = Column(Float, nullable=True)              # 完播率（导出为"4.41%"，存为 0.0441）
+    raw_payload = Column(JSON, nullable=True)
+    # ── housekeeping ──────────────────────────────────────────────────────
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    account = relationship("WxChannelsAccount", back_populates="posts")
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "video_id", name="uq_wx_channels_posts_account_video_id"),
+        Index("ix_wx_channels_posts_account_id", "account_id"),
+        Index("ix_wx_channels_posts_publish_date", "publish_date"),
     )
 
 
@@ -567,4 +725,30 @@ class PgyNote(Base):
         UniqueConstraint('account_id', 'note_id', name='uq_pgy_notes_account_note_id'),
         Index('ix_pgy_notes_account_id', 'account_id'),
         Index('ix_pgy_notes_publish_date', 'publish_date'),
+    )
+
+
+class WeeklyReportRun(Base):
+    """One generated 公众号+小红书周报 (weekly media report) and its content.
+
+    One row per ISO week (Monday-Sunday), upserted — a retry after a
+    transient failure (e.g. WeChat API hiccup) overwrites the same row
+    rather than accumulating duplicates. html_content is NULL when
+    status='error' and rendering never got far enough to produce one.
+    """
+
+    __tablename__ = "weekly_report_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    week_start = Column(Date, nullable=False, unique=True)
+    week_end = Column(Date, nullable=False)
+    generated_at = Column(DateTime, nullable=False, server_default=func.now())
+    status = Column(String(32), nullable=False)  # success | partial | error
+    html_content = Column(Text, nullable=True)
+    narrative = Column(Text, nullable=True)
+    wecom_sent = Column(Boolean, nullable=False, server_default="false")
+    error_message = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_weekly_report_runs_week_start", "week_start"),
     )
