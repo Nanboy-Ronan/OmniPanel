@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import contextlib
 
+import pytest
+
 from app.collector import xhs
+from app.collector.errors import WrongAccountError
 
 
 class _FakePage:
@@ -19,10 +22,11 @@ class _FakePage:
     exhausted (models a state that never changes again).
     """
 
-    def __init__(self, url_sequence: list[str]):
+    def __init__(self, url_sequence: list[str], body_text: str = ""):
         self._sequence = url_sequence
         self._idx = 0
         self.url = url_sequence[0]
+        self.body_text = body_text
 
     def goto(self, url, wait_until=None):
         self._idx = 0
@@ -33,7 +37,7 @@ class _FakePage:
         self.url = self._sequence[min(self._idx, len(self._sequence) - 1)]
 
     def inner_text(self, selector):
-        return ""
+        return self.body_text
 
 
 def _fake_open_context_factory(page):
@@ -70,3 +74,35 @@ class TestVerifyXhsSession:
         monkeypatch.setattr(xhs, "open_context", _fake_open_context_factory(page))
 
         assert xhs.verify_xhs_session(tmp_path / "session.json") is False
+
+    def test_wrong_account_raises_not_returns_false(self, tmp_path, monkeypatch):
+        # Session is live (not a login page, no select-account redirect) but
+        # the body text shows the "no permission" marker instead of real
+        # data — this must NOT be reported the same way as an expired
+        # session; a human re-running bootstrap-login with the same account
+        # choice would just reproduce it.
+        page = _FakePage(
+            ["https://pro.xiaohongshu.com/enterprise/home"],
+            body_text="没有查看当前页面的权限，请联系管理员",
+        )
+        monkeypatch.setattr(xhs, "open_context", _fake_open_context_factory(page))
+
+        with pytest.raises(WrongAccountError):
+            xhs.verify_xhs_session(tmp_path / "session.json")
+
+
+class TestCollectXhsWrongAccount:
+    def test_wrong_account_raises_before_attempting_download(self, tmp_path, monkeypatch):
+        page = _FakePage(
+            ["https://pro.xiaohongshu.com/enterprise/home"],
+            body_text="没有查看当前页面的权限，请联系管理员",
+        )
+        monkeypatch.setattr(xhs, "open_context", _fake_open_context_factory(page))
+
+        def _boom(*a, **kw):
+            raise AssertionError("must not attempt a download for a wrong-account session")
+
+        monkeypatch.setattr(xhs, "expect_download", _boom)
+
+        with pytest.raises(WrongAccountError):
+            xhs.collect_xhs(tmp_path / "session.json")

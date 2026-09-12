@@ -401,3 +401,68 @@ class TestRunWechatSyncOnceNotifications:
         asyncio.run(scheduler_mod._run_wechat_sync_once(settings))
 
         assert wecom_sent == []
+
+
+# ── _weekly_report_due: gate is success-only, not row-existence ─────────────
+
+async def _insert_weekly_report_run(session_factory, *, week_start, week_end, status: str) -> None:
+    from app.db.models import WeeklyReportRun
+
+    async with session_factory() as session:
+        session.add(WeeklyReportRun(week_start=week_start, week_end=week_end, status=status))
+        await session.commit()
+
+
+class TestWeeklyReportDue:
+    def test_not_due_before_data_lag_clears(self, async_session_factory):
+        from datetime import date
+
+        # Sunday just ended yesterday — WeChat's 1-2 day lag hasn't cleared.
+        today = date(2026, 9, 14)  # Monday; week_end = Sunday 9/13, only 1 day ago
+        settings = _FakeSchedulerSettings()
+        due = asyncio.run(
+            scheduler_mod._weekly_report_due(settings, today, async_session_factory=async_session_factory)
+        )
+        assert due is False
+
+    def test_due_when_no_report_exists_yet(self, async_session_factory):
+        from datetime import date
+
+        today = date(2026, 9, 15)  # 2 days after week_end (9/13) — lag cleared
+        settings = _FakeSchedulerSettings()
+        due = asyncio.run(
+            scheduler_mod._weekly_report_due(settings, today, async_session_factory=async_session_factory)
+        )
+        assert due is True
+
+    def test_not_due_after_success(self, async_session_factory):
+        from datetime import date
+
+        asyncio.run(
+            _insert_weekly_report_run(
+                async_session_factory, week_start=date(2026, 9, 7), week_end=date(2026, 9, 13), status="success"
+            )
+        )
+        today = date(2026, 9, 15)
+        settings = _FakeSchedulerSettings()
+        due = asyncio.run(
+            scheduler_mod._weekly_report_due(settings, today, async_session_factory=async_session_factory)
+        )
+        assert due is False
+
+    def test_still_due_after_a_prior_error(self, async_session_factory):
+        """A failed run must not permanently suppress the week — only a
+        successful run should satisfy the gate."""
+        from datetime import date
+
+        asyncio.run(
+            _insert_weekly_report_run(
+                async_session_factory, week_start=date(2026, 9, 7), week_end=date(2026, 9, 13), status="error"
+            )
+        )
+        today = date(2026, 9, 15)
+        settings = _FakeSchedulerSettings()
+        due = asyncio.run(
+            scheduler_mod._weekly_report_due(settings, today, async_session_factory=async_session_factory)
+        )
+        assert due is True

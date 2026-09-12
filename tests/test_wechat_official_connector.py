@@ -233,6 +233,86 @@ def test_wechat_api_error_includes_payload_message():
     assert "invalid appid" in str(exc)
 
 
+class TestFetchUserSummaryRows:
+    def _make_client(self) -> WeChatOfficialClient:
+        client = WeChatOfficialClient(app_id="fake_id", app_secret="fake_secret")
+        client.get_access_token = MagicMock(return_value="tok")
+        return client
+
+    def test_normalizes_real_production_shape(self):
+        """Shape observed live against a production account — one item per
+        day, single scene per day since only one follow/unfollow happened."""
+        client = self._make_client()
+        payload = {
+            "list": [
+                {"ref_date": "2026-09-08", "user_source": 0, "new_user": 0, "cancel_user": 1},
+                {"ref_date": "2026-09-09", "user_source": 1, "new_user": 1, "cancel_user": 0},
+            ]
+        }
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = payload
+        with patch("app.connectors.wechat_official.requests.post", return_value=mock_resp):
+            rows = client.fetch_user_summary_rows(date(2026, 9, 8), date(2026, 9, 9))
+
+        assert len(rows) == 2
+        assert rows[0]["ref_date"] == date(2026, 9, 8)
+        assert rows[0]["new_user"] == 0
+        assert rows[0]["cancel_user"] == 1
+        assert rows[0]["user_source_label"] == "其他方式"
+        assert rows[1]["user_source_label"] == "公众号搜索"
+
+    def test_unknown_scene_code_falls_back_to_generic_label(self):
+        client = self._make_client()
+        payload = {"list": [{"ref_date": "2026-09-08", "user_source": 999, "new_user": 2, "cancel_user": 0}]}
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = payload
+        with patch("app.connectors.wechat_official.requests.post", return_value=mock_resp):
+            rows = client.fetch_user_summary_rows(date(2026, 9, 8), date(2026, 9, 8))
+
+        assert rows[0]["user_source_label"] == "场景999"
+
+    def test_chunks_ranges_longer_than_seven_days(self):
+        client = self._make_client()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"list": []}
+        with patch(
+            "app.connectors.wechat_official.requests.post", return_value=mock_resp
+        ) as mock_post:
+            client.fetch_user_summary_rows(date(2026, 8, 1), date(2026, 8, 20))
+
+        # 20-day range in <=7-day chunks: 3 calls (7 + 7 + 6).
+        assert mock_post.call_count == 3
+
+    def test_caps_end_date_to_yesterday(self):
+        client = self._make_client()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"list": []}
+        today = date.today()
+        with patch(
+            "app.connectors.wechat_official.requests.post", return_value=mock_resp
+        ) as mock_post:
+            client.fetch_user_summary_rows(today - timedelta(days=1), today + timedelta(days=5))
+
+        called_body = mock_post.call_args.kwargs["json"]
+        assert called_body["end_date"] == (today - timedelta(days=1)).isoformat()
+
+    def test_skips_no_data_error_codes_without_raising(self):
+        client = self._make_client()
+        error_resp = MagicMock()
+        error_resp.json.return_value = {"errcode": 61517, "errmsg": "no data"}
+        with patch("app.connectors.wechat_official.requests.post", return_value=error_resp):
+            rows = client.fetch_user_summary_rows(date(2026, 8, 1), date(2026, 8, 5))
+        assert rows == []
+
+    def test_raises_on_real_error(self):
+        client = self._make_client()
+        error_resp = MagicMock()
+        error_resp.json.return_value = {"errcode": 40001, "errmsg": "invalid credential"}
+        with patch("app.connectors.wechat_official.requests.post", return_value=error_resp):
+            with pytest.raises(WeChatAPIError):
+                client.fetch_user_summary_rows(date(2026, 8, 1), date(2026, 8, 5))
+
+
 JUMP_POSITION = [
     {"position": "0%", "user_count": 10},
     {"position": "25%", "user_count": 8},

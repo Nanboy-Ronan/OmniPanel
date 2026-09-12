@@ -157,6 +157,7 @@ def _clean_db(request):
         "media_sync_runs",
         "media_accounts",
         "collector_runs",
+        "weekly_report_runs",
         "upload_rejected_rows",
         "youzan_orders",
         "jd_orders",
