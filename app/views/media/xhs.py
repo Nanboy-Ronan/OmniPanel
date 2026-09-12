@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import logging
 import os
 import tempfile
@@ -17,6 +18,11 @@ from ...auth import current_active_user, current_admin_user, current_analyst_use
 from ... import db as _db_mod
 from ...db import get_session
 from ...db.etl.xhs import parse_xhs_xlsx, upsert_xhs_posts
+from ...db.etl.xhs_overview import (
+    parse_xhs_overview_payload,
+    upsert_xhs_audience_source,
+    upsert_xhs_daily_metrics,
+)
 from ...db.models import XhsAccount, XhsPost
 from ...utils.logger import log_operation
 
@@ -176,6 +182,56 @@ async def upload_xhs(
         "xhs_upload",
         {"filename": filename, "account_id": account_id,
          "total": result["total"], "upserted": result["upserted"]},
+        session=session,
+    )
+    return result
+
+
+@router.post("/upload_overview")
+async def upload_xhs_overview(
+    account_id: int = Form(...),
+    file: UploadFile = File(...),
+    _user=Depends(current_active_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Upload a collect_xhs_overview() JSON payload and upsert it into
+    xhs_account_daily_metrics / xhs_audience_source_daily for one account.
+
+    Unlike /upload (an xlsx of per-note rows), `file` here is the UTF-8 JSON
+    dict collect_xhs_overview() produces: {"daily": [...], "audience_source":
+    [...]}. Kept as a file upload (not a JSON request body) to reuse the
+    exact same multipart plumbing app/collector/runner.py already has for
+    every other platform's collect → upload step.
+    """
+    acc = await session.get(XhsAccount, account_id)
+    if acc is None:
+        raise HTTPException(status_code=404, detail=f"XHS account {account_id} not found")
+
+    raw = await file.read()
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=f"文件不是合法 JSON：{exc}")
+
+    daily_rows, source_rows, snapshot_date = parse_xhs_overview_payload(payload)
+    if not daily_rows and not source_rows:
+        raise HTTPException(status_code=400, detail="文件中未解析到有效行，请确认格式正确。")
+
+    def _process() -> dict:
+        with _db_mod.SyncSessionLocal() as sync_sess:
+            daily_written = upsert_xhs_daily_metrics(daily_rows, account_id, sync_sess)
+            source_written = upsert_xhs_audience_source(
+                source_rows, account_id, sync_sess, snapshot_date=snapshot_date,
+            )
+            return {"total": daily_written + source_written, "upserted": daily_written + source_written,
+                    "daily_upserted": daily_written, "audience_source_upserted": source_written}
+
+    result = await asyncio.to_thread(_process)
+
+    await log_operation(
+        str(_user.id),
+        "xhs_upload_overview",
+        {"account_id": account_id, **result},
         session=session,
     )
     return result

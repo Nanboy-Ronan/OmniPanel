@@ -371,3 +371,77 @@ async def watchdog_loop(settings) -> None:  # type: ignore[type-arg]
             raise
         except Exception as exc:
             logger.error("Watchdog check failed: %s", exc, exc_info=True)
+
+
+async def _weekly_report_due(settings, today: date, *, async_session_factory=None) -> bool:  # type: ignore[type-arg]
+    """True when the most recently completed ISO week has no successful
+    report yet, and WeChat's 1-2 day data lag has had time to clear.
+
+    Gate is on status='success', not row existence — a transient failure
+    (e.g. a WeChat API hiccup) must not permanently suppress that week; the
+    next day's check will just retry it (generate_weekly_report upserts).
+
+    ``async_session_factory`` defaults to the real app session (like
+    ``run_watchdog_checks``'s equivalent parameter) but accepts an override
+    for tests against an isolated database.
+    """
+    from sqlalchemy import select
+
+    from .db import AsyncSessionLocal
+    from .db.models import WeeklyReportRun
+    from .reports.weekly_media import is_week_due, week_bounds
+
+    session_factory = async_session_factory or AsyncSessionLocal
+
+    bounds = week_bounds(today)
+    if not is_week_due(bounds.this_week_end, today):
+        return False
+
+    async with session_factory() as session:
+        result = await session.execute(
+            select(WeeklyReportRun.id).where(
+                WeeklyReportRun.week_start == bounds.this_week_start,
+                WeeklyReportRun.status == "success",
+            )
+        )
+        return result.scalar_one_or_none() is None
+
+
+async def _run_weekly_report_once() -> None:
+    """One weekly-report generation pass — split out for direct testability,
+    mirroring _run_wechat_sync_once."""
+    from .db import AsyncSessionLocal
+    from .reports.service import generate_weekly_report
+
+    async with AsyncSessionLocal() as session:
+        run = await generate_weekly_report(session)
+        logger.info("Weekly report: week=%s status=%s wecom_sent=%s", run.week_start, run.status, run.wecom_sent)
+
+
+async def weekly_report_loop(settings) -> None:  # type: ignore[type-arg]
+    """Infinite background loop: check daily and generate the weekly
+    公众号+小红书 report once the most recently completed week is due.
+
+    Structured like monthly_backup_loop (daily check, idempotent action) —
+    but the gate is calendar-week + data-lag based (see _weekly_report_due)
+    rather than a day-count, so it survives restarts and clock drift without
+    double-sending or silently skipping a week.
+    """
+    hour = settings.report_hour
+    tz_name = settings.app_timezone
+    logger.info("Weekly report loop started — daily check at %02d:00 %s", hour, tz_name)
+
+    while True:
+        try:
+            if await _weekly_report_due(settings, date.today()):
+                await _run_weekly_report_once()
+        except asyncio.CancelledError:
+            logger.info("Weekly report loop cancelled — shutting down")
+            raise
+        except Exception as exc:
+            logger.error("Weekly report generation failed: %s", exc, exc_info=True)
+            await _notify_wecom(f"[周报告警] 生成失败：{exc}")
+
+        delay = seconds_until_next_run(hour, tz_name)
+        logger.info("Weekly report: next check in %.0f s (%.1f h)", delay, delay / 3600)
+        await asyncio.sleep(delay)

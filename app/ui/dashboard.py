@@ -29,6 +29,7 @@ from app.ui.pages.kpi_overview import page_kpi_overview
 from app.ui.pages.xhs_upload import page_xhs_upload
 from app.ui.pages.pgy_dashboard import page_pgy_dashboard
 from app.ui.pages.zhihu_upload import page_zhihu_upload
+from app.ui.pages.channels_upload import page_channels_upload
 from app.ui.pages.data_dictionary import page_data_dictionary
 from app.ui.pages.upload import page_upload
 from app.ui.pages.analysis import page_analysis
@@ -44,6 +45,7 @@ from app.ui.pages.db_status import page_db_status
 from app.ui.pages.user_management import page_user_management
 from app.ui.pages.logs import page_logs
 from app.ui.pages.collector import page_collector
+from app.ui.pages.weekly_report import page_weekly_report
 
 st.set_page_config(
     page_title="OmniPanel",
@@ -297,12 +299,14 @@ ECOMMERCE_PAGES = {
 }
 
 MEDIA_PAGES = {
+    "周报":       page_weekly_report,
     "公众号流量": page_media_traffic,
     "公众号内容分析": page_media,
     "内容带货分析": page_content_impact,
     "小红书数据": page_xhs_upload,
     "蒲公英合作": page_pgy_dashboard,
     "知乎数据": page_zhihu_upload,
+    "视频号数据": page_channels_upload,
 }
 
 ADMIN_PAGES: dict = {}

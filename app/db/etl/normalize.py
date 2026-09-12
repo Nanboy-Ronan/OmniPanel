@@ -128,7 +128,17 @@ def _normalize_jd(df: pd.DataFrame) -> pd.DataFrame:
         if agg_cols:
             df = df.groupby("订单号", as_index=False, sort=False).agg({**agg_cols, **other_cols})
 
-    df["客户标识"] = df["详细收货地址/提货地址"]
+    # Official/manual JD exports have historically used the delivery address
+    # as customer_key because their phone number is masked. The unattended JD
+    # collector can see a stable 下单帐号 on each rendered order card and emits
+    # it in this collector-only helper column. Prefer it when present without
+    # changing the semantics of existing/manual JD files.
+    if "采集客户标识" in df.columns:
+        collected = df["采集客户标识"].apply(_str_or_none)
+        fallback = df["详细收货地址/提货地址"].apply(_str_or_none)
+        df["客户标识"] = collected.where(collected.notna(), fallback)
+    else:
+        df["客户标识"] = df["详细收货地址/提货地址"]
     return df
 
 

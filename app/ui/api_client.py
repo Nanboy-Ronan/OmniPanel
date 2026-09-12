@@ -107,6 +107,10 @@ class APIClient:
             timeout=self._timeout(),
         )
 
+    def upload_jd(self, file_bytes: bytes, filename: str) -> requests.Response:
+        """Upload a JD collector CSV through the existing ecommerce ETL."""
+        return self.upload(filename, file_bytes, expected_platform="jd")
+
     def analysis(
         self,
         start_date: str,
@@ -331,6 +335,33 @@ class APIClient:
             timeout=self._timeout(),
         )
 
+    # ─── Weekly media report ────────────────────────────────────────────
+
+    def weekly_reports(self, limit: int = 20) -> requests.Response:
+        """List recent weekly report runs, newest first."""
+        return self._session.get(
+            f"{self.base_url}/reports/weekly",
+            params={"limit": limit},
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def weekly_report_detail(self, run_id: int) -> requests.Response:
+        """Full content (html + narrative) of one weekly report run."""
+        return self._session.get(
+            f"{self.base_url}/reports/weekly/{run_id}",
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def trigger_weekly_report(self) -> requests.Response:
+        """Manually (re)generate the weekly report (admin only)."""
+        return self._session.post(
+            f"{self.base_url}/admin/reports/weekly/run",
+            headers=self._headers(),
+            timeout=self._timeout(60),
+        )
+
     # ─── User management ───────────────────────────────────────────────
 
     def list_users(self) -> requests.Response:
@@ -486,6 +517,17 @@ class APIClient:
             timeout=self._timeout(60),
         )
 
+    def upload_xhs_overview(self, file_bytes: bytes, filename: str, account_id: int) -> requests.Response:
+        """Upload a collect_xhs_overview() JSON payload for upsert into
+        xhs_account_daily_metrics / xhs_audience_source_daily."""
+        return self._session.post(
+            f"{self.base_url}/media/xhs/upload_overview",
+            data={"account_id": account_id},
+            files={"file": (filename, file_bytes, "application/json")},
+            headers={k: v for k, v in self._headers().items() if k != "Content-Type"},
+            timeout=self._timeout(60),
+        )
+
     def xhs_posts(
         self,
         account_id: int | None = None,
@@ -536,6 +578,62 @@ class APIClient:
         params = {"limit": limit}
         if account_id is not None: params["account_id"] = account_id
         return self._session.get(f"{self.base_url}/media/pgy/campaigns", params=params, headers=self._headers(), timeout=self._timeout())
+
+    # ── WeChat Channels (视频号) ─────────────────────────────────────────────
+
+    def wx_channels_accounts(self) -> requests.Response:
+        return self._session.get(
+            f"{self.base_url}/media/channels/accounts",
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def create_wx_channels_account(self, name: str) -> requests.Response:
+        return self._session.post(
+            f"{self.base_url}/media/channels/accounts",
+            json={"name": name},
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def rename_wx_channels_account(self, account_id: int, name: str) -> requests.Response:
+        return self._session.patch(
+            f"{self.base_url}/media/channels/accounts/{account_id}",
+            json={"name": name},
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def delete_wx_channels_account(self, account_id: int) -> requests.Response:
+        return self._session.delete(
+            f"{self.base_url}/media/channels/accounts/{account_id}",
+            headers=self._headers(),
+            timeout=self._timeout(),
+        )
+
+    def upload_channels(self, file_bytes: bytes, filename: str, account_id: int) -> requests.Response:
+        """Upload a 视频号助手 xlsx/csv export for upsert into wx_channels_posts."""
+        return self._session.post(
+            f"{self.base_url}/media/channels/upload",
+            data={"account_id": account_id},
+            files={"file": (filename, file_bytes, "application/octet-stream")},
+            headers={k: v for k, v in self._headers().items() if k != "Content-Type"},
+            timeout=self._timeout(60),
+        )
+
+    def channels_posts(self, account_id=None, start_date=None, end_date=None, limit=500):
+        params = {"limit": limit}
+        if account_id is not None: params["account_id"] = account_id
+        if start_date: params["start_date"] = start_date
+        if end_date: params["end_date"] = end_date
+        return self._session.get(f"{self.base_url}/media/channels/posts", params=params, headers=self._headers(), timeout=self._timeout())
+
+    def channels_overview(self, account_id=None, start_date=None, end_date=None):
+        params = {}
+        if account_id is not None: params["account_id"] = account_id
+        if start_date: params["start_date"] = start_date
+        if end_date: params["end_date"] = end_date
+        return self._session.get(f"{self.base_url}/media/channels/overview", params=params, headers=self._headers(), timeout=self._timeout())
 
     # ── Zhihu ─────────────────────────────────────────────────────────────────
 

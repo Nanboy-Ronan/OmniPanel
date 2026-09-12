@@ -19,6 +19,22 @@ _SKIP_ERROR_CODES = {
     61517,  # "no data" for the requested date
 }
 
+# getusersummary's `user_source` scene codes, to the extent they're known.
+# WeChat's own docs don't fully enumerate these (this list is pieced together
+# from observed production values); unknown codes fall back to "场景{code}"
+# rather than silently mislabeling — do not treat this as authoritative.
+USER_SOURCE_SCENES: dict[int, str] = {
+    0: "其他方式",
+    1: "公众号搜索",
+    2: "图文页右上角菜单",
+    3: "名片分享",
+    4: "扫描二维码",
+    5: "支付后关注",
+    7: "图文页内账号名称",
+    17: "名片分享",
+    30: "扫描二维码",
+}
+
 
 class WeChatAPIError(RuntimeError):
     """Raised when the WeChat Official Account API returns an error payload."""
@@ -219,4 +235,84 @@ class WeChatOfficialClient:
                 raise
             for item in payload.get("list", []):
                 rows.extend(normalize_article_total_detail_item(item))
+        return rows
+
+    def _post_datacube_range(
+        self, endpoint: str, access_token: str, begin_date: date, end_date: date
+    ) -> dict[str, Any]:
+        response = requests.post(
+            f"{WECHAT_API_BASE}/datacube/{endpoint}",
+            params={"access_token": access_token},
+            json={"begin_date": begin_date.isoformat(), "end_date": end_date.isoformat()},
+            timeout=self.timeout,
+        )
+        payload = _wechat_json(response)
+        if payload.get("errcode"):
+            raise WeChatAPIError(payload)
+        return payload
+
+    def fetch_user_summary_rows(self, start_date: date, end_date: date) -> list[dict[str, Any]]:
+        """Fetch daily follower gain/loss via getusersummary, broken down by
+        acquisition scene (``user_source``).
+
+        Unlike ``getarticletotaldetail``, this endpoint natively accepts a
+        date range — no per-day loop needed. Verified live against a
+        production account to return data for a multi-day range in one call;
+        chunked into <=7-day windows here since that's the widest range
+        observed to come back reliably.
+
+        Each returned row is one (date, scene) pair — a given date can
+        appear more than once if follows/unfollows happened via more than
+        one scene that day.
+
+        There is no per-article follow attribution here, and none exists
+        anywhere in WeChat's official API — confirmed by inspecting a real
+        production `getarticletotaldetail` payload: its `read_subscribe_user`
+        field is "how many of this article's readers were already
+        subscribed", not "how many people subscribed because of this
+        article". Account-level new/cancel/scene breakdown (this method) is
+        the finest grain WeChat exposes; don't try to reconstruct per-article
+        attribution on top of it — it doesn't exist in the source data.
+        """
+        yesterday = date.today() - timedelta(days=1)
+        if end_date > yesterday:
+            logger.info(
+                "Capping WeChat user-summary end_date from %s to %s (data lag)", end_date, yesterday
+            )
+            end_date = yesterday
+        if start_date > end_date:
+            logger.warning(
+                "WeChat user-summary: start_date %s is after capped end_date %s; nothing to do",
+                start_date, end_date,
+            )
+            return []
+
+        access_token = self.get_access_token()
+        rows: list[dict[str, Any]] = []
+        chunk_start = start_date
+        while chunk_start <= end_date:
+            chunk_end = min(chunk_start + timedelta(days=6), end_date)
+            try:
+                payload = self._post_datacube_range("getusersummary", access_token, chunk_start, chunk_end)
+            except WeChatAPIError as exc:
+                if exc.code in _SKIP_ERROR_CODES:
+                    logger.debug("Skipping %s~%s — WeChat errcode %s", chunk_start, chunk_end, exc.code)
+                    chunk_start = chunk_end + timedelta(days=1)
+                    continue
+                raise
+            for item in payload.get("list", []):
+                ref_date = _parse_date(item.get("ref_date"))
+                if not ref_date:
+                    continue
+                scene = item.get("user_source")
+                rows.append(
+                    {
+                        "ref_date": ref_date,
+                        "user_source": scene,
+                        "user_source_label": USER_SOURCE_SCENES.get(scene, f"场景{scene}"),
+                        "new_user": _int_value(item.get("new_user")),
+                        "cancel_user": _int_value(item.get("cancel_user")),
+                    }
+                )
+            chunk_start = chunk_end + timedelta(days=1)
         return rows
