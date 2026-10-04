@@ -32,6 +32,9 @@ services:
       - .env
     environment:
       RAP_DATABASE_URL: postgresql+asyncpg://rpa:rpa@db:5432/rpa
+      BACKUP_DIR: /app/backups
+    volumes:
+      - omnipanel_backups:/app/backups
     ports:
       - "8000:8000"
     depends_on:
@@ -56,3 +59,4 @@ services:
 
 volumes:
   omnipanel_pgdata:
+  omnipanel_backups:

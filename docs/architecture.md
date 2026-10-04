@@ -226,7 +226,7 @@ Routers are mounted in `app/main.py`. Grouped by domain:
 | `/analysis` | E-commerce analytics | Overview, customer breakdowns, repurchase rate, cohort retention (`/analysis/cohort_retention`), cross-platform customer identity (`/analysis/identity/clusters`), field coverage, the SQL console (`/analysis/sql`) and NL-to-SQL (`/analysis/nl-sql`) |
 | `/orders_all` | E-commerce | Raw order listing/export |
 | `/media`, `/media/xhs`, `/media/zhihu`, `/media/channels` | Self-media | Accounts, posts, metrics, traffic, WeChat sync trigger, WeChat Channels (视频号) accounts/uploads |
-| `/reports` | Weekly media report | List/detail/manual-trigger for the WeChat + XHS weekly report (see [Collector agent](collector.md)) |
+| `/reports` | Weekly media report | List/detail/manual-trigger for the all-platform weekly report (see [Collector agent](collector.md)) |
 | `/admin` | Admin | User management, `/admin/clear-db` |
 | `/saved-queries` | SQL console | Save/list/delete a user's saved queries |
 | `/health`, `/ping` | Ops | Liveness/readiness for a reverse proxy or monitoring |
@@ -247,6 +247,11 @@ through the same guardrails before anything touches the database:
 5. **Audit logging** — every query (and its caller, role, and result count)
    is written to `operation_log`.
 
+Execution also switches to `rpa_analytics_readonly`, with a search path of
+`reporting, pg_catalog`. Reporting views exclude private customer fields,
+credentials, raw payloads, and error text. Direct access to application tables is
+denied by database permissions. See [upgrade notes](upgrading.md) for role setup.
+
 NL-to-SQL is a thin layer in front of this: it only ever *generates* the SQL
 text from a question; the generated SQL is executed through the exact same
 pipeline above, so a misbehaving LLM response is no more dangerous than a
@@ -260,13 +265,16 @@ Started from the FastAPI `lifespan` in `app/main.py`, gated by a leader
 election (`app/utils/leader.py`) so only one backend process runs them even
 when scaled horizontally:
 
-- **Monthly backup loop** (`app/scheduler.py:monthly_backup_loop`) — dumps
-  the database on a schedule unless `RAP_DISABLE_MONTHLY_BACKUP=true`.
+- **Daily and monthly backup loops** (`app/scheduler.py`) — dump the database
+  with separate retention unless `RAP_DISABLE_MONTHLY_BACKUP=true`.
+- **Upload recovery** — reclaims interrupted jobs from persisted upload files.
+  The leader supervises background loops and restarts failed tasks; other workers
+  periodically attempt leadership when the previous leader exits.
 - **WeChat auto-sync loop** (`app/scheduler.py:wechat_auto_sync_loop`) —
   see [WeChat auto-sync](wechat-auto-sync.md) for why this exists and how
   it's configured.
 - **Weekly report loop** (`app/scheduler.py:weekly_report_loop`) — generates
-  and pushes the weekly WeChat + XHS media report; see
+  and pushes the weekly all-platform media and commerce report; see
   [Collector agent](collector.md) for the aggregation → narrative → render
   pipeline.
 
@@ -292,7 +300,9 @@ documents the commonly-changed ones inline; the full set, with defaults:
 | `SSL_KEYFILE` / `SSL_CERTFILE` | unset | Enable HTTPS directly in uvicorn (see [Getting started](getting-started.md)) |
 | `CORS_ORIGINS` | unset (falls back to `localhost:8501`) | Comma-separated allowed origins |
 | `APP_TIMEZONE` | `Asia/Shanghai` | Used for logging and all scheduler timing |
-| `RPA_BACKUP_DIR` | `backups` | Directory for database dump files |
+| `BACKUP_DIR` / `RPA_BACKUP_DIR` | `backups` | Database dumps and upload recovery files |
+| `BACKUP_KEEP` / `RPA_BACKUP_KEEP` | `5` | Retained monthly/manual backups |
+| `DAILY_BACKUP_KEEP` | `7` | Retained daily backups |
 | `RAP_DISABLE_MONTHLY_BACKUP` | `false` | Disable the background backup loop |
 | `BACKUP_HOUR` | `2` | Hour (0–23, `APP_TIMEZONE`) the daily backup check runs |
 | `MAX_UPLOAD_MB` | `50` | Max accepted upload file size |

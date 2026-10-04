@@ -42,8 +42,15 @@ from ..db.models import (
     MediaPost,
     MediaPostMetricDaily,
     MediaSyncRun,
+    Order,
+    PgyNote,
+    WxChannelsAccount,
+    WxChannelsPost,
     XhsAccount,
+    XhsAccountDailyMetric,
+    XhsAudienceSourceDaily,
     XhsPost,
+    ZhihuPost,
 )
 
 logger = logging.getLogger(__name__)
@@ -239,7 +246,9 @@ async def build_wechat_section(
         # *is* the complete weekly figure. Only flag "incomplete" when an
         # *older* post is missing the baseline it should have (a real gap,
         # e.g. sync window didn't reach back far enough).
-        is_new_this_week = bool(post.publish_date and post.publish_date >= bounds.this_week_start)
+        is_new_this_week = bool(
+            post.publish_date and bounds.this_week_start <= post.publish_date <= bounds.this_week_end
+        )
         complete = is_new_this_week or start_row is not None or end_row is None
 
         this_counts = {f: _count_delta(end_row, start_row, f) for f in _COUNT_FIELDS}
@@ -255,6 +264,10 @@ async def build_wechat_section(
         if start_row is not None and (first_snapshot_used is None or start_row.metric_date < first_snapshot_used):
             first_snapshot_used = start_row.metric_date
 
+        read_avg_time = getattr(end_row, "read_avg_time", None) if end_row else None
+        read_finish_rate = getattr(end_row, "read_finish_rate", None) if end_row else None
+        read_subscribe_user = getattr(end_row, "read_subscribe_user", None) if end_row else None
+
         articles.append(
             {
                 "post_id": post.id,
@@ -265,7 +278,9 @@ async def build_wechat_section(
                 "counts_this_week": this_counts,
                 "counts_last_week": last_counts,
                 "rates_as_of_this_week": rates,
-                "new_followers_note": "平台不提供单篇归因",
+                "read_avg_time": read_avg_time,
+                "read_finish_rate": read_finish_rate,
+                "new_followers": read_subscribe_user,
             }
         )
 
@@ -277,11 +292,16 @@ async def build_wechat_section(
 
     follower_section = await _build_follower_section(wechat_client, bounds)
 
+    this_week_articles = [a for a in articles if a["is_new_this_week"]]
+    older_articles = [a for a in articles if not a["is_new_this_week"]]
+
     return {
         "account": account,
         "totals_this_week": totals_this,
         "totals_last_week": totals_last,
         "articles": articles,
+        "this_week_articles": this_week_articles,
+        "older_articles": older_articles,
         "follower": follower_section,
         "snapshot_range_used": (first_snapshot_used, last_snapshot_used),
     }
@@ -295,6 +315,7 @@ def _avg(posts: list[XhsPost], field: str) -> float | None:
 def _summarize_xhs_posts(posts: list[XhsPost]) -> dict[str, Any]:
     return {
         "count": len(posts),
+        "total_views": sum(p.views or 0 for p in posts),
         "avg_views": _avg(posts, "views"),
         "avg_watch_time": _avg(posts, "avg_watch_time"),
         "avg_new_followers": _avg(posts, "new_followers"),
@@ -348,19 +369,401 @@ async def build_xhs_section(session: AsyncSession, account: XhsAccount, bounds: 
         )
     ).scalars().all()
 
+    # Query XhsAccountDailyMetric for follower dynamics
+    daily_metrics_this = (
+        await session.execute(
+            select(XhsAccountDailyMetric).where(
+                XhsAccountDailyMetric.account_id == account.id,
+                XhsAccountDailyMetric.metric_date.between(bounds.this_week_start, bounds.this_week_end),
+            )
+        )
+    ).scalars().all()
+
+    daily_metrics_last = (
+        await session.execute(
+            select(XhsAccountDailyMetric).where(
+                XhsAccountDailyMetric.account_id == account.id,
+                XhsAccountDailyMetric.metric_date.between(bounds.last_week_start, bounds.last_week_end),
+            )
+        )
+    ).scalars().all()
+
+    follower_dynamics = None
+    if daily_metrics_this:
+        rise_fans = sum(m.rise_fans_count or 0 for m in daily_metrics_this)
+        loss_fans = sum(m.loss_fans_count or 0 for m in daily_metrics_this)
+        net_rise_fans = sum(m.net_rise_fans_count or 0 for m in daily_metrics_this)
+
+        last_rise_fans = sum(m.rise_fans_count or 0 for m in daily_metrics_last)
+        last_loss_fans = sum(m.loss_fans_count or 0 for m in daily_metrics_last)
+        last_net_rise_fans = sum(m.net_rise_fans_count or 0 for m in daily_metrics_last)
+
+        valid_full_view = [m.video_full_view_rate for m in daily_metrics_this if m.video_full_view_rate is not None]
+        avg_full_view_rate = (sum(valid_full_view) / len(valid_full_view)) if valid_full_view else None
+
+        follower_dynamics = {
+            "this_week": {
+                "rise_fans": rise_fans,
+                "loss_fans": loss_fans,
+                "net_rise_fans": net_rise_fans,
+                "avg_full_view_rate": avg_full_view_rate,
+            },
+            "last_week": {
+                "rise_fans": last_rise_fans,
+                "loss_fans": last_loss_fans,
+                "net_rise_fans": last_net_rise_fans,
+            },
+        }
+
+    # Query XhsAudienceSourceDaily for traffic source breakdown
+    latest_source_date = (
+        await session.execute(
+            select(func.max(XhsAudienceSourceDaily.snapshot_date)).where(
+                XhsAudienceSourceDaily.account_id == account.id
+            )
+        )
+    ).scalar_one_or_none()
+
+    audience_sources = []
+    if latest_source_date:
+        source_rows = (
+            await session.execute(
+                select(XhsAudienceSourceDaily).where(
+                    XhsAudienceSourceDaily.account_id == account.id,
+                    XhsAudienceSourceDaily.snapshot_date == latest_source_date,
+                    XhsAudienceSourceDaily.window_label == "seven",
+                ).order_by(XhsAudienceSourceDaily.value_pct.desc().nullslast())
+            )
+        ).scalars().all()
+        audience_sources = [
+            {"title": s.title or f"来源{s.source_type}", "value_pct": s.value_pct}
+            for s in source_rows
+            if s.value_pct and s.value_pct > 0
+        ]
+
+    not_collected = ["完播率", "无法归因单篇涨粉来源"]
+    if not follower_dynamics:
+        not_collected.extend(["取消关注", "净增关注"])
+    if not audience_sources:
+        not_collected.append("观看来源占比")
+
     return {
         "account": account,
         "this_week_posts": posts_detail,
         "this_week_summary": _summarize_xhs_posts(this_week_posts),
         "last_week_summary": _summarize_xhs_posts(last_week_posts),
+        "follower_dynamics": follower_dynamics,
+        "audience_sources": audience_sources,
         "top_follower_sources": [
             {"title": p.title, "publish_date": p.publish_date, "new_followers": p.new_followers}
             for p in top_follower_posts
         ],
-        "not_collected": ["完播率", "取消关注", "净增关注", "观看来源"],
-        "wow_caveat": "小红书暂无历史快照，此对比为同期发布内容对比，非流量环比。",
+        "not_collected": not_collected,
+        "wow_caveat": "小红书数据对比为同期发布内容表现，粉丝变动来源于数据概览采集器。",
         "estimated_watch_time_caveat": "观看总时长为推算值（人均观看时长 × 观看量），非平台直接给出的数值。",
-        "follower_source_caveat": "涨粉数值为当前导出口径下的累计涨粉，非精确周增量。",
+        "follower_source_caveat": "单篇涨粉数值为发布至今的累计带粉数。",
+    }
+
+
+# ── 视频号 (WeChat Channels) ────────────────────────────────────────────────
+
+def _summarize_channels_posts(posts: list[WxChannelsPost]) -> dict[str, Any]:
+    return {
+        "count": len(posts),
+        "total_plays": sum(p.plays or 0 for p in posts),
+        "total_recommends": sum(p.recommends or 0 for p in posts),
+        "total_comments": sum(p.comments or 0 for p in posts),
+        "total_shares": sum(p.shares or 0 for p in posts),
+        "total_new_fans": sum(p.new_fans or 0 for p in posts),
+        "avg_completion_rate": (
+            sum(p.completion_rate or 0 for p in posts) / len(posts)
+            if posts else None
+        ),
+        "avg_watch_duration": (
+            sum(p.avg_watch_duration or 0 for p in posts) / len(posts)
+            if posts else None
+        ),
+    }
+
+
+async def build_channels_section(
+    session: AsyncSession, account: WxChannelsAccount, bounds: WeekBounds
+) -> dict[str, Any]:
+    this_week_posts = (
+        await session.execute(
+            select(WxChannelsPost).where(
+                WxChannelsPost.account_id == account.id,
+                WxChannelsPost.publish_date.between(bounds.this_week_start, bounds.this_week_end),
+            )
+        )
+    ).scalars().all()
+    last_week_posts = (
+        await session.execute(
+            select(WxChannelsPost).where(
+                WxChannelsPost.account_id == account.id,
+                WxChannelsPost.publish_date.between(bounds.last_week_start, bounds.last_week_end),
+            )
+        )
+    ).scalars().all()
+
+    posts_detail = []
+    for p in sorted(this_week_posts, key=lambda p: p.plays or 0, reverse=True):
+        posts_detail.append({
+            "title": p.title,
+            "publish_date": p.publish_date,
+            "plays": p.plays,
+            "recommends": p.recommends,
+            "likes_thumb": p.likes_thumb,
+            "comments": p.comments,
+            "shares": p.shares,
+            "new_fans": p.new_fans,
+            "avg_watch_duration": p.avg_watch_duration,
+            "completion_rate": p.completion_rate,
+        })
+
+    return {
+        "account": account,
+        "this_week_posts": posts_detail,
+        "this_week_summary": _summarize_channels_posts(this_week_posts),
+        "last_week_summary": _summarize_channels_posts(last_week_posts),
+    }
+
+
+# ── 知乎 ────────────────────────────────────────────────────────────────────
+
+def _summarize_zhihu_posts(posts: list[ZhihuPost]) -> dict[str, Any]:
+    return {
+        "count": len(posts),
+        "total_reads": sum(p.reads or 0 for p in posts),
+        "total_likes": sum(p.likes or 0 for p in posts),
+        "total_comments": sum(p.comments or 0 for p in posts),
+        "total_collects": sum(p.collects or 0 for p in posts),
+        "total_shares": sum(p.shares or 0 for p in posts),
+    }
+
+
+async def build_zhihu_section(
+    session: AsyncSession, bounds: WeekBounds
+) -> dict[str, Any] | None:
+    """Zhihu has no account model — it's a single-account platform in this
+    system. Returns None when there's no zhihu data at all."""
+    total_count = (await session.execute(
+        select(func.count(ZhihuPost.id))
+    )).scalar_one()
+    if total_count == 0:
+        return None
+
+    this_week_posts = (
+        await session.execute(
+            select(ZhihuPost).where(
+                ZhihuPost.publish_date.between(bounds.this_week_start, bounds.this_week_end),
+            )
+        )
+    ).scalars().all()
+    last_week_posts = (
+        await session.execute(
+            select(ZhihuPost).where(
+                ZhihuPost.publish_date.between(bounds.last_week_start, bounds.last_week_end),
+            )
+        )
+    ).scalars().all()
+
+    posts_detail = []
+    for p in sorted(this_week_posts, key=lambda p: p.reads or 0, reverse=True):
+        posts_detail.append({
+            "content_type": p.content_type,
+            "title": p.title,
+            "publish_date": p.publish_date,
+            "reads": p.reads,
+            "likes": p.likes,
+            "comments": p.comments,
+            "collects": p.collects,
+            "shares": p.shares,
+        })
+
+    return {
+        "this_week_posts": posts_detail,
+        "this_week_summary": _summarize_zhihu_posts(this_week_posts),
+        "last_week_summary": _summarize_zhihu_posts(last_week_posts),
+    }
+
+
+# ── 蒲公英 (Pugongying) ─────────────────────────────────────────────────────
+
+def _summarize_pgy_notes(notes: list[PgyNote]) -> dict[str, Any]:
+    non_null_cpr = [n.cost_per_read for n in notes if n.cost_per_read is not None]
+    non_null_cpi = [n.cost_per_interaction for n in notes if n.cost_per_interaction is not None]
+    return {
+        "count": len(notes),
+        "total_impressions": sum(n.impressions or 0 for n in notes),
+        "total_reads": sum(n.reads or 0 for n in notes),
+        "total_interactions": sum(n.interactions or 0 for n in notes),
+        "total_follows": sum(n.follows or 0 for n in notes),
+        "avg_cost_per_read": (
+            sum(non_null_cpr) / len(non_null_cpr) if non_null_cpr else None
+        ),
+        "avg_cost_per_interaction": (
+            sum(non_null_cpi) / len(non_null_cpi) if non_null_cpi else None
+        ),
+    }
+
+
+async def build_pgy_section(
+    session: AsyncSession, account, bounds: WeekBounds
+) -> dict[str, Any]:
+    this_week_notes_orm = (
+        await session.execute(
+            select(PgyNote).where(
+                PgyNote.account_id == account.id,
+                PgyNote.publish_date.between(bounds.this_week_start, bounds.this_week_end),
+            )
+        )
+    ).scalars().all()
+    last_week_notes_orm = (
+        await session.execute(
+            select(PgyNote).where(
+                PgyNote.account_id == account.id,
+                PgyNote.publish_date.between(bounds.last_week_start, bounds.last_week_end),
+            )
+        )
+    ).scalars().all()
+
+    notes_detail = []
+    for n in sorted(this_week_notes_orm, key=lambda n: n.impressions or 0, reverse=True):
+        notes_detail.append({
+            "note_title": n.note_title,
+            "blogger_nickname": n.blogger_nickname,
+            "publish_date": n.publish_date,
+            "impressions": n.impressions,
+            "reads": n.reads,
+            "interactions": n.interactions,
+            "likes": n.likes,
+            "comments": n.comments,
+            "collects": n.collects,
+            "shares": n.shares,
+            "follows": n.follows,
+            "cost_per_read": n.cost_per_read,
+            "cost_per_interaction": n.cost_per_interaction,
+        })
+
+    return {
+        "account": account,
+        "this_week_notes": notes_detail,
+        "this_week_summary": _summarize_pgy_notes(this_week_notes_orm),
+        "last_week_summary": _summarize_pgy_notes(last_week_notes_orm),
+    }
+
+
+# ── 商城 (E-commerce: 有赞 + 京东 + 天猫) ──────────────────────────────────
+
+_PLATFORM_LABELS = {"youzan": "有赞", "jd": "京东", "tmall": "天猫"}
+
+
+async def _aggregate_orders(
+    session: AsyncSession, start: date, end: date
+) -> dict[str, Any]:
+    """Aggregate orders across all platforms for [start, end]."""
+    rows = (
+        await session.execute(
+            select(
+                Order.platform,
+                func.count(Order.id).label("order_count"),
+                func.coalesce(func.sum(Order.price), 0).label("gmv"),
+                func.count(func.distinct(Order.sku)).label("sku_count"),
+            )
+            .where(Order.order_date.between(start, end))
+            .group_by(Order.platform)
+        )
+    ).all()
+
+    total = {"order_count": 0, "gmv": 0, "sku_count": 0}
+    platforms = []
+    for row in rows:
+        total["order_count"] += row.order_count
+        total["gmv"] += float(row.gmv)
+        total["sku_count"] += row.sku_count
+        platforms.append({
+            "platform": _PLATFORM_LABELS.get(row.platform, row.platform),
+            "this_week": {"order_count": row.order_count, "gmv": float(row.gmv)},
+        })
+    return {"total": total, "platforms": platforms}
+
+
+async def build_ecommerce_section(
+    session: AsyncSession, bounds: WeekBounds
+) -> dict[str, Any] | None:
+    """Combined e-commerce section across all platforms using the unified
+    orders table."""
+    total_count = (await session.execute(
+        select(func.count(Order.id))
+    )).scalar_one()
+    if total_count == 0:
+        return None
+
+    this_agg = await _aggregate_orders(session, bounds.this_week_start, bounds.this_week_end)
+    last_agg = await _aggregate_orders(session, bounds.last_week_start, bounds.last_week_end)
+
+    # Merge platform data so each platform has both this_week and last_week
+    last_by_name = {p["platform"]: p["this_week"] for p in last_agg["platforms"]}
+    all_platform_names = set(p["platform"] for p in this_agg["platforms"]) | set(last_by_name.keys())
+    this_by_name = {p["platform"]: p["this_week"] for p in this_agg["platforms"]}
+
+    platforms_merged = []
+    for name in sorted(all_platform_names):
+        platforms_merged.append({
+            "platform": name,
+            "this_week": this_by_name.get(name, {"order_count": 0, "gmv": 0}),
+            "last_week": last_by_name.get(name, {"order_count": 0, "gmv": 0}),
+        })
+
+    # Top SKUs this week
+    top_sku_rows = (
+        await session.execute(
+            select(
+                Order.sku,
+                func.sum(Order.quantity).label("quantity"),
+                func.sum(Order.price).label("gmv"),
+            )
+            .where(Order.order_date.between(bounds.this_week_start, bounds.this_week_end))
+            .group_by(Order.sku)
+            .order_by(func.sum(Order.price).desc())
+            .limit(10)
+        )
+    ).all()
+    top_skus = [
+        {"sku": r.sku or "未知商品", "quantity": int(r.quantity or 0), "gmv": float(r.gmv or 0)}
+        for r in top_sku_rows
+    ]
+
+    # Top provinces this week
+    top_prov_rows = (
+        await session.execute(
+            select(
+                Order.province,
+                func.count(Order.id).label("order_count"),
+                func.sum(Order.price).label("gmv"),
+            )
+            .where(
+                Order.order_date.between(bounds.this_week_start, bounds.this_week_end),
+                Order.province.isnot(None),
+                Order.province != "",
+            )
+            .group_by(Order.province)
+            .order_by(func.count(Order.id).desc())
+            .limit(5)
+        )
+    ).all()
+    top_provinces = [
+        {"province": r.province, "order_count": r.order_count, "gmv": float(r.gmv or 0)}
+        for r in top_prov_rows
+    ]
+
+    return {
+        "this_week_total": this_agg["total"],
+        "last_week_total": last_agg["total"],
+        "platforms": platforms_merged,
+        "top_skus": top_skus,
+        "top_provinces": top_provinces,
     }
 
 
@@ -386,15 +789,8 @@ async def build_report_context(session: AsyncSession, reference_date: date | Non
         await session.execute(select(XhsAccount).where(XhsAccount.is_active.is_(True)))
     ).scalars().all()
 
-    # MediaAccount.app_secret is essentially never populated in practice — real
-    # secrets live in env vars (WECHAT_APP_SECRET_N) and are resolved by app_id
-    # via _wechat_secret_for_account, same as the manual-sync flow in
-    # app/views/media/routes.py. Using account.app_secret directly (as an
-    # earlier version of this function did) silently produced "no client" for
-    # every real account — confirmed against production, where configured
-    # accounts have app_id but NULL app_secret in the DB. Lazy import: avoids a
-    # module-level circular import with app.views.media.routes.
-    from ..views.media.routes import _wechat_secret_for_account
+    # Resolve credentials through the same service used by manual and scheduled sync.
+    from ..services.wechat import _wechat_secret_for_account
 
     wechat_sections = []
     for account in wechat_accounts:
@@ -412,10 +808,37 @@ async def build_report_context(session: AsyncSession, reference_date: date | Non
         xhs_sections.append(section)
     xhs_last_run = await _latest_success_time(session, CollectorRun, platform="xhs", status="success")
 
+    # ── 视频号 ──
+    channels_accounts = (
+        await session.execute(
+            select(WxChannelsAccount).where(WxChannelsAccount.is_active.is_(True))
+        )
+    ).scalars().all()
+    channels_sections = []
+    for account in channels_accounts:
+        section = await build_channels_section(session, account, bounds)
+        channels_sections.append(section)
+
+    # ── 知乎 ──
+    zhihu_section = await build_zhihu_section(session, bounds)
+
+    # ── 蒲公英 ──
+    pgy_sections = []
+    for account in xhs_accounts:  # PgyNote.account_id -> xhs_accounts
+        section = await build_pgy_section(session, account, bounds)
+        pgy_sections.append(section)
+
+    # ── 商城 ──
+    ecommerce_section = await build_ecommerce_section(session, bounds)
+
     return {
         "bounds": bounds,
         "generated_at": datetime.now(timezone.utc),
         "wechat_sections": wechat_sections,
         "xhs_sections": xhs_sections,
         "xhs_last_collector_run": xhs_last_run,
+        "channels_sections": channels_sections,
+        "zhihu_section": zhihu_section,
+        "pgy_sections": pgy_sections,
+        "ecommerce_section": ecommerce_section,
     }

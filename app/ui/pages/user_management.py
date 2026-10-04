@@ -44,8 +44,8 @@ def page_user_management() -> None:
         is_active = u.get("is_active", True)
         with st.container():
             col_email, col_role, col_alert, col_active, col_edit, col_del = st.columns([3, 1.5, 1.5, 1, 1, 1])
-            label_style = "" if is_active else "opacity:0.45;"
-            col_email.markdown(f"<span style='{label_style}'>**{u['email']}**</span>", unsafe_allow_html=True)
+            label_class = "" if is_active else " class='user-inactive'"
+            col_email.markdown(f"<span{label_class}>**{u['email']}**</span>", unsafe_allow_html=True)
             col_role.markdown(f"`{u['role']}`")
             if u.get("wecom_linked"):
                 alert_on = col_alert.checkbox(
@@ -120,4 +120,4 @@ def page_user_management() -> None:
                     st.session_state["um_confirm_delete"] = None
                     st.rerun()
 
-            st.markdown("<hr style='margin:0.3rem 0;border-color:#f1f5f9'>", unsafe_allow_html=True)
+            st.markdown("<hr class='row-divider'>", unsafe_allow_html=True)

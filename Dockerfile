@@ -2,9 +2,9 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-# libpq is needed at runtime by psycopg2-binary's C extension on some slim images.
+# libpq supports psycopg2; the client tools run scheduled backups and restores.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpq5 \
+    && apt-get install -y --no-install-recommends libpq5 postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

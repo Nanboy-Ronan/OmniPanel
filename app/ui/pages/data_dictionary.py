@@ -313,6 +313,7 @@ def page_data_dictionary() -> None:
     # Fetch live coverage for orders table nullable columns
     coverage: dict | None = None
     total_rows = 0
+    coverage_unavailable = False
     if client:
         try:
             r = client.field_coverage()
@@ -320,8 +321,10 @@ def page_data_dictionary() -> None:
                 payload = r.json()
                 total_rows = payload.get("total_rows", 0)
                 coverage = payload.get("columns") or {}
+            else:
+                coverage_unavailable = True
         except Exception:
-            pass
+            coverage_unavailable = True
 
     search = st.text_input(
         "搜索字段名 / 说明 / 示例值",
@@ -347,6 +350,8 @@ def page_data_dictionary() -> None:
     with tab_orders:
         if total_rows:
             st.caption(f"orders 表共 {total_rows:,} 行（实时）")
+        elif coverage_unavailable:
+            st.caption("实时覆盖率暂不可用；字段说明仍可浏览。")
         elif coverage is None:
             st.caption("数据库中暂无订单数据，覆盖率列显示 N/A。")
         df_orders = _build_df("orders", coverage, search)

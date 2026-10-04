@@ -14,7 +14,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from app.ui._helpers import _page_hero, _styled_chart, show_api_error
+from app.ui import theme
+from app.ui._helpers import _page_hero, _styled_chart, show_api_error, fetch_all_posts, data_cache_expired, mark_data_cache_fetched, data_cache_caption
 
 _MIN_PLAYS = 50  # minimum plays required to include a video in rate-based rankings
 
@@ -37,7 +38,7 @@ def _account_section(client, is_admin: bool) -> None:
         if accounts:
             for acc in accounts:
                 col_name, col_rename, col_del = st.columns([5, 1, 1])
-                status_icon = "🟢" if acc["is_active"] else "⚫"
+                status_icon = "●" if acc["is_active"] else "○"
                 col_name.markdown(f"{status_icon} **{acc['name']}** `id={acc['id']}`")
                 if col_rename.button("改名", key=f"ch-rename-btn-{acc['id']}", use_container_width=True):
                     st.session_state[f"_ch_rename_{acc['id']}"] = True
@@ -135,7 +136,7 @@ def _generate_insight(df: pd.DataFrame) -> str:
     top_plays = df.sort_values("plays", ascending=False).iloc[0] if not df.empty else None
     top_fan = df.sort_values("new_fans", ascending=False).iloc[0] if not df.empty else None
 
-    insight = "**🤖 数据洞察结论**：\n"
+    insight = "**数据洞察结论**：\n"
     insight += (
         f"- **大盘表现**：共发布 {total_posts} 条视频，累计播放 {total_plays:,} 次，"
         f"新增粉丝 {total_fans:,} 人，累计互动（推荐+喜欢+评论+分享）{total_engagement:,} 次。\n"
@@ -191,7 +192,7 @@ def page_channels_upload() -> None:
                 r = client.upload_channels(uploaded.read(), uploaded.name, selected_id)
             if r.status_code == 200:
                 data = r.json()
-                st.success(f"账号「{selected_name}」上传成功：共处理 **{data['total']}** 条视频。")
+                st.success(f"账号「{selected_name}」上传成功：共处理 **{data.get('total', 0)}** 条视频。")
                 st.session_state.pop(f"channels_posts_cache_{selected_id}", None)
             else:
                 show_api_error(r, "上传失败。")
@@ -207,20 +208,36 @@ def page_channels_upload() -> None:
         return
 
     cache_key = f"channels_posts_cache_{selected_id}_{start}_{end}"
+    refresh = st.button("刷新数据", key="channels_refresh")
     if (
+        refresh or data_cache_expired(cache_key)
+        or
         st.session_state.get("_channels_cache_key") != cache_key
         or f"channels_posts_cache_{selected_id}" not in st.session_state
+        or f"channels_overview_cache_{selected_id}" not in st.session_state
     ):
-        r_posts = client.channels_posts(
-            account_id=selected_id, start_date=str(start), end_date=str(end), limit=500
+        posts, error = fetch_all_posts(
+            client.channels_posts, account_id=selected_id,
+            start_date=str(start), end_date=str(end),
         )
-        if r_posts.status_code != 200:
-            show_api_error(r_posts)
+        if error is not None:
+            show_api_error(error)
             return
-        st.session_state[f"channels_posts_cache_{selected_id}"] = r_posts.json()
+        overview_response = client.channels_overview(
+            account_id=selected_id, start_date=str(start), end_date=str(end)
+        )
+        if overview_response.status_code != 200:
+            show_api_error(overview_response)
+            return
+        st.session_state[f"channels_posts_cache_{selected_id}"] = posts
+        st.session_state[f"channels_overview_cache_{selected_id}"] = overview_response.json()
         st.session_state["_channels_cache_key"] = cache_key
+        mark_data_cache_fetched(cache_key)
+
+    data_cache_caption(cache_key)
 
     posts = st.session_state[f"channels_posts_cache_{selected_id}"]
+    overview = st.session_state[f"channels_overview_cache_{selected_id}"]
     if not posts:
         st.info("该时间段内暂无数据，请先上传文件。")
         return
@@ -236,11 +253,11 @@ def page_channels_upload() -> None:
         st.info(_generate_insight(df))
 
         m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("视频数", len(df))
-        m2.metric("总播放", f"{df['plays'].sum():,.0f}")
-        m3.metric("总互动", f"{int(df['total_engagement'].sum()):,}")
-        m4.metric("总涨粉", f"{df['new_fans'].sum():,.0f}")
-        m5.metric("平均完播率", f"{df['completion_rate'].mean():.1%}" if df["completion_rate"].mean() else "—")
+        m1.metric("视频数", overview["posts"])
+        m2.metric("总播放", f"{overview['plays']:,.0f}")
+        m3.metric("总互动", f"{overview['engagement']:,}")
+        m4.metric("总涨粉", f"{overview['new_fans']:,.0f}")
+        m5.metric("平均完播率", f"{overview['avg_completion_rate']:.1%}" if overview["avg_completion_rate"] else "—")
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -248,7 +265,7 @@ def page_channels_upload() -> None:
             st.altair_chart(
                 _styled_chart(
                     alt.Chart(top_plays)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#10b981")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("plays:Q", title="播放量"),
                         y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -267,7 +284,7 @@ def page_channels_upload() -> None:
             st.altair_chart(
                 _styled_chart(
                     alt.Chart(top_fan)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#f43f5e")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("new_fans:Q", title="新增粉丝数"),
                         y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -299,7 +316,7 @@ def page_channels_upload() -> None:
             st.altair_chart(
                 _styled_chart(
                     alt.Chart(top_er)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#8b5cf6")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("engagement_rate:Q", title="互动率", axis=alt.Axis(format="%")),
                         y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -345,11 +362,11 @@ def page_channels_upload() -> None:
             trend_df["发布日期"] = pd.to_datetime(trend_df["发布日期"])
 
             base = alt.Chart(trend_df).encode(x=alt.X("发布日期:T", title="发布日期"))
-            bar = base.mark_bar(opacity=0.5, color="#94a3b8", size=12).encode(
+            bar = base.mark_bar(opacity=0.5, color=theme.INK_MUTED, size=12).encode(
                 y=alt.Y("视频数:Q", title="发布数", axis=alt.Axis(grid=False))
             )
             line = base.mark_line(
-                point=alt.OverlayMarkDef(filled=True, size=50), color="#10b981", strokeWidth=2.5
+                point=alt.OverlayMarkDef(filled=True, size=50), color=theme.PRIMARY, strokeWidth=2.5
             ).encode(y=alt.Y("总播放:Q", title="总播放"))
             st.altair_chart(
                 _styled_chart(

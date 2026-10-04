@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 
 from . import Base  # now available
 from .raw_headers import YOUZAN_RAW_HEADERS, JD_RAW_HEADERS, TMALL_RAW_HEADERS  # noqa: F401 — re-exported for ETL
@@ -214,7 +214,7 @@ class MediaPostMetricDaily(Base):
     read_subscribe_user = Column(Integer, nullable=True)
     read_delivery_rate = Column(Float, nullable=True)
     praise_money = Column(Integer, nullable=True)
-    read_jump_position = Column(JSON, nullable=True)
+    read_jump_position = Column(JSONB, nullable=True)
     read_finish_rate = Column(Float, nullable=True)
     raw_payload = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -386,7 +386,7 @@ class XhsAccount(Base):
     account_type = Column(String(20), nullable=False, server_default="company")
     is_active = Column(Boolean, nullable=False, server_default="true")
     pgy_enabled = Column(Boolean, nullable=False, server_default="false")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     posts = relationship("XhsPost", back_populates="account", cascade="all, delete-orphan")
     pgy_notes = relationship('PgyNote', back_populates='account', cascade='all, delete-orphan')
@@ -418,8 +418,8 @@ class XhsPost(Base):
     avg_watch_time = Column(Float, nullable=True)
     danmu = Column(Integer, nullable=True)
     # ── housekeeping ──────────────────────────────────────────────────────
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     account = relationship("XhsAccount", back_populates="posts")
 
@@ -534,8 +534,8 @@ class ZhihuPost(Base):
     collects = Column(Integer, nullable=True)
     shares = Column(Integer, nullable=True)
     # ── housekeeping ──────────────────────────────────────────────────────
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
         UniqueConstraint("content_type", "title", "publish_date",
@@ -630,10 +630,10 @@ class SavedQuery(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(200), nullable=False)
-    filters_json = Column(JSON, nullable=False, server_default="{}")
+    filters_json = Column(JSONB, nullable=False, server_default="{}")
     is_shared = Column(Boolean, nullable=False, server_default="false")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
         Index("ix_saved_query_user_id", "user_id"),
@@ -746,6 +746,7 @@ class WeeklyReportRun(Base):
     status = Column(String(32), nullable=False)  # success | partial | error
     html_content = Column(Text, nullable=True)
     narrative = Column(Text, nullable=True)
+    notification_text = Column(Text, nullable=True)
     wecom_sent = Column(Boolean, nullable=False, server_default="false")
     error_message = Column(Text, nullable=True)
 

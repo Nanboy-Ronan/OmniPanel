@@ -71,6 +71,70 @@ BOUNDS = WeekBounds(
 )
 
 
+def test_all_platform_report_keeps_week_boundaries_and_renders(async_session_factory):
+    """Exercise the new platform aggregations and their template contract together."""
+    from app.db.models import Customer, Order, PgyNote, WxChannelsAccount, WxChannelsPost, ZhihuPost
+
+    async def run():
+        async with async_session_factory() as session:
+            xhs = XhsAccount(name="Synthetic collaboration account")
+            channels = WxChannelsAccount(name="Synthetic video account")
+            second_channels = WxChannelsAccount(name="Second synthetic video account")
+            session.add_all([xhs, channels, second_channels, Customer(
+                customer_key="synthetic-customer", first_order_date=BOUNDS.last_week_start,
+            )])
+            await session.flush()
+            session.add(WxChannelsPost(account_id=second_channels.id, video_id="synthetic-second",
+                                      title="Second account video", publish_date=BOUNDS.this_week_start,
+                                      plays=75))
+            for index, (day, value) in enumerate([
+                (BOUNDS.last_week_end, 10),
+                (BOUNDS.this_week_start, 20),
+                (BOUNDS.this_week_end, 30),
+                (BOUNDS.this_week_end + timedelta(days=1), 900),
+            ]):
+                session.add_all([
+                    WxChannelsPost(account_id=channels.id, video_id=f"synthetic-{index}",
+                                   title=f"Video {index}", publish_date=day, plays=value),
+                    ZhihuPost(content_type="article", title=f"Article {index}",
+                              publish_date=day, reads=value),
+                    PgyNote(account_id=xhs.id, note_id=f"synthetic-{index}",
+                            note_title=f"Collaboration {index}", publish_date=day, reads=value),
+                ])
+                for platform in ("youzan", "jd", "tmall"):
+                    session.add(Order(order_id=f"{platform}-{index}", order_date=day,
+                                      customer_key="synthetic-customer", platform=platform,
+                                      price=value, quantity=1, sku=f'Sample\n"{platform}"'))
+            await session.commit()
+            return await build_report_context(session, reference_date=date(2026, 9, 15))
+
+    context = asyncio.run(run())
+    for section, metric in [
+        (next(s for s in context["channels_sections"] if s["account"].name == "Synthetic video account"), "total_plays"),
+        (context["zhihu_section"], "total_reads"),
+        (next(s for s in context["pgy_sections"] if s["account"].name == "Synthetic collaboration account"), "total_reads"),
+    ]:
+        assert section["this_week_summary"][metric] == 50
+        assert section["last_week_summary"][metric] == 10
+    sales = context["ecommerce_section"]
+    assert sales["this_week_total"]["gmv"] == 150
+    assert sales["this_week_total"]["order_count"] == 6
+    assert sales["last_week_total"]["gmv"] == 30
+    assert len(sales["platforms"]) == 3
+    html = render_html(context, narrative=None)
+    for title in ("Video 1", "Article 1", "Collaboration 1", "有赞", "京东", "天猫", "OmniPanel"):
+        assert title in html
+    for title in ("Video 3", "Article 3", "Collaboration 3"):
+        assert title not in html
+    import json
+    import re
+    # Charts aggregate every account and use JSON escaping for arbitrary SKU labels.
+    chart_data = re.search(r"label: '本周',\s*data: (\[[^\]]+\])", html)
+    assert json.loads(chart_data[1])[2] == 125
+    sku_labels = re.search(r"labels: (\[[^\]]+\]),\s*datasets: \[\{\s*label: '销售额", html)
+    assert 'Sample\n"jd"' in json.loads(sku_labels[1].replace(',]', ']'))
+
+
 async def _seed_account(session_factory, name: str) -> int:
     async with session_factory() as session:
         account = MediaAccount(platform="wechat_official", name=name, app_id=f"wx-{name}")
@@ -251,7 +315,7 @@ class TestWechatSecretResolution:
 
         account = asyncio.run(_run())
 
-        import app.views.media.routes as routes_mod
+        import app.services.wechat as routes_mod
 
         monkeypatch.setattr(
             routes_mod, "_wechat_env_accounts",

@@ -12,6 +12,7 @@ create a fresh ``rpa_test_*`` database, run there, and drop it at teardown.
 
 import os
 import re
+import runpy
 import sys
 import uuid
 from pathlib import Path
@@ -110,6 +111,12 @@ def _pg_db():
 
     schema_engine = create_engine(_db_url(test_db), future=True)
     Base.metadata.create_all(schema_engine)
+    # Exercise ad hoc SQL under the same restricted role and views as production.
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+    with schema_engine.begin() as connection:
+        with Operations.context(MigrationContext.configure(connection)):
+            runpy.run_path(str(PROJECT_ROOT / "alembic/versions/0017_reporting_role.py"))["upgrade"]()
     schema_engine.dispose()
 
     yield test_db
@@ -158,6 +165,15 @@ def _clean_db(request):
         "media_accounts",
         "collector_runs",
         "weekly_report_runs",
+        "xhs_account_daily_metrics",
+        "xhs_audience_source_daily",
+        "pgy_notes",
+        "xhs_posts",
+        "xhs_accounts",
+        "zhihu_posts",
+        "wx_channels_posts",
+        "wx_channels_accounts",
+        "saved_query",
         "upload_rejected_rows",
         "youzan_orders",
         "jd_orders",
@@ -188,6 +204,7 @@ def _clean_db(request):
         conn.commit()
     except Exception:
         conn.rollback()
+        raise
     finally:
         conn.close()
 

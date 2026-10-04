@@ -50,16 +50,16 @@ def test_overview_metrics(monkeypatch):
     assert "复购率" in content
 
 
-def test_signup_button_hidden(monkeypatch):
-    """Sign-up switch should disappear when registration is closed."""
-    monkeypatch.setattr(
-        "app.ui.api_client.APIClient.registration_open",
-        lambda self: False,
-    )
+def test_login_does_not_request_legacy_registration_status(monkeypatch):
+    from unittest.mock import Mock
+    registration = Mock(return_value=False)
+    monkeypatch.setattr("app.api_client.APIClient.registration_open", registration)
     at = AppTest.from_file("tests/run_dashboard.py")
     at.run(timeout=15)
-    labels = [b.label for b in at.button]
-    assert all("注册" not in lbl for lbl in labels)
+    assert not at.exception
+    registration.assert_not_called()
+    assert "signup_open" not in at.session_state
+    assert all("注册" not in button.label for button in at.button)
 
 
 def test_user_creation_form_present():
@@ -89,7 +89,7 @@ def test_data_page_can_inspect_source_platform_row():
 def test_upload_requires_submit_button():
     content = open("app/ui/pages/upload.py", encoding="utf-8").read()
     assert "with st.form(f\"upload-{key}\"" in content
-    assert "form_submit_button(\"上传\")" in content
+    assert "form_submit_button(\"上传\"" in content
 
 
 def test_upload_sends_expected_platform():
@@ -105,18 +105,14 @@ def test_upload_summary_reflects_raw_ingest_counts():
     assert "_render_upload_summary" in content
     assert "来源行数" in content
     assert "新增订单" in content
-    assert "原始行已存" in content
+    assert "已保存来源行" in content
 
 
-def test_upload_batch_polling_normalises_batch_id_and_total_rows():
-    """get_upload_batch() returns id/row_count, not batch_id/total_rows — without
-    normalising these, the rejected-rows expander never renders (batch_id stays
-    None) and "来源行数" always shows N/A, even when the async ETL path succeeds
-    and rows were actually rejected.
-    """
+def test_upload_batch_status_normalises_batch_id_and_total_rows():
+    """Completed background batches retain their row count and rejected-row link."""
     content = open("app/ui/pages/upload.py", encoding="utf-8").read()
-    assert 'data.setdefault("batch_id", data.get("id", batch_id))' in content
-    assert 'data.setdefault("total_rows", data.get("row_count"))' in content
+    assert 'active.setdefault("batch_id", active.get("id", active_id))' in content
+    assert 'active.setdefault("total_rows", active.get("row_count"))' in content
     assert "重复行" in content
     assert "拒绝行" in content
     assert "batch_id" in content
@@ -163,3 +159,43 @@ def test_media_analysis_tabs_exist():
     assert "互动分析" in content
     assert "文章明细" in content
     assert "分享率" in content
+
+
+def test_logout_clears_cached_data_and_closes_client(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.ui import _helpers
+
+    client = SimpleNamespace(close=Mock())
+    state = {"token": "old-user-token", "client": client,
+             "orders_df": "private cached data", "is_admin": True}
+    rerun = Mock()
+    monkeypatch.setattr(_helpers, "st", SimpleNamespace(session_state=state, rerun=rerun))
+    _helpers.logout()
+    assert state == {}
+    client.close.assert_called_once()
+    rerun.assert_called_once()
+
+
+def test_expired_login_clears_cached_data(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from app.ui import _helpers
+
+    state = {"token": "expired", "orders_df": "private cached data", "is_admin": True}
+    ui = SimpleNamespace(session_state=state, error=Mock(), stop=Mock())
+    monkeypatch.setattr(_helpers, "st", ui)
+    _helpers.show_api_error(SimpleNamespace(status_code=401, json=lambda: {"detail": "expired"}))
+    assert state == {}
+    ui.stop.assert_called_once()
+
+
+def test_identity_name_is_rendered_as_text():
+    at = AppTest.from_file("tests/run_dashboard.py")
+    at.session_state["token"] = "dummy"
+    at.session_state["page"] = "数据上传"
+    at.session_state["display_name"] = '<img src=x onerror="alert(1)">'
+    at.run(timeout=15)
+    chip = next(item.value for item in at.markdown if "<div class='user-chip'>" in item.value)
+    assert "<img src=x" not in chip
+    assert "&lt;img src=x" in chip

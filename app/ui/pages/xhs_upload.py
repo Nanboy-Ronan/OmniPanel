@@ -6,7 +6,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from app.ui._helpers import _page_hero, _styled_chart, show_api_error
+from app.ui import theme
+from app.ui._helpers import _page_hero, _styled_chart, show_api_error, fetch_all_posts, data_cache_expired, mark_data_cache_fetched, data_cache_caption
 from app.utils.topic_matching import match_article_topics
 
 _MIN_VIEWS = 50  # minimum views required to include a post in rate-based rankings
@@ -37,7 +38,7 @@ def _account_section(client, is_admin: bool) -> None:
         if accounts:
             for acc in accounts:
                 col_name, col_pgy, col_rename, col_del = st.columns([4, 1.5, 1, 1])
-                status_icon = "🟢" if acc["is_active"] else "⚫"
+                status_icon = "●" if acc["is_active"] else "○"
                 type_tag = _TYPE_LABEL.get(acc.get("account_type", "company"), "公司号")
                 col_name.markdown(f"{status_icon} **{acc['name']}** `{type_tag}` `id={acc['id']}`")
                 pgy_on = col_pgy.checkbox(
@@ -153,7 +154,7 @@ def _generate_insight(df: pd.DataFrame) -> str:
 
     top_follower = df.sort_values("new_followers", ascending=False).iloc[0]
 
-    insight = "**🤖 数据洞察结论**：\n"
+    insight = "**数据洞察结论**：\n"
     insight += (
         f"- **大盘表现**：共发布 {total_posts} 篇笔记，累计曝光 {total_imp:,} 次，"
         f"观看 {total_views:,} 次，新增粉丝 {total_followers:,} 人。\n"
@@ -216,7 +217,7 @@ def page_xhs_upload() -> None:
                 r = client.upload_xhs(uploaded.read(), uploaded.name, selected_id)
             if r.status_code == 200:
                 data = r.json()
-                st.success(f"账号「{selected_name}」上传成功：共处理 **{data['total']}** 篇笔记。")
+                st.success(f"账号「{selected_name}」上传成功：共处理 **{data.get('total', 0)}** 篇笔记。")
                 st.session_state.pop(f"xhs_posts_cache_{selected_id}", None)
             else:
                 show_api_error(r, "上传失败。")
@@ -232,20 +233,35 @@ def page_xhs_upload() -> None:
         return
 
     cache_key = f"xhs_posts_cache_{selected_id}_{start}_{end}"
+    refresh = st.button("刷新数据", key="xhs_refresh")
     if (
+        refresh or data_cache_expired(cache_key)
+        or
         st.session_state.get("_xhs_cache_key") != cache_key
         or f"xhs_posts_cache_{selected_id}" not in st.session_state
+        or f"xhs_overview_cache_{selected_id}" not in st.session_state
     ):
-        r_posts = client.xhs_posts(
-            account_id=selected_id, start_date=str(start), end_date=str(end), limit=500
+        posts, error = fetch_all_posts(
+            client.xhs_posts, account_id=selected_id, start_date=str(start), end_date=str(end)
         )
-        if r_posts.status_code != 200:
-            show_api_error(r_posts)
+        if error is not None:
+            show_api_error(error)
             return
-        st.session_state[f"xhs_posts_cache_{selected_id}"] = r_posts.json()
+        overview_response = client.xhs_overview(
+            account_id=selected_id, start_date=str(start), end_date=str(end)
+        )
+        if overview_response.status_code != 200:
+            show_api_error(overview_response)
+            return
+        st.session_state[f"xhs_posts_cache_{selected_id}"] = posts
+        st.session_state[f"xhs_overview_cache_{selected_id}"] = overview_response.json()
         st.session_state["_xhs_cache_key"] = cache_key
+        mark_data_cache_fetched(cache_key)
+
+    data_cache_caption(cache_key)
 
     posts = st.session_state[f"xhs_posts_cache_{selected_id}"]
+    overview = st.session_state[f"xhs_overview_cache_{selected_id}"]
     if not posts:
         st.info("该时间段内暂无数据，请先上传文件。")
         return
@@ -261,12 +277,12 @@ def page_xhs_upload() -> None:
         st.info(_generate_insight(df))
 
         m1, m2, m3, m4, m5, m6 = st.columns(6)
-        m1.metric("笔记数",       len(df))
-        m2.metric("总曝光",       f"{df['impressions'].sum():,.0f}")
-        m3.metric("总观看",       f"{df['views'].sum():,.0f}")
-        m4.metric("封面点击率均值", f"{df['cover_click_rate'].mean():.1%}")
-        m5.metric("总互动",       f"{int(df['total_engagement'].sum()):,}")
-        m6.metric("总涨粉",       f"{df['new_followers'].sum():,.0f}")
+        m1.metric("笔记数",       overview["posts"])
+        m2.metric("总曝光",       f"{overview['impressions']:,.0f}")
+        m3.metric("总观看",       f"{overview['views']:,.0f}")
+        m4.metric("封面点击率均值", f"{overview['avg_cover_click_rate']:.1%}")
+        m5.metric("总互动",       f"{overview['engagement']:,}")
+        m6.metric("总涨粉",       f"{overview['new_followers']:,.0f}")
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -274,7 +290,7 @@ def page_xhs_upload() -> None:
             st.altair_chart(
                 _styled_chart(
                     alt.Chart(top_imp)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#f43f5e")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("impressions:Q", title="曝光量"),
                         y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -294,7 +310,7 @@ def page_xhs_upload() -> None:
             st.altair_chart(
                 _styled_chart(
                     alt.Chart(top_fol)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#10b981")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("new_followers:Q", title="新增粉丝数"),
                         y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -313,9 +329,9 @@ def page_xhs_upload() -> None:
     # ── 转化漏斗 ──────────────────────────────────────────────────────────────
     with tab_funnel:
         st.markdown("### 曝光 → 观看 → 互动 转化漏斗")
-        total_imp  = df["impressions"].sum()
-        total_v    = df["views"].sum()
-        total_eng  = df["total_engagement"].sum()
+        total_imp  = overview["impressions"]
+        total_v    = overview["views"]
+        total_eng  = overview["engagement"]
         ctr_agg    = total_v  / total_imp  if total_imp  > 0 else 0
         eng_r_agg  = total_eng / total_v   if total_v   > 0 else 0
 
@@ -333,7 +349,7 @@ def page_xhs_upload() -> None:
         st.altair_chart(
             _styled_chart(
                 alt.Chart(funnel_df)
-                .mark_bar(color="#f43f5e", cornerRadiusTopRight=4, cornerRadiusBottomRight=4)
+                .mark_bar(color=theme.PRIMARY, cornerRadiusTopRight=4, cornerRadiusBottomRight=4)
                 .encode(
                     x=alt.X("数量:Q", title="用户数"),
                     y=alt.Y("阶段:N", sort=["曝光", "观看", "互动"], title=""),
@@ -353,7 +369,7 @@ def page_xhs_upload() -> None:
         else:
             hist = (
                 alt.Chart(ctr_data)
-                .mark_bar(color="#f59e0b", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                .mark_bar(color=theme.PRIMARY, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                 .encode(
                     x=alt.X("cover_click_rate:Q", bin=alt.Bin(maxbins=20),
                              title="封面点击率", axis=alt.Axis(format="%")),
@@ -371,7 +387,7 @@ def page_xhs_upload() -> None:
             st.altair_chart(
                 _styled_chart(
                     alt.Chart(top_ctr)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#f59e0b")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("cover_click_rate:Q", title="封面点击率",
                                  axis=alt.Axis(format="%")),
@@ -424,8 +440,8 @@ def page_xhs_upload() -> None:
                 .properties(height=420, title="收藏率 × 点赞率（气泡大小=观看量）")
                 .interactive()
             )
-            vline = alt.Chart(pd.DataFrame({"x": [avg_cr]})).mark_rule(strokeDash=[4, 4], color="#94a3b8").encode(x="x:Q")
-            hline = alt.Chart(pd.DataFrame({"y": [avg_lr]})).mark_rule(strokeDash=[4, 4], color="#94a3b8").encode(y="y:Q")
+            vline = alt.Chart(pd.DataFrame({"x": [avg_cr]})).mark_rule(strokeDash=[4, 4], color=theme.INK_MUTED).encode(x="x:Q")
+            hline = alt.Chart(pd.DataFrame({"y": [avg_lr]})).mark_rule(strokeDash=[4, 4], color=theme.INK_MUTED).encode(y="y:Q")
             st.altair_chart(_styled_chart(scatter + vline + hline), use_container_width=True)
             st.caption(f"虚线：收藏率均值 {avg_cr:.2%}，点赞率均值 {avg_lr:.2%}")
 
@@ -435,7 +451,7 @@ def page_xhs_upload() -> None:
                 st.altair_chart(
                     _styled_chart(
                         alt.Chart(top_cr)
-                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#8b5cf6")
+                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                         .encode(
                             x=alt.X("collect_rate:Q", title="收藏率", axis=alt.Axis(format="%")),
                             y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -455,7 +471,7 @@ def page_xhs_upload() -> None:
                 st.altair_chart(
                     _styled_chart(
                         alt.Chart(top_fr)
-                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#10b981")
+                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                         .encode(
                             x=alt.X("follower_rate:Q", title="涨粉率", axis=alt.Axis(format="%")),
                             y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -514,7 +530,7 @@ def page_xhs_upload() -> None:
 
             views_chart = (
                 alt.Chart(genre_agg)
-                .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+                .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                 .encode(
                     x=alt.X("均观看:Q", title="平均观看量"),
                     y=alt.Y("体裁:N", sort="-x", title=""),
@@ -544,7 +560,7 @@ def page_xhs_upload() -> None:
                 )
                 wt_chart = (
                     alt.Chart(wt_agg)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#f59e0b")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("均观看时长:Q", title="平均观看时长（秒）"),
                         y=alt.Y("体裁:N", sort="-x"),
@@ -562,7 +578,7 @@ def page_xhs_upload() -> None:
                 if not eligible.empty:
                     scatter_wt = (
                         alt.Chart(eligible)
-                        .mark_circle(opacity=0.72, color="#f59e0b")
+                        .mark_circle(opacity=0.72, color=theme.PRIMARY)
                         .encode(
                             x=alt.X("avg_watch_time:Q", title="平均观看时长（秒）"),
                             y=alt.Y("collect_rate:Q",   title="收藏率", axis=alt.Axis(format="%")),
@@ -584,7 +600,7 @@ def page_xhs_upload() -> None:
         st.markdown("### 话题标签分析")
         st.caption("自定义关键词组，系统将按标题匹配归类，对比各话题的流量与互动表现。")
 
-        with st.expander("⚙️ 设置话题关键词", expanded=True):
+        with st.expander("设置话题关键词", expanded=True):
             n_topics = st.number_input("话题数量", min_value=1, max_value=6, value=3, step=1, key="xhs_topic_n")
             topic_map: dict[str, list[str]] = {}
             for i in range(int(n_topics)):
@@ -627,7 +643,7 @@ def page_xhs_upload() -> None:
             with col_t1:
                 avg_view_chart = (
                     alt.Chart(grouped)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("均篇观看:Q", title="均篇观看量"),
                         y=alt.Y("话题:N", sort="-x", title=""),
@@ -645,7 +661,7 @@ def page_xhs_upload() -> None:
             with col_t2:
                 avg_engagement_chart = (
                     alt.Chart(grouped)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#10b981")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("均篇点赞:Q", title="均篇点赞量"),
                         y=alt.Y("话题:N", sort="-x", title=""),
@@ -697,11 +713,11 @@ def page_xhs_upload() -> None:
 
             st.markdown("### 发布量与曝光趋势")
             base = alt.Chart(trend_df).encode(x=alt.X("发布日期:T", title="发布日期"))
-            bar  = base.mark_bar(opacity=0.5, color="#94a3b8", size=12).encode(
+            bar  = base.mark_bar(opacity=0.5, color=theme.INK_MUTED, size=12).encode(
                 y=alt.Y("笔记数:Q", title="发文数", axis=alt.Axis(grid=False))
             )
             line = base.mark_line(
-                point=alt.OverlayMarkDef(filled=True, size=50), color="#f43f5e", strokeWidth=2.5
+                point=alt.OverlayMarkDef(filled=True, size=50), color=theme.PRIMARY, strokeWidth=2.5
             ).encode(y=alt.Y("总曝光:Q", title="总曝光"))
             st.altair_chart(
                 _styled_chart(
@@ -732,7 +748,7 @@ def page_xhs_upload() -> None:
                     st.altair_chart(
                         _styled_chart(
                             alt.Chart(wd_df)
-                            .mark_bar(color="#f43f5e", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                            .mark_bar(color=theme.PRIMARY, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                             .encode(
                                 x=alt.X("weekday_cn:N", sort=_WEEKDAY_ORDER, title="星期"),
                                 y=alt.Y("笔记数:Q", title="发文数"),
@@ -746,7 +762,7 @@ def page_xhs_upload() -> None:
                     st.altair_chart(
                         _styled_chart(
                             alt.Chart(wd_df)
-                            .mark_bar(color="#0ea5e9", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                            .mark_bar(color=theme.PRIMARY, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                             .encode(
                                 x=alt.X("weekday_cn:N", sort=_WEEKDAY_ORDER, title="星期"),
                                 y=alt.Y("均曝光:Q", title="平均曝光"),

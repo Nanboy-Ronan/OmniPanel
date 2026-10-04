@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 import tempfile
+from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
@@ -28,6 +29,15 @@ from ...config import settings as _settings
 _MAX_UPLOAD_MB = _settings.max_upload_mb
 _MAX_UPLOAD_BYTES = _MAX_UPLOAD_MB * 1024 * 1024
 _CHUNK = 1024 * 1024  # read 1 MB at a time
+
+
+def upload_spool_dir() -> Path:
+    """Persistent across API worker restarts and writable by the service user."""
+    return Path(_settings.backup_dir) / "upload_spool"
+
+
+def upload_spool_path(batch_id: int, filename: str) -> Path:
+    return upload_spool_dir() / f"{batch_id}{Path(filename).suffix.lower()}"
 
 _ALLOWED_EXTENSIONS = {".csv", ".xls", ".xlsx"}
 
@@ -114,21 +124,6 @@ async def _run_ingestion(
 
         result = await asyncio.to_thread(_ingest, df)
 
-        await analysis_cache.invalidate()
-        await log_operation(
-            user_id,
-            "upload",
-            {
-                "filename": filename,
-                "rows": result["inserted_rows"],
-                "platform": result["platform"],
-                "batch_id": result["batch_id"],
-                "total_rows": result["total_rows"],
-                "duplicate_rows": result["duplicate_rows"],
-                "invalid_rows": result["invalid_rows"],
-            },
-        )
-
     except Exception as exc:
         log_exc(
             _logger,
@@ -146,6 +141,27 @@ async def _run_ingestion(
                     await err_session.commit()
         except Exception as inner:
             log_exc(_logger, "failed_to_update_batch_status", inner, batch_id=batch_id)
+    else:
+        try:
+            await analysis_cache.invalidate()
+        except Exception as exc:
+            log_exc(_logger, "upload_cache_invalidation_failed", exc, batch_id=batch_id)
+        try:
+            await log_operation(
+                user_id,
+                "upload",
+                {
+                    "filename": filename,
+                    "rows": result["inserted_rows"],
+                    "platform": result["platform"],
+                    "batch_id": result["batch_id"],
+                    "total_rows": result["total_rows"],
+                    "duplicate_rows": result["duplicate_rows"],
+                    "invalid_rows": result["invalid_rows"],
+                },
+            )
+        except Exception as exc:
+            log_exc(_logger, "upload_audit_log_failed", exc, batch_id=batch_id)
 
     finally:
         if os.path.exists(tmp_path):
@@ -182,7 +198,9 @@ async def upload_file(
     try:
         suffix = os.path.splitext(file.filename)[1]
         hasher = hashlib.sha256()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        spool_dir = upload_spool_dir()
+        spool_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=spool_dir) as tmp:
             total = 0
             while True:
                 chunk = await file.read(_CHUNK)
@@ -236,9 +254,18 @@ async def upload_file(
         status="processing",
     )
     session.add(batch)
-    await session.commit()
-    await session.refresh(batch)
-    batch_id = batch.id
+    try:
+        await session.flush()
+        batch_id = batch.id
+        durable_path = upload_spool_path(batch_id, file.filename)
+        os.replace(tmp_path, durable_path)
+        tmp_path = str(durable_path)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
     background_tasks.add_task(
         _run_ingestion,
@@ -359,7 +386,9 @@ async def upload_summary(
 
         last_batch = (
             await session.execute(
-                select(func.max(UploadBatch.uploaded_at)).where(UploadBatch.platform == pf)
+                select(func.max(UploadBatch.uploaded_at)).where(
+                    UploadBatch.platform == pf, UploadBatch.status == "completed",
+                )
             )
         ).scalar()
 

@@ -7,14 +7,15 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from app.ui import theme
 from app.ui._helpers import _page_hero, _styled_chart, show_api_error
 
 _QUADRANT_COLORS = {
-    "高流量·强带货": "#10b981",
-    "低流量·强带货": "#6366f1",
-    "高流量·弱带货": "#f59e0b",
-    "低流量·弱带货": "#94a3b8",
-    "无对比基准": "#cbd5e1",
+    "高流量·强带货": theme.SERIES[0],
+    "低流量·强带货": theme.SERIES[1],
+    "高流量·弱带货": theme.SERIES[2],
+    "低流量·弱带货": theme.INK_MUTED,
+    "无对比基准": theme.INK_FAINT,
 }
 
 
@@ -143,12 +144,12 @@ def page_content_impact() -> None:
             # quadrant reference lines at medians
             h_line = (
                 alt.Chart(pd.DataFrame({"y": [avg_lift]}))
-                .mark_rule(strokeDash=[4, 4], color="#64748b", opacity=0.6)
+                .mark_rule(strokeDash=[4, 4], color=theme.INK_LABEL, opacity=0.6)
                 .encode(y="y:Q")
             )
             v_line = (
                 alt.Chart(pd.DataFrame({"x": [avg_reads]}))
-                .mark_rule(strokeDash=[4, 4], color="#64748b", opacity=0.6)
+                .mark_rule(strokeDash=[4, 4], color=theme.INK_LABEL, opacity=0.6)
                 .encode(x="x:Q")
             )
             st.altair_chart(_styled_chart(chart + h_line + v_line), use_container_width=True)
@@ -161,7 +162,7 @@ def page_content_impact() -> None:
         top_df = df[has_lift].sort_values("order_lift_pct", ascending=False).head(15).copy()
         top_df["short_title"] = top_df["title"].str[:30]
         top_df["涨跌色"] = top_df["order_lift_pct"].apply(
-            lambda x: "#10b981" if x > 0 else "#f43f5e"
+            lambda x: theme.POSITIVE if x > 0 else theme.NEGATIVE
         )
 
         if top_df.empty:
@@ -197,7 +198,7 @@ def page_content_impact() -> None:
                 abs_top["short_title"] = abs_top["title"].str[:30]
                 bar2 = (
                     alt.Chart(abs_top)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("post_orders:Q", title=f"发文后 {window} 天订单数"),
                         y=alt.Y("short_title:N", sort="-x", title=""),

@@ -91,6 +91,21 @@ async def monthly_backup_loop(settings) -> None:  # type: ignore[type-arg]
             logger.error("Monthly backup failed: %s", exc, exc_info=True)
 
 
+async def daily_backup_loop(settings) -> None:  # type: ignore[type-arg]
+    from .db.backup import daily_backup
+
+    while True:
+        try:
+            path = await asyncio.to_thread(daily_backup)
+            if path:
+                logger.info("Daily backup written: %s", path)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Daily backup failed")
+        await asyncio.sleep(seconds_until_next_run(settings.backup_hour, settings.app_timezone))
+
+
 async def _run_wechat_sync_once(settings) -> None:  # type: ignore[type-arg]
     """One pass of the WeChat auto-sync: sync every configured account, then
     send exactly one WeCom notification for the whole pass — success or
@@ -104,8 +119,9 @@ async def _run_wechat_sync_once(settings) -> None:  # type: ignore[type-arg]
     Errors for individual accounts are logged and skipped so a single
     failing account does not abort the rest of the run.
     """
-    # Lazy imports to avoid circular dependencies at import time.
-    from .views.media.routes import _ensure_env_wechat_accounts, _sync_one_wechat_account
+    from .services.wechat import (
+        _ensure_env_wechat_accounts, _sync_one_wechat_account, _record_failed_wechat_sync,
+    )
     from .db import AsyncSessionLocal
 
     today = date.today()
@@ -123,12 +139,15 @@ async def _run_wechat_sync_once(settings) -> None:  # type: ignore[type-arg]
             if not accounts:
                 logger.warning("WeChat auto-sync: no accounts configured — skipping run")
                 return
+            await session.commit()
 
-            for account in accounts:
+        for account in accounts:
+            async with AsyncSessionLocal() as session:
                 try:
                     result = await _sync_one_wechat_account(
                         session, account, start_date, end_date
                     )
+                    await session.commit()
                     logger.info(
                         "WeChat auto-sync finished: account=%s posts=%s metrics=%s",
                         account.name,
@@ -140,6 +159,7 @@ async def _run_wechat_sync_once(settings) -> None:  # type: ignore[type-arg]
                         f"metrics={result.get('metrics_upserted', 0)}"
                     )
                 except Exception as exc:
+                    await session.rollback()
                     logger.error(
                         "WeChat auto-sync failed for account=%s: %s",
                         account.name,
@@ -147,15 +167,14 @@ async def _run_wechat_sync_once(settings) -> None:  # type: ignore[type-arg]
                         exc_info=True,
                     )
                     failed_lines.append(f"{account.name}: {exc}")
-                    # Roll back any aborted transaction so the session is
-                    # clean for the next account — without this a failed
-                    # statement poisons every subsequent query in the loop.
-                    try:
-                        await session.rollback()
-                    except Exception:
-                        pass
-
-            await session.commit()
+                    if getattr(account, "id", None) is not None:
+                        try:
+                            await _record_failed_wechat_sync(
+                                session, account.id, start_date, end_date, exc
+                            )
+                        except Exception:
+                            logger.exception("Could not record failed WeChat sync for account=%s", account.id)
+                            await session.rollback()
 
         if failed_lines:
             header = (
@@ -324,7 +343,7 @@ async def run_watchdog_checks(
         from .db.backup import _read_last_backup
 
         try:
-            last = await asyncio.to_thread(_read_last_backup, Path(settings.rpa_backup_dir))
+            last = await asyncio.to_thread(_read_last_backup, Path(settings.backup_dir))
         except Exception as exc:
             problems.append(f"数据库备份：健康检查失败 — {exc}")
         else:
@@ -337,6 +356,14 @@ async def run_watchdog_checks(
                     problems.append(
                         f"数据库备份：已 {age_days} 天没有成功备份（阈值 {max_age_days} 天）"
                     )
+        daily_stamp = Path(settings.backup_dir) / ".last_daily_backup"
+        try:
+            daily_age = (datetime.now() - datetime.fromisoformat(daily_stamp.read_text().strip())).days
+        except (OSError, ValueError):
+            problems.append("每日数据库备份：从未成功备份过")
+        else:
+            if daily_age > settings.watchdog_daily_backup_max_age_days:
+                problems.append(f"每日数据库备份：已 {daily_age} 天没有成功备份")
 
     return problems
 
@@ -374,12 +401,11 @@ async def watchdog_loop(settings) -> None:  # type: ignore[type-arg]
 
 
 async def _weekly_report_due(settings, today: date, *, async_session_factory=None) -> bool:  # type: ignore[type-arg]
-    """True when the most recently completed ISO week has no successful
-    report yet, and WeChat's 1-2 day data lag has had time to clear.
+    """True when the most recently completed ISO week needs a report or push,
+    and WeChat's 1-2 day data lag has had time to clear.
 
-    Gate is on status='success', not row existence — a transient failure
-    (e.g. a WeChat API hiccup) must not permanently suppress that week; the
-    next day's check will just retry it (generate_weekly_report upserts).
+    A successful report whose notification failed remains due so the next
+    day's check retries it (generate_weekly_report upserts).
 
     ``async_session_factory`` defaults to the real app session (like
     ``run_watchdog_checks``'s equivalent parameter) but accepts an override
@@ -402,6 +428,7 @@ async def _weekly_report_due(settings, today: date, *, async_session_factory=Non
             select(WeeklyReportRun.id).where(
                 WeeklyReportRun.week_start == bounds.this_week_start,
                 WeeklyReportRun.status == "success",
+                WeeklyReportRun.wecom_sent.is_(True),
             )
         )
         return result.scalar_one_or_none() is None

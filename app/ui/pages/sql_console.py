@@ -66,15 +66,15 @@ _EXAMPLE_QUERIES = [
     ),
     (
         "各省独立客户数",
-        "SELECT province,\n       COUNT(DISTINCT customer_key) AS customers\nFROM orders\nWHERE province IS NOT NULL\nGROUP BY province\nORDER BY customers DESC\nLIMIT 10",
+        "SELECT province,\n       COUNT(*) AS orders\nFROM orders\nWHERE province IS NOT NULL\nGROUP BY province\nORDER BY orders DESC\nLIMIT 10",
     ),
     (
         "月度营业额趋势",
         "SELECT DATE_TRUNC('month', order_date) AS month,\n       COUNT(*) AS orders,\n       ROUND(SUM(price)::numeric, 2) AS revenue\nFROM orders\nGROUP BY month\nORDER BY month",
     ),
     (
-        "复购客户（≥ 3 单）",
-        "SELECT customer_key,\n       COUNT(*) AS orders,\n       ROUND(SUM(price)::numeric, 2) AS total_spend\nFROM orders\nGROUP BY customer_key\nHAVING COUNT(*) >= 3\nORDER BY orders DESC\nLIMIT 50",
+        "各平台平均订单金额",
+        "SELECT platform,\n       COUNT(*) AS orders,\n       ROUND(AVG(price)::numeric, 2) AS average_spend\nFROM orders\nGROUP BY platform\nORDER BY orders DESC",
     ),
     (
         "最近上传批次",
@@ -117,7 +117,7 @@ def _render_nl_query(
     err = payload.get("error")
 
     if explanation:
-        st.caption(f"💡 {explanation}")
+        st.caption(explanation)
     if gen_sql:
         st.code(gen_sql, language="sql")
 
@@ -162,7 +162,7 @@ def page_sql_console() -> None:
     nl_ask = False
     nl_q = nl_provider = nl_model = None
     with st.container(border=True):
-        st.markdown("##### 🔎 中文问数据")
+        st.markdown("##### 中文问数据")
         st.caption(
             "用中文描述你想查的数据，自动生成并执行 SQL。生成的语句会展示出来，"
             "可复制到下方的 SQL 框里修改后再跑。"

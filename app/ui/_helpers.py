@@ -2,29 +2,49 @@
 from __future__ import annotations
 import os
 import re
+import time
 from datetime import datetime, timezone
 
-import altair as alt
 import streamlit as st
 
-PALETTE = {"old": "#2563eb", "new": "#f97316"}
+from app.ui import theme
+
+PALETTE = theme.PALETTE
 _PLATFORM_LABELS = {"youzan": "有赞", "jd": "京东", "tmall": "天猫"}
 
+_PAGE_SOURCE = {
+    "KPI 看板": "orders", "数据分析": "orders", "数据浏览": "orders",
+    "客户管理": "orders", "跨平台客户": "orders", "客户留存": "orders",
+    "公众号内容分析": "wechat", "公众号流量": "wechat", "周报": "wechat",
+    "小红书数据": "xhs", "蒲公英合作": "pgy", "知乎数据": "zhihu",
+    "视频号数据": "channels", "内容带货分析": "wechat",
+}
+
 _PAGE_META: dict[str, tuple[str, str]] = {
+    # 商城数据
+    "KPI 看板":   ("◆",  "核心经营指标的日、周、月同期对比"),
     "数据上传":   ("↑",  "从有赞、京东、天猫导入订单导出文件"),
     "数据分析":   ("≋",  "营业额趋势、客户分群与平台对比"),
     "客户管理":   ("◎",  "客户档案、订单历史与地区分布"),
+    "跨平台客户": ("⇄",  "跨有赞、京东、天猫识别同一客户"),
+    "客户留存":   ("◷",  "按首购月份分群的留存与复购表现"),
     "数据浏览":   ("⊞",  "浏览、筛选并导出所有订单记录"),
     "SQL 控制台": ("›_", "对实时数据库执行只读 SQL 查询"),
     "数据字典":   ("≡",  "字段定义、平台映射与实时覆盖率"),
-    "公众号内容分析": ("W",  "微信 API 同步的文章数据与阅读趋势分析"),
+    # 自媒体
+    "周报":       ("▦",  "跨渠道经营表现与内容效果周度汇总"),
     "公众号流量": ("≋",  "微信 API 同步的文章阅读流量分析"),
-    "小红书数据": ("📕", "小红书专业号导出分析"),
-    "蒲公英合作": ("🌸", "小红书蒲公英 KOL/KOC 商业合作投效分析与项目数据管理"),
+    "公众号内容分析": ("W",  "微信 API 同步的文章数据与阅读趋势分析"),
+    "内容带货分析": ("⇗",  "公众号内容发布与订单转化的关联分析"),
+    "小红书数据": ("▣",  "小红书专业号导出分析"),
+    "蒲公英合作": ("✿",  "小红书蒲公英 KOL/KOC 商业合作投效分析与项目数据管理"),
     "知乎数据":   ("知", "知乎创作者后台文章与问答分析"),
+    "视频号数据": ("▶",  "微信视频号内容数据自动采集与分析"),
+    # 系统管理
     "用户管理":   ("⊕",  "创建、编辑和停用用户账号"),
     "操作日志":   ("≡",  "所有用户操作的审计记录"),
     "数据库状态": ("◈",  "数据库健康检查与危险操作区"),
+    "自动采集":   ("⟳",  "采集任务状态、登录会话与手动触发"),
 }
 
 
@@ -34,22 +54,22 @@ def _styled_chart(chart):
         chart
         .configure_view(strokeWidth=0)
         .configure_axis(
-            labelFont="Segoe UI, Helvetica Neue, sans-serif",
-            titleFont="Segoe UI, Helvetica Neue, sans-serif",
-            labelColor="#475569",
-            titleColor="#334155",
+            labelFont=theme.FONT,
+            titleFont=theme.FONT,
+            labelColor=theme.INK_LABEL,
+            titleColor=theme.INK_TITLE,
             labelFontSize=11,
             titleFontSize=12,
-            gridColor="#e2e8f0",
+            gridColor=theme.GRID,
             gridWidth=1,
-            tickColor="#cbd5e1",
-            domainColor="#e2e8f0",
+            tickColor=theme.INK_FAINT,
+            domainColor=theme.GRID,
         )
         .configure_legend(
-            labelFont="Segoe UI, Helvetica Neue, sans-serif",
-            titleFont="Segoe UI, Helvetica Neue, sans-serif",
-            labelColor="#1e293b",
-            titleColor="#1e293b",
+            labelFont=theme.FONT,
+            titleFont=theme.FONT,
+            labelColor=theme.INK_STRONG,
+            titleColor=theme.INK_STRONG,
             labelFontSize=11,
             titleFontSize=11,
             orient="bottom",
@@ -89,6 +109,14 @@ def _page_hero(page: str, subtitle: str | None = None) -> None:
         f"</div>",
         unsafe_allow_html=True,
     )
+    freshness = st.session_state.get("data_freshness_cache")
+    source = _PAGE_SOURCE.get(page)
+    if freshness and source:
+        info = freshness[1].get(source, {})
+        coverage = info.get("coverage_through") or "暂无"
+        imported = info.get("last_import_at")
+        imported_label = imported[:16].replace("T", " ") if imported else "暂无"
+        st.caption(f"源数据覆盖至 {coverage} · 最近入库 {imported_label}（服务器时区）")
 
 
 def _response_detail(r) -> str:
@@ -105,7 +133,7 @@ def _response_detail(r) -> str:
 def show_api_error(r, fallback: str = "请求失败。") -> None:
     detail = _response_detail(r)
     if r.status_code == 401:
-        st.session_state["token"] = None
+        clear_session()
         st.error("登录已过期，请重新登录。")
         st.stop()
     elif r.status_code == 403:
@@ -116,6 +144,39 @@ def show_api_error(r, fallback: str = "请求失败。") -> None:
         st.error(detail)
     else:
         st.error(fallback)
+
+
+def fetch_all_posts(fetch_page, **filters):
+    """Load a filtered post set in stable pages for full-period analytics.
+
+    Returns (rows, error_response). The caller never uses a partial result.
+    """
+    rows = []
+    page_size = 1000
+    while True:
+        response = fetch_page(limit=page_size, offset=len(rows), **filters)
+        if response.status_code != 200:
+            return [], response
+        page = response.json()
+        rows.extend(page)
+        if len(page) < page_size:
+            return rows, None
+
+
+def data_cache_expired(cache_key: str, *, ttl_seconds: int = 300) -> bool:
+    fetched_at = st.session_state.get(f"{cache_key}_fetched_at", 0.0)
+    return time.time() - fetched_at >= ttl_seconds
+
+
+def mark_data_cache_fetched(cache_key: str) -> None:
+    st.session_state[f"{cache_key}_fetched_at"] = time.time()
+
+
+def data_cache_caption(cache_key: str) -> None:
+    fetched_at = st.session_state.get(f"{cache_key}_fetched_at")
+    if fetched_at:
+        updated = datetime.fromtimestamp(fetched_at).strftime("%H:%M:%S")
+        st.caption(f"页面取数时间 {updated}，最多缓存 5 分钟；源数据更新时间请查看上传或同步记录")
 
 
 def clear_cached_orders() -> None:
@@ -159,12 +220,16 @@ def _is_mobile_or_wecom() -> bool:
     )
 
 
+def clear_session() -> None:
+    """Discard identity and cached data together when authentication ends."""
+    client = st.session_state.get("client")
+    try:
+        if client is not None:
+            client.close()
+    finally:
+        st.session_state.clear()
+
+
 def logout() -> None:
-    for _k in ("token", "display_name", "user_role", "login_method"):
-        st.session_state[_k] = None if _k == "token" else ""
-    st.session_state["page"] = "数据上传"
+    clear_session()
     st.rerun()
-
-
-def switch_mode() -> None:
-    st.session_state["signup_mode"] = not st.session_state["signup_mode"]

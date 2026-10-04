@@ -211,6 +211,10 @@ ID）——完整的业务口径参考见 `app/utils/nl_to_sql.py` 中的 `SCHEM
 5. **审计日志** —— 每一次查询（连同调用者、角色、结果行数）都会写入
    `operation_log`。
 
+执行时还会切换到 `rpa_analytics_readonly` 数据库角色，并使用
+`reporting, pg_catalog` 搜索路径。reporting 视图排除客户隐私字段、凭据、原始载荷和
+错误文本，数据库权限禁止直接读取业务原表。角色配置见[升级说明](upgrading.md)。
+
 中文问数据只是在这套机制前面加了一层很薄的封装：它只负责把问题"翻译"成 SQL
 文本；生成的 SQL 会经过和上面完全一样的执行管线，所以即便模型生成了不合理的查询，其风险也不会超过人类手敲了一条糟糕的查询到查询台里。具体的服务商注册机制和生成过程见
 [中文问数据 (NL-to-SQL)](nl-to-sql.zh-CN.md)。
@@ -220,11 +224,13 @@ ID）——完整的业务口径参考见 `app/utils/nl_to_sql.py` 中的 `SCHEM
 在 `app/main.py` 的 FastAPI `lifespan` 中启动，通过 leader 选举
 （`app/utils/leader.py`）保证即使水平扩展了多个后端进程，也只有一个进程会真正跑这些任务：
 
-- **月度备份循环**（`app/scheduler.py:monthly_backup_loop`）——按计划对数据库做
-  dump，除非设置了 `RAP_DISABLE_MONTHLY_BACKUP=true`。
+- **每日与月度备份循环**（`app/scheduler.py`）——分别保留每日与月度备份，
+  `RAP_DISABLE_MONTHLY_BACKUP=true` 会关闭两者。
+- **上传恢复** —— 从持久化源文件恢复中断任务；主进程监督并重启失败的后台循环，
+  其他进程定期尝试接替已退出的主进程。
 - **微信自动同步循环**（`app/scheduler.py:wechat_auto_sync_loop`）——为什么需要它、如何配置见
   [微信自动同步](wechat-auto-sync.zh-CN.md)。
-- **周报循环**（`app/scheduler.py:weekly_report_loop`）——生成并推送微信+小红书周报；聚合
+- **周报循环**（`app/scheduler.py:weekly_report_loop`）——生成并推送自媒体与商城全平台周报；聚合
   → 文案 → 渲染的完整流程见[采集代理](collector.zh-CN.md)。
 
 ## 配置参考
@@ -248,8 +254,8 @@ ID）——完整的业务口径参考见 `app/utils/nl_to_sql.py` 中的 `SCHEM
 | `SSL_KEYFILE` / `SSL_CERTFILE` | 未设置 | 在 uvicorn 内直接启用 HTTPS（见[快速上手](getting-started.zh-CN.md)） |
 | `CORS_ORIGINS` | 未设置（回退到 `localhost:8501`） | 允许的来源域名，逗号分隔 |
 | `APP_TIMEZONE` | `Asia/Shanghai` | 用于日志时间戳和所有定时任务 |
-| `RPA_BACKUP_DIR` | `backups` | 数据库 dump 文件存放目录 |
-| `RAP_DISABLE_MONTHLY_BACKUP` | `false` | 关闭后台月度备份循环 |
+| `BACKUP_DIR` / `RPA_BACKUP_DIR` | `backups` | 数据库 dump 文件存放目录 |
+| `RAP_DISABLE_MONTHLY_BACKUP` | `false` | 关闭后台每日与月度备份循环 |
 | `BACKUP_HOUR` | `2` | 每日备份检查运行的小时数（0–23，按 `APP_TIMEZONE`） |
 | `MAX_UPLOAD_MB` | `50` | 允许的最大上传文件大小 |
 | `REDIS_URL` | `redis://localhost:6379/0` | 可选——分布式限流用 |

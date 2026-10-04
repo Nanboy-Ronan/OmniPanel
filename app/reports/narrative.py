@@ -17,8 +17,9 @@ from ..utils.nl_to_sql import PROVIDERS
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """你是一个帮内部团队解读公众号和小红书周报数据的助手。
+_SYSTEM_PROMPT = """你是一个帮内部团队解读自媒体和商城周报数据的助手。
 输入是本周的结构化统计数字（已经算好，不需要你验证或重新计算）。
+涵盖公众号、小红书、视频号、知乎、蒲公英（KOL投放）和商城（有赞/京东/天猫）。
 用 3-5 句中文写出本周的亮点、值得关注的异常或变化趋势，语气客观、简洁，
 不要复述所有数字，只挑重要的说。如果某个平台的数据不完整或缺失，直接说明，
 不要编造。不要使用 markdown 格式，输出纯文本。"""
@@ -50,6 +51,34 @@ def _summarize_for_prompt(context: dict[str, Any]) -> str:
         lines.append(f"\n【小红书】{account.name}")
         s = section["this_week_summary"]
         lines.append(f"本周新发布 {s['count']} 篇，平均观看量 {s['avg_views']}，累计涨粉 {s['total_new_followers']}")
+
+    for section in context.get("channels_sections", []):
+        account = section["account"]
+        lines.append(f"\n【视频号】{account.name}")
+        s = section["this_week_summary"]
+        ls = section["last_week_summary"]
+        lines.append(f"本周新发布 {s['count']} 条视频，总播放量 {s['total_plays']}（上周 {ls['total_plays']}），新增粉丝 {s['total_new_fans']}")
+
+    zhihu = context.get("zhihu_section")
+    if zhihu:
+        lines.append("\n【知乎】")
+        s = zhihu["this_week_summary"]
+        ls = zhihu["last_week_summary"]
+        lines.append(f"本周新发布 {s['count']} 篇，总阅读量 {s['total_reads']}（上周 {ls['total_reads']}）")
+
+    for section in context.get("pgy_sections", []):
+        if section["this_week_summary"]["count"] > 0:
+            lines.append(f"\n【蒲公英】{section['account'].name}")
+            s = section["this_week_summary"]
+            lines.append(f"本周 {s['count']} 篇笔记，总曝光 {s['total_impressions']}，总互动 {s['total_interactions']}")
+
+    ecom = context.get("ecommerce_section")
+    if ecom:
+        tw = ecom["this_week_total"]
+        lw = ecom["last_week_total"]
+        if tw["order_count"] > 0 or lw["order_count"] > 0:
+            lines.append("\n【商城】")
+            lines.append(f"本周总 GMV ¥{tw['gmv']:,.0f}（上周 ¥{lw['gmv']:,.0f}），订单 {tw['order_count']} 笔（上周 {lw['order_count']}）")
 
     return "\n".join(lines)
 

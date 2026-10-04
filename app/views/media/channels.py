@@ -9,7 +9,6 @@ import asyncio
 import datetime as dt
 import logging
 import os
-import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -24,11 +23,11 @@ from ...db import get_session
 from ...db.etl.channels import parse_channels_api_json, parse_channels_xlsx, upsert_channels_posts
 from ...db.models import WxChannelsAccount, WxChannelsPost
 from ...utils.logger import log_operation
+from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/channels", tags=["channels"])
 
 _logger = logging.getLogger(__name__)
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 # ── Account CRUD ──────────────────────────────────────────────────────────────
@@ -141,18 +140,7 @@ async def upload_channels(
 
     tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            total = 0
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > _MAX_UPLOAD_BYTES:
-                    os.unlink(tmp.name)
-                    raise HTTPException(status_code=413, detail="文件过大（上限 50 MB）。")
-                tmp.write(chunk)
-            tmp_path = tmp.name
+        tmp_path = await save_upload(file, ext or ".csv")
 
         def _process(path: str) -> dict:
             if ext == ".json":
@@ -198,16 +186,18 @@ async def list_channels_posts(
     start_date: dt.date | None = Query(None),
     end_date: dt.date | None = Query(None),
     limit: int = Query(500, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
 ):
-    stmt = select(WxChannelsPost).order_by(WxChannelsPost.publish_date.desc()).limit(limit)
+    stmt = select(WxChannelsPost).order_by(WxChannelsPost.publish_date.desc(), WxChannelsPost.id.desc())
     if account_id is not None:
         stmt = stmt.where(WxChannelsPost.account_id == account_id)
     if start_date:
         stmt = stmt.where(WxChannelsPost.publish_date >= start_date)
     if end_date:
         stmt = stmt.where(WxChannelsPost.publish_date <= end_date)
+    stmt = stmt.offset(offset).limit(limit)
     rows = (await session.execute(stmt)).scalars().all()
     return [
         {
@@ -237,7 +227,21 @@ async def list_channels_posts(
     ]
 
 
-@router.get("/overview")
+class ChannelsOverview(BaseModel):
+    posts: int
+    plays: int
+    recommends: int
+    likes_thumb: int
+    comments: int
+    shares: int
+    new_fans: int
+    forwards_chat_moments: int
+    engagement: int
+    avg_completion_rate: float
+    avg_plays_per_post: float
+
+
+@router.get("/overview", response_model=ChannelsOverview)
 async def channels_overview(
     account_id: int | None = Query(None),
     start_date: dt.date | None = Query(None),
@@ -254,6 +258,7 @@ async def channels_overview(
         func.sum(WxChannelsPost.shares).label("shares"),
         func.sum(WxChannelsPost.new_fans).label("new_fans"),
         func.sum(WxChannelsPost.forwards_chat_moments).label("forwards_chat_moments"),
+        func.avg(func.coalesce(WxChannelsPost.completion_rate, 0)).label("avg_completion_rate"),
     )
     if account_id is not None:
         stmt = stmt.where(WxChannelsPost.account_id == account_id)
@@ -274,5 +279,9 @@ async def channels_overview(
         "shares": int(row.shares or 0),
         "new_fans": int(row.new_fans or 0),
         "forwards_chat_moments": int(row.forwards_chat_moments or 0),
+        "engagement": sum(int(value or 0) for value in (
+            row.recommends, row.likes_thumb, row.comments, row.shares,
+        )),
+        "avg_completion_rate": float(row.avg_completion_rate or 0),
         "avg_plays_per_post": round(plays / posts, 1) if posts else 0,
     }

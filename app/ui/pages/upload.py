@@ -1,8 +1,8 @@
 from __future__ import annotations
 import io
-import time
 import streamlit as st
 import pandas as pd
+from app.db.etl.detect import detect_platform
 
 from app.ui._helpers import _page_hero, show_api_error, clear_cached_orders
 
@@ -36,7 +36,7 @@ def page_upload() -> None:
         cols = st.columns(5)
         cols[0].metric("来源行数", total if total is not None else "N/A")
         cols[1].metric("新增订单", inserted)
-        cols[2].metric("原始行已存", raw_rows)
+        cols[2].metric("已保存来源行", raw_rows)
         cols[3].metric("重复行", duplicates)
         cols[4].metric("拒绝行", invalid)
 
@@ -91,52 +91,41 @@ def page_upload() -> None:
             # Legacy synchronous response (should not happen in normal operation)
             data = resp
         else:
-            # Poll until the background ETL finishes (up to ~120 s), backing off
-            # from 1 s to 5 s between checks — most uploads finish in the first
-            # couple of checks, so this avoids hammering the API once a large
-            # file's ETL genuinely takes a while.
-            data = None
-            with st.spinner("正在处理文件，请稍候…"):
-                elapsed = 0.0
-                delay = 1.0
-                while elapsed < 120:
-                    r_batch = client.upload_batch(batch_id)
-                    if r_batch.status_code == 200:
-                        batch_data = r_batch.json()
-                        if batch_data.get("status") != "processing":
-                            data = batch_data
-                            break
-                    time.sleep(delay)
-                    elapsed += delay
-                    delay = min(delay * 2, 5.0)
-
-            if data is None:
-                st.warning("处理超时，请稍后在上传记录中查看结果。")
-                return
-
-            if data.get("status") == "failed":
-                st.error(f"文件处理失败：{data.get('error_message') or '未知错误'}")
-                return
-
-            # Normalise key names so _render_upload_summary works unchanged
-            # (the batch-status endpoint uses id/row_count/inserted_orders, while
-            # the legacy synchronous ingest_upload() path uses
-            # batch_id/total_rows/inserted_rows). Without this, batch_id stays
-            # unset and the rejected-rows expander never renders, even when
-            # rows were actually rejected.
-            data.setdefault("batch_id", data.get("id", batch_id))
-            data.setdefault("inserted_rows", data.get("inserted_orders", 0))
-            data.setdefault("total_rows", data.get("row_count"))
+            st.session_state["active_upload_batch"] = batch_id
+            st.success(f"文件已接收，批次 #{batch_id} 正在后台处理。可离开此页，稍后在上传记录查看结果。")
+            return
 
         clear_cached_orders()
+        st.session_state.pop("sidebar_upload_summary", None)
+        st.session_state.pop("data_freshness_cache", None)
         detected = data.get("platform", "unknown")
         _render_upload_summary(data, detected, expected_platform, label)
         _render_rejected_rows(data.get("batch_id"), data.get("invalid_rows", 0))
 
     def _upload_card(label: str, platform: str, key: str):
+        # Keep the file widget outside the form so selecting a file immediately
+        # reruns the page and shows the preview before the user submits it.
+        f = st.file_uploader(f"{label} 订单导出文件", type=["csv", "xlsx"], key=key)
+        mismatch = False
+        if f is not None:
+            try:
+                sample = (pd.read_excel(io.BytesIO(f.getvalue()), nrows=5, dtype=str)
+                          if f.name.lower().endswith(".xlsx")
+                          else pd.read_csv(io.BytesIO(f.getvalue()), nrows=5, dtype=str))
+                st.caption(f"文件预览：{len(sample.columns)} 列；以下为前 {len(sample)} 行。请确认平台和列名。")
+                st.dataframe(sample, use_container_width=True, hide_index=True)
+                try:
+                    detected = detect_platform(sample)
+                except ValueError:
+                    st.warning("暂时无法根据列名识别平台，请检查文件是否为原始订单导出文件。")
+                else:
+                    if detected != platform:
+                        st.error(f"检测到文件来自 {detected}，请切换到对应页签后上传。")
+                        mismatch = True
+            except Exception:
+                st.warning("无法预览文件；提交后系统会继续检查格式并给出处理结果。")
         with st.form(f"upload-{key}", clear_on_submit=False):
-            f = st.file_uploader(f"{label} 订单导出文件", type=["csv", "xlsx"], key=key)
-            submitted = st.form_submit_button("上传")
+            submitted = st.form_submit_button("上传", disabled=f is None or mismatch)
             if submitted:
                 _process_upload(f, platform, label)
 
@@ -163,17 +152,61 @@ def page_upload() -> None:
         )
         _upload_card("天猫", "tmall", "tm")
 
+    active_id = st.session_state.get("active_upload_batch")
+    if active_id:
+        st.markdown(f"#### 最近提交：批次 #{active_id}")
+        if st.button("刷新处理状态"):
+            st.rerun()
+        try:
+            active_response = client.upload_batch(active_id)
+        except Exception:
+            st.warning("暂时无法查询处理状态，请稍后重试。")
+        else:
+            if active_response.status_code == 200:
+                active = active_response.json()
+                status = active.get("status")
+                if status in {"processing", "recovering"}:
+                    st.info("正在处理文件。关闭此页不会中断处理。")
+                elif status == "failed":
+                    st.error(f"处理失败：{active.get('error_message') or '请检查文件格式后重试。'}")
+                else:
+                    active.setdefault("batch_id", active.get("id", active_id))
+                    active.setdefault("total_rows", active.get("row_count"))
+                    _render_upload_summary(active, active.get("platform", "unknown"),
+                                           active.get("platform", "unknown"), "当前平台")
+                    _render_rejected_rows(active_id, active.get("invalid_rows", 0))
+                    if st.button("查看导入数据"):
+                        clear_cached_orders()
+                        st.session_state.pop("sidebar_upload_summary", None)
+                        st.session_state.pop("data_freshness_cache", None)
+                        st.session_state["page"] = "数据浏览"
+                        st.rerun()
+            else:
+                show_api_error(active_response, "无法查询处理状态。")
+
     # ── Upload history ────────────────────────────────────────────────────────
     st.markdown("---")
-    with st.expander("最近上传记录", expanded=False):
-        r_hist = client.upload_batches(limit=10)
+    with st.expander("最近上传记录", expanded=True):
+        r_hist = client.upload_batches(limit=20)
         if r_hist.status_code == 200:
             batches = r_hist.json()
             if batches:
+                chosen_id = st.selectbox(
+                    "查看历史批次详情",
+                    [b["id"] for b in batches],
+                    format_func=lambda batch: next(
+                        (f"#{b['id']} · {b['filename']} · {b['status']}" for b in batches if b["id"] == batch),
+                        str(batch),
+                    ),
+                )
+                if st.button("查看该批次"):
+                    st.session_state["active_upload_batch"] = chosen_id
+                    st.rerun()
                 hist_df = pd.DataFrame(batches)
                 hist_df["uploaded_at"] = pd.to_datetime(hist_df["uploaded_at"])
                 hist_df = hist_df.rename(columns={
                     "id": "批次",
+                    "status": "状态",
                     "platform": "平台",
                     "filename": "文件名",
                     "inserted_orders": "新增",
@@ -181,7 +214,9 @@ def page_upload() -> None:
                     "invalid_rows": "拒绝",
                     "uploaded_at": "上传时间",
                 })
-                show_cols = ["批次", "平台", "文件名", "新增", "重复", "拒绝", "上传时间"]
+                status_labels = {"processing": "处理中", "recovering": "恢复处理中", "failed": "失败", "completed": "完成"}
+                hist_df["状态"] = hist_df["状态"].map(status_labels).fillna(hist_df["状态"])
+                show_cols = ["批次", "状态", "平台", "文件名", "新增", "重复", "拒绝", "上传时间"]
                 st.dataframe(
                     hist_df[[c for c in show_cols if c in hist_df.columns]],
                     use_container_width=True,

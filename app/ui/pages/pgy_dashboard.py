@@ -8,6 +8,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from app.ui import theme
 from app.ui._helpers import _page_hero, _styled_chart, show_api_error
 
 
@@ -204,7 +205,7 @@ def page_pgy_dashboard() -> None:
             top10_interactions = df.sort_values(by="interactions", ascending=False).head(10)
             chart_top_int = (
                 alt.Chart(top10_interactions)
-                .mark_bar(color="#EE2746", cornerRadiusEnd=4)
+                .mark_bar(color=theme.PRIMARY, cornerRadiusEnd=4)
                 .encode(
                     x=alt.X("interactions:Q", title="互动量"),
                     y=alt.Y("blogger_nickname:N", sort="-x", title="博主昵称"),
@@ -220,7 +221,7 @@ def page_pgy_dashboard() -> None:
             top10_cpe = valid_cpe_df.sort_values(by="cost_per_interaction", ascending=True).head(10)
             chart_top_cpe = (
                 alt.Chart(top10_cpe)
-                .mark_bar(color="#2EAD7A", cornerRadiusEnd=4)
+                .mark_bar(color=theme.PRIMARY, cornerRadiusEnd=4)
                 .encode(
                     x=alt.X("cost_per_interaction:Q", title="CPE (元/互动)"),
                     y=alt.Y("blogger_nickname:N", sort="x", title="博主昵称"),
@@ -328,7 +329,7 @@ def page_pgy_dashboard() -> None:
             st.markdown("##### 合作总费用 Top 博主")
             chart_b_spend = (
                 alt.Chart(blogger_df.sort_values(by="total_spend", ascending=False).head(10))
-                .mark_bar(color="#3B82F6", cornerRadiusEnd=4)
+                .mark_bar(color=theme.PRIMARY, cornerRadiusEnd=4)
                 .encode(
                     x=alt.X("total_spend:Q", title="投放总额 (元)"),
                     y=alt.Y("blogger_nickname:N", sort="-x", title="博主"),
@@ -342,7 +343,7 @@ def page_pgy_dashboard() -> None:
             st.markdown("##### 带来总互动 Top 博主")
             chart_b_int = (
                 alt.Chart(blogger_df.sort_values(by="total_interactions", ascending=False).head(10))
-                .mark_bar(color="#EC4899", cornerRadiusEnd=4)
+                .mark_bar(color=theme.PRIMARY, cornerRadiusEnd=4)
                 .encode(
                     x=alt.X("total_interactions:Q", title="产生互动量"),
                     y=alt.Y("blogger_nickname:N", sort="-x", title="博主"),
@@ -387,7 +388,7 @@ def page_pgy_dashboard() -> None:
         st.markdown("##### 各项目预算花费分布")
         chart_camp = (
             alt.Chart(campaign_df)
-            .mark_bar(color="#6366F1", cornerRadiusEnd=4)
+            .mark_bar(color=theme.PRIMARY, cornerRadiusEnd=4)
             .encode(
                 x=alt.X("cooperation_name:N", title="项目名称", sort="-y"),
                 y=alt.Y("total_spend:Q", title="总预算 (元)"),
@@ -472,7 +473,7 @@ def page_pgy_dashboard() -> None:
                     .mark_arc(innerRadius=40)
                     .encode(
                         theta=alt.Theta("value:Q"),
-                        color=alt.Color("gender:N", title="性别", scale=alt.Scale(range=["#F43F5E", "#3B82F6"])),
+                        color=alt.Color("gender:N", title="性别", scale=alt.Scale(range=[theme.SERIES[4], theme.SERIES[0]])),
                         tooltip=["gender", "value"],
                     )
                     .properties(height=280)
@@ -486,7 +487,7 @@ def page_pgy_dashboard() -> None:
             age_df = pd.DataFrame([{"age": k, "score": v} for k, v in ages.items()])
             chart_a = (
                 alt.Chart(age_df)
-                .mark_bar(color="#8B5CF6", cornerRadiusEnd=4)
+                .mark_bar(color=theme.PRIMARY, cornerRadiusEnd=4)
                 .encode(
                     x=alt.X("age:N", title="年龄段", sort=["<18", "18~24", "25~34", "35~44", ">44"]),
                     y=alt.Y("score:Q", title="相对权重"),
@@ -505,7 +506,7 @@ def page_pgy_dashboard() -> None:
             if not reg_df.empty:
                 chart_r = (
                     alt.Chart(reg_df)
-                    .mark_bar(color="#10B981", cornerRadiusEnd=4)
+                    .mark_bar(color=theme.PRIMARY, cornerRadiusEnd=4)
                     .encode(
                         x=alt.X("score:Q", title="权重"),
                         y=alt.Y("region:N", sort="-x", title="省/市"),
@@ -523,7 +524,7 @@ def page_pgy_dashboard() -> None:
             if not dev_df.empty:
                 chart_d = (
                     alt.Chart(dev_df)
-                    .mark_bar(color="#F59E0B", cornerRadiusEnd=4)
+                    .mark_bar(color=theme.PRIMARY, cornerRadiusEnd=4)
                     .encode(
                         x=alt.X("score:Q", title="权重"),
                         y=alt.Y("device:N", sort="-x", title="品牌"),
@@ -541,7 +542,7 @@ def page_pgy_dashboard() -> None:
             if not int_df.empty:
                 chart_i = (
                     alt.Chart(int_df)
-                    .mark_bar(color="#EC4899", cornerRadiusEnd=4)
+                    .mark_bar(color=theme.PRIMARY, cornerRadiusEnd=4)
                     .encode(
                         x=alt.X("score:Q", title="权重"),
                         y=alt.Y("interest:N", sort="-x", title="兴趣"),

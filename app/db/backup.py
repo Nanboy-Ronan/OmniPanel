@@ -20,15 +20,15 @@ logger = logging.getLogger(__name__)
 _BACKUP_EXTENSIONS = {".sql", ".gz", ".dump", ".db"}
 
 
-def prune_old_backups(backup_dir: Path, keep: int | None = None) -> int:
+def prune_old_backups(backup_dir: Path, keep: int | None = None, reason: str | None = None) -> int:
     """Delete oldest backup files beyond *keep* most-recent, return count removed.
 
     Only files whose suffix is in ``_BACKUP_EXTENSIONS`` are considered.
     Dotfiles (e.g. ``.last_monthly_backup``, ``.backup.lock``) are always left
-    alone.  *keep* defaults to ``settings.rpa_backup_keep`` (5).
+    alone.  *keep* defaults to ``settings.backup_keep`` (5).
     """
     if keep is None:
-        keep = settings.rpa_backup_keep
+        keep = settings.backup_keep
 
     candidates = sorted(
         (
@@ -37,6 +37,7 @@ def prune_old_backups(backup_dir: Path, keep: int | None = None) -> int:
             if f.is_file()
             and not f.name.startswith(".")
             and f.suffix in _BACKUP_EXTENSIONS
+            and (reason is None or f.stem.endswith(f"-{reason}"))
         ),
         key=lambda f: f.stat().st_mtime,
         reverse=True,  # newest first
@@ -82,7 +83,7 @@ def monthly_backup(backup_dir: str | Path | None = None) -> Path | None:
     corrupt (doubled) dump. Only the worker that wins the lock performs the
     backup; the others skip.
     """
-    root = Path(backup_dir or settings.rpa_backup_dir)
+    root = Path(backup_dir or settings.backup_dir)
     root.mkdir(parents=True, exist_ok=True)
 
     # Fast pre-check before taking the lock / opening pg_dump.
@@ -110,12 +111,41 @@ def monthly_backup(backup_dir: str | Path | None = None) -> Path | None:
         result = backup_database("monthly", backup_dir=root)
         if result:
             _write_last_backup(root)
-            pruned = prune_old_backups(root)
+            pruned = prune_old_backups(root, reason="monthly")
             if pruned:
                 logger.info("Pruned %d old backup(s) from %s", pruned, root)
         return result
     finally:
         lock_fh.close()  # releases the flock
+
+
+def daily_backup(backup_dir: str | Path | None = None) -> Path | None:
+    """Keep seven daily dumps without pruning monthly or manual recovery files."""
+    root = Path(backup_dir or settings.backup_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = root / ".last_daily_backup"
+
+    def recent() -> bool:
+        try:
+            return datetime.now() - datetime.fromisoformat(stamp.read_text().strip()) < timedelta(hours=20)
+        except (OSError, ValueError):
+            return False
+
+    if recent():
+        return None
+    with open(root / ".backup.lock", "w") as lock_fh:
+        if fcntl is not None:
+            try:
+                fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return None
+        if recent():
+            return None
+        result = backup_database("daily", backup_dir=root)
+        if result:
+            stamp.write_text(datetime.now().isoformat())
+            prune_old_backups(root, keep=settings.daily_backup_keep, reason="daily")
+        return result
 
 
 def _pg_connection_args(parsed) -> list[str]:
@@ -133,14 +163,14 @@ def _pg_connection_args(parsed) -> list[str]:
 def _wrap_for_docker(pg_args: list[str], parsed, *, interactive: bool) -> tuple[list[str], dict]:
     """Return the (argv, env) to run a postgres client command.
 
-    When ``settings.rpa_pg_docker_container`` is set, the command is wrapped in
+    When ``settings.pg_docker_container`` is set, the command is wrapped in
     ``docker exec`` so it runs inside the PostgreSQL container (where the
     client binaries live). Input/output is streamed over stdin/stdout, so the
     dump file always lands on the host filesystem regardless of where the
     binary runs. Otherwise the command runs natively and ``PGPASSWORD`` is
     passed through the environment.
     """
-    container = settings.rpa_pg_docker_container
+    container = settings.pg_docker_container
     env = os.environ.copy()
     if container:
         argv = ["docker", "exec"]
@@ -159,7 +189,7 @@ def _wrap_for_docker(pg_args: list[str], parsed, *, interactive: bool) -> tuple[
 
 def backup_database(reason: str, backup_dir: str | Path | None = None) -> Path | None:
     """Create a database backup using ``pg_dump`` and return its path."""
-    root = Path(backup_dir or settings.rpa_backup_dir)
+    root = Path(backup_dir or settings.backup_dir)
     root.mkdir(parents=True, exist_ok=True)
 
     safe_reason = "".join(
@@ -173,7 +203,9 @@ def backup_database(reason: str, backup_dir: str | Path | None = None) -> Path |
 
     # Dump to stdout (no -f) so the file is written on the host even when the
     # command runs inside the database container.
-    pg_args = ["pg_dump", "--clean", "--if-exists", "--no-owner", "--no-acl"]
+    # Include GRANTs: reporting views and the restricted runtime role must
+    # remain usable after a restore on the same PostgreSQL cluster.
+    pg_args = ["pg_dump", "--clean", "--if-exists", "--no-owner"]
     pg_args.extend(_pg_connection_args(parsed))
     pg_args.append(db_name)
     argv, env = _wrap_for_docker(pg_args, parsed, interactive=False)
@@ -187,7 +219,7 @@ def backup_database(reason: str, backup_dir: str | Path | None = None) -> Path |
     except FileNotFoundError as exc:
         backup_path.unlink(missing_ok=True)
         logger.error(
-            "pg_dump/docker not found; set RPA_PG_DOCKER_CONTAINER or install "
+            "pg_dump/docker not found; set PG_DOCKER_CONTAINER or install "
             "PostgreSQL client tools",
             exc_info=exc,
         )
@@ -225,7 +257,7 @@ def restore_database(backup_path: str | Path) -> bool:
         return True
     except FileNotFoundError as exc:
         logger.error(
-            "psql/docker not found; set RPA_PG_DOCKER_CONTAINER or install "
+            "psql/docker not found; set PG_DOCKER_CONTAINER or install "
             "PostgreSQL client tools",
             exc_info=exc,
         )

@@ -130,7 +130,7 @@ def _sync_articles(client, tokens, monkeypatch, articles: list[dict]):
     monkeypatch.setenv("WECHAT_OFFICIAL_APP_SECRET", "secret-test")
     monkeypatch.setenv("WECHAT_OFFICIAL_ACCOUNT_NAME", "Test Account")
 
-    import app.views.media.routes as media_view
+    import app.services.wechat as media_view
 
     class FakeClient:
         def __init__(self, app_id, app_secret):

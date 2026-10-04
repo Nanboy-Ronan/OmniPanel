@@ -331,40 +331,10 @@ def ingest(df: pd.DataFrame, session: Session) -> int:
     if session.bind is not None and session.bind.dialect.name == "postgresql":
         session.execute(text("SELECT pg_advisory_xact_lock(77881101)"))
 
-    incoming_keys = {r["customer_key"] for r in parsed}
-    existing_customers: dict[str, Customer] = {
-        c.customer_key: c
-        for c in session.execute(
-            select(Customer).where(Customer.customer_key.in_(incoming_keys))
-        ).scalars().all()
-    }
-
-    for r in parsed:
-        ck = r["customer_key"]
-        if ck in existing_customers:
-            c = existing_customers[ck]
-            if c.first_order_date is None or r["order_date"] < c.first_order_date:
-                c.first_order_date = r["order_date"]
-        else:
-            new_c = Customer(
-                customer_key=ck,
-                platform=r["platform"],
-                first_order_date=r["order_date"],
-            )
-            session.add(new_c)
-            existing_customers[ck] = new_c
-
-    session.flush()
+    _ensure_customers_for_orders(parsed, session)
 
     incoming_order_ids = {r["order_id"] for r in parsed if r["order_id"]}
-    if incoming_order_ids:
-        existing_order_ids: set[str] = set(
-            session.execute(
-                select(Order.order_id).where(Order.order_id.in_(incoming_order_ids))
-            ).scalars().all()
-        )
-    else:
-        existing_order_ids = set()
+    existing_order_ids = _existing_order_ids(session, incoming_order_ids)
 
     inserted = 0
     for r in parsed:

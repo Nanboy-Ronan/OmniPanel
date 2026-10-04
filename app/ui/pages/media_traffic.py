@@ -7,9 +7,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from app.ui import theme
 from app.ui._helpers import _page_hero, _styled_chart, show_api_error
-
-_PALETTE = ["#0ea5e9", "#6366f1", "#f97316", "#10b981", "#f43f5e", "#8b5cf6"]
 
 
 def _account_options(accounts: list[dict]) -> tuple[list[str], dict[str, int | None]]:
@@ -83,7 +82,7 @@ def page_media_traffic() -> None:
     st.markdown("---")
 
     # ── Tab: 排行 / 趋势 ──────────────────────────────────────────────────────
-    tab_rank, tab_trend = st.tabs(["📊 文章排行", "📈 发布趋势"])
+    tab_rank, tab_trend = st.tabs(["文章排行", "发布趋势"])
 
     with tab_rank:
         # Top-N 阅读排行横柱
@@ -94,7 +93,7 @@ def page_media_traffic() -> None:
 
         bar = (
             alt.Chart(top_df)
-            .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+            .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
             .encode(
                 x=alt.X("read_user_count:Q", title="阅读人数"),
                 y=alt.Y("short_title:N", sort="-x", title=""),
@@ -163,7 +162,7 @@ def page_media_traffic() -> None:
             with col_a:
                 articles_bar = (
                     alt.Chart(monthly)
-                    .mark_bar(color="#6366f1", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                    .mark_bar(color=theme.PRIMARY, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                     .encode(
                         x=alt.X("month:T", title="月份", timeUnit="yearmonth"),
                         y=alt.Y("articles:Q", title="文章数"),
@@ -179,7 +178,7 @@ def page_media_traffic() -> None:
             with col_b:
                 reads_bar = (
                     alt.Chart(monthly)
-                    .mark_bar(color="#0ea5e9", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                    .mark_bar(color=theme.PRIMARY, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                     .encode(
                         x=alt.X("month:T", title="月份", timeUnit="yearmonth"),
                         y=alt.Y("read_user_count:Q", title="阅读人数"),
@@ -213,7 +212,7 @@ def page_media_traffic() -> None:
                     y=alt.Y("数值:Q", title="数值"),
                     color=alt.Color(
                         "指标:N",
-                        scale=alt.Scale(range=_PALETTE[:3]),
+                        scale=alt.Scale(range=list(theme.SERIES[:3])),
                         legend=alt.Legend(title="指标"),
                     ),
                     tooltip=["month:T", "指标:N", "数值:Q"],

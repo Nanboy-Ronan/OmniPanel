@@ -181,7 +181,7 @@ def _sync_posts(client, tokens, monkeypatch, articles):
     monkeypatch.setenv("WECHAT_OFFICIAL_APP_SECRET", "secret-ci")
     monkeypatch.setenv("WECHAT_OFFICIAL_ACCOUNT_NAME", "CI Account")
 
-    import app.views.media.routes as media_view
+    import app.services.wechat as media_view
 
     class FakeClient:
         def __init__(self, *a, **kw): pass

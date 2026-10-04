@@ -1,4 +1,4 @@
-import os, importlib
+import os, importlib, json
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -616,6 +616,64 @@ def test_orders_all_pagination(client, tokens, sample_data):
         "/orders_all/", params={"limit": 5, "offset": 5}, headers=_auth(tokens["analyst"])
     )
     assert r_page2.json() == full[5:10]
+
+
+def test_orders_search_and_export_cover_all_matches(client, tokens, sample_data):
+    headers = _auth(tokens["analyst"])
+    full = client.get("/orders_all/", headers=headers).json()
+    platform = full[0]["platform"]
+    expected = [row for row in full if row["platform"] == platform]
+    page = client.get("/orders_all/", params={"platform": platform, "limit": 2}, headers=headers)
+    assert page.status_code == 200
+    assert int(page.headers["X-Total-Count"]) == len(expected)
+    assert page.json() == expected[:2]
+
+    exported = client.get("/orders_all/export", params={"platform": platform}, headers=headers)
+    assert exported.status_code == 200
+    assert exported.content.startswith(b"\xef\xbb\xbf")
+    import csv
+    import io
+    rows = list(csv.DictReader(io.StringIO(exported.content.decode("utf-8-sig"))))
+    assert len(rows) == len(expected)
+    assert [int(row["id"]) for row in rows] == [row["id"] for row in expected]
+
+    # SQL wildcard characters are ordinary search text, not match-all patterns.
+    literal = client.get("/orders_all/", params={"search": "%"}, headers=headers)
+    assert literal.status_code == 200
+    assert int(literal.headers["X-Total-Count"]) == 0
+
+    filter_json = json.dumps([{"field": "order_date", "value": full[0]["order_date"]}])
+    filtered = client.get("/orders_all/", params={"column_filters": filter_json}, headers=headers)
+    assert filtered.status_code == 200
+    assert all(row["order_date"] == full[0]["order_date"] for row in filtered.json())
+    filtered_export = client.get("/orders_all/export", params={"column_filters": filter_json}, headers=headers)
+    assert len(list(csv.DictReader(io.StringIO(filtered_export.content.decode("utf-8-sig"))))) == int(filtered.headers["X-Total-Count"])
+    rejected = client.get("/orders_all/", params={"column_filters": '[{"field":"__class__","value":"x"}]'}, headers=headers)
+    assert rejected.status_code == 422
+    price_range = json.dumps([{"field": "price", "min": "0", "max": str(full[0]["price"])}])
+    ranged = client.get("/orders_all/", params={"column_filters": price_range}, headers=headers)
+    assert ranged.status_code == 200
+    assert all(0 <= row["price"] <= full[0]["price"] for row in ranged.json())
+
+
+def test_data_freshness_reports_coverage_separately_from_import_time(client, tokens, sample_data):
+    response = client.get("/data/freshness", headers=_auth(tokens["analyst"]))
+    assert response.status_code == 200
+    data = response.json()
+    assert data["orders"]["coverage_through"] is not None
+    assert "last_import_at" in data["orders"]
+    assert set(data) == {"orders", "wechat", "xhs", "zhihu", "channels", "pgy"}
+
+
+def test_kpi_periods_match_existing_overview(client, tokens, sample_data):
+    headers = _auth(tokens["analyst"])
+    anchor = client.get("/analysis/latest_order_date", headers=headers).json()["latest_order_date"]
+    periods = client.get("/analysis/kpi-periods", params={"anchor": anchor}, headers=headers)
+    assert periods.status_code == 200
+    daily = client.get("/analysis/overview", params={"start_date": anchor, "end_date": anchor}, headers=headers)
+    assert daily.status_code == 200
+    for field in ("orders", "revenue", "unique_customers"):
+        assert periods.json()["day"][field] == daily.json()[field]
 
 
 def test_admin_clear_db_permissions(client, tokens):

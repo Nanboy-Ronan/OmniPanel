@@ -21,6 +21,8 @@ env/
 *.db
 *.sqlite3
 backups/
+upload-spool/
+upload_spool/
 
 # Local data (never commit real exports / PII)
 data/

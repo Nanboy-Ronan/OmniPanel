@@ -5,12 +5,12 @@ import asyncio
 import datetime as dt
 import logging
 import os
-import tempfile
 from typing import Literal
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import current_active_user, current_analyst_user
@@ -19,11 +19,11 @@ from ...db import get_session
 from ...db.etl.zhihu import parse_zhihu_csv, upsert_zhihu_posts, VALID_CONTENT_TYPES
 from ...db.models import ZhihuPost
 from ...utils.logger import log_operation
+from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/zhihu", tags=["zhihu"])
 
 _logger = logging.getLogger(__name__)
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 def _read_zhihu_file(path: str) -> pd.DataFrame:
@@ -59,18 +59,7 @@ async def upload_zhihu(
 
     tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext or ".csv") as tmp:
-            total = 0
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > _MAX_UPLOAD_BYTES:
-                    os.unlink(tmp.name)
-                    raise HTTPException(status_code=413, detail="文件过大（上限 50 MB）。")
-                tmp.write(chunk)
-            tmp_path = tmp.name
+        tmp_path = await save_upload(file, ext or ".csv")
 
         def _process(path: str) -> dict:
             df = _read_zhihu_file(path)
@@ -102,22 +91,57 @@ async def upload_zhihu(
     return result
 
 
-@router.get("/posts")
-async def list_zhihu_posts(
+class ZhihuOverview(BaseModel):
+    posts: int
+    reads: int
+    plays: int
+    likes: int
+    collects: int
+
+
+@router.get("/overview", response_model=ZhihuOverview)
+async def zhihu_overview(
     content_type: str | None = Query(None),
     start_date: dt.date | None = Query(None),
     end_date: dt.date | None = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
     _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
 ):
-    stmt = select(ZhihuPost).order_by(ZhihuPost.publish_date.desc()).limit(limit)
+    stmt = select(
+        func.count(ZhihuPost.id), func.sum(ZhihuPost.reads), func.sum(ZhihuPost.plays),
+        func.sum(ZhihuPost.likes), func.sum(ZhihuPost.collects),
+    )
     if content_type is not None:
         stmt = stmt.where(ZhihuPost.content_type == content_type)
     if start_date:
         stmt = stmt.where(ZhihuPost.publish_date >= start_date)
     if end_date:
         stmt = stmt.where(ZhihuPost.publish_date <= end_date)
+    posts, reads, plays, likes, collects = (await session.execute(stmt)).one()
+    return ZhihuOverview(
+        posts=posts or 0, reads=reads or 0, plays=plays or 0,
+        likes=likes or 0, collects=collects or 0,
+    )
+
+
+@router.get("/posts")
+async def list_zhihu_posts(
+    content_type: str | None = Query(None),
+    start_date: dt.date | None = Query(None),
+    end_date: dt.date | None = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    _u=Depends(current_analyst_user),
+    session: AsyncSession = Depends(get_session),
+):
+    stmt = select(ZhihuPost).order_by(ZhihuPost.publish_date.desc(), ZhihuPost.id.desc())
+    if content_type is not None:
+        stmt = stmt.where(ZhihuPost.content_type == content_type)
+    if start_date:
+        stmt = stmt.where(ZhihuPost.publish_date >= start_date)
+    if end_date:
+        stmt = stmt.where(ZhihuPost.publish_date <= end_date)
+    stmt = stmt.offset(offset).limit(limit)
     rows = (await session.execute(stmt)).scalars().all()
     return [
         {

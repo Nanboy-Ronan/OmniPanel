@@ -53,7 +53,7 @@ class _RedisCache:
     e.g. ``redis://localhost:6379/0``.
     """
 
-    _PREFIX = "rpa:"
+    _PREFIX = "dashboard:"
 
     def __init__(self, url: str, ttl: int = 300) -> None:
         import redis.asyncio as aioredis

@@ -111,22 +111,17 @@ def validate_sql_query(sql: str) -> None:
 
 
 def enforce_limit(sql: str, max_limit: int = MAX_LIMIT) -> str:
-    """Ensure *sql* has a LIMIT clause that does not exceed *max_limit*.
-
-    - LIMIT absent       → append ``LIMIT {max_limit}`` and return.
-    - LIMIT ≤ max_limit  → return *sql* unchanged.
-    - LIMIT > max_limit  → raise ``ValueError`` (user must edit their query).
-    """
-    m = _LIMIT_RE.search(sql)
-
-    if m is None:
-        return f"{sql.rstrip()} LIMIT {max_limit}"
-
-    limit_value = int(m.group(1))
-    if limit_value > max_limit:
+    """Apply a limit to the final result, including queries with nested limits."""
+    if max_limit < 1:
+        raise ValueError("max_limit must be positive")
+    # This check preserves the existing error for an explicit oversized LIMIT.
+    # The outer query below is authoritative: a literal, comment, or nested
+    # LIMIT must never be mistaken for the final result's limit.
+    clean = _sanitise_for_scanning(sql)
+    limits = [int(value) for value in _LIMIT_RE.findall(clean)]
+    if any(value > max_limit for value in limits):
         raise ValueError(
-            f"LIMIT {limit_value} exceeds the maximum allowed value of "
+            f"LIMIT {max(limits)} exceeds the maximum allowed value of "
             f"{max_limit}. Use LIMIT ≤ {max_limit}."
         )
-
-    return sql
+    return f"SELECT * FROM ({sql.strip()}) AS limited_query LIMIT {max_limit}"

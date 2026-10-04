@@ -1,4 +1,4 @@
-"""Alembic migration environment for rpa-data (async SQLAlchemy + asyncpg)."""
+"""Alembic migration environment for OmniPanel (async SQLAlchemy + asyncpg)."""
 import asyncio
 import os
 import sys
@@ -19,11 +19,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override the URL from the environment (same source of truth as app/db/__init__.py).
-DATABASE_URL = os.getenv(
-    "RAP_DATABASE_URL",
-    "postgresql+asyncpg://rpa:rpa@127.0.0.1:5432/rpa",
-)
+# Use the same environment and .env resolution as the application.
+from app.config import Settings  # noqa: E402
+
+DATABASE_URL = os.environ.get("RAP_MIGRATION_DATABASE_URL") or Settings().rap_database_url
 config.set_main_option("sqlalchemy.url", DATABASE_URL)
 
 # Register all ORM models so their metadata is visible to autogenerate.

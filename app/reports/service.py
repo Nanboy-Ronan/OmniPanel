@@ -7,6 +7,7 @@ import asyncio
 import logging
 from datetime import date
 
+from sqlalchemy import and_, case, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,12 +52,55 @@ def _summary_lines(context: dict) -> list[str]:
     for section in context.get("xhs_sections", []):
         s = section["this_week_summary"]
         lines.append(f"【{section['account'].name}】新发布 {s['count']} 篇，累计涨粉 {s['total_new_followers']}")
+    for section in context.get("channels_sections", []):
+        s = section["this_week_summary"]
+        last_s = section["last_week_summary"]
+        diff = s["total_plays"] - last_s["total_plays"]
+        lines.append(f"【{section['account'].name}(视频号)】播放量 {s['total_plays']}（{_wow_arrow(diff)}），新增粉丝 {s['total_new_fans']}")
+    zhihu = context.get("zhihu_section")
+    if zhihu:
+        s = zhihu["this_week_summary"]
+        last_s = zhihu["last_week_summary"]
+        diff = s["total_reads"] - last_s["total_reads"]
+        lines.append(f"【知乎】阅读量 {s['total_reads']}（{_wow_arrow(diff)}），新发布 {s['count']} 篇")
+    for section in context.get("pgy_sections", []):
+        s = section["this_week_summary"]
+        if s["count"] > 0:
+            lines.append(f"【蒲公英·{section['account'].name}】曝光 {s['total_impressions']}，互动 {s['total_interactions']}，笔记 {s['count']} 篇")
+    ecom = context.get("ecommerce_section")
+    if ecom:
+        tw = ecom["this_week_total"]
+        lw = ecom["last_week_total"]
+        diff = tw["gmv"] - lw["gmv"]
+        if tw["order_count"] > 0 or lw["order_count"] > 0:
+            lines.append(f"【商城】本周 GMV ¥{tw['gmv']:,.0f}（{_wow_arrow(int(diff))}），订单 {tw['order_count']} 笔")
     return lines
 
 
 async def generate_weekly_report(session: AsyncSession, reference_date: date | None = None) -> WeeklyReportRun:
     reference_date = reference_date or date.today()
     bounds = week_bounds(reference_date)
+    # Serialize generation for the same week across manual and scheduled runs.
+    # The lock is released by the commit below (or by rollback on failure).
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(579343, :week)"),
+        {"week": bounds.this_week_start.toordinal()},
+    )
+    existing = (
+        await session.execute(
+            select(WeeklyReportRun).where(WeeklyReportRun.week_start == bounds.this_week_start)
+        )
+    ).scalar_one_or_none()
+    if existing is not None and existing.status == "success" and existing.wecom_sent:
+        return existing
+
+    # A rendered report is immutable while its notification is pending. Retrying
+    # delivery must not depend on the data source or the AI provider still working.
+    if existing is not None and existing.status == "success" and existing.notification_text:
+        run_id = existing.id
+        notification_text = existing.notification_text
+        await session.rollback()
+        return await _deliver_report_notification(session, run_id, notification_text, bounds.this_week_start)
 
     try:
         context = await build_report_context(session, reference_date)
@@ -66,30 +110,28 @@ async def generate_weekly_report(session: AsyncSession, reference_date: date | N
         error_message = None
     except Exception as exc:  # noqa: BLE001 - persist the failure, don't just raise
         logger.error("weekly_report: generation failed for week %s: %s", bounds.this_week_start, exc, exc_info=True)
+        await session.rollback()
         context = None
         narrative = None
         html_content = None
         status = "error"
-        error_message = str(exc)
+        error_message = str(exc)[:500]
 
-    # Send the WeCom notification (and build wecom_sent) *before* the upsert
-    # below, not after: `context`'s ORM objects (account.name etc.) are only
-    # guaranteed live while this same session/transaction holds them, and an
-    # object handed back from `insert(...).returning(...)` isn't reliably
-    # attached to the session's identity map — mutating it post-commit and
-    # re-committing can silently write nothing. Deciding wecom_sent up front
-    # and folding it into the single insert sidesteps both problems.
+    # Flatten ORM-backed context into plain text while the session is alive.
+    # Persist the report before sending anything to recipients.
     if status == "success" and context is not None:
-        summary_text = "\n".join(_summary_lines(context))
+        notification_text = "\n".join(_summary_lines(context))
         if narrative:
-            summary_text += f"\n\n{narrative}"
-        summary_text += f"\n\n登录 {settings.public_base_url} 查看完整周报（周报页）"
-        wecom_sent = await asyncio.to_thread(send_wecom_alert, summary_text)
+            notification_text += f"\n\n{narrative}"
+        notification_text += f"\n\n登录 {settings.public_base_url} 查看完整周报（周报页）"
     else:
-        wecom_sent = await asyncio.to_thread(
-            send_wecom_alert,
-            f"周报生成失败（{bounds.this_week_start} ~ {bounds.this_week_end}）：{error_message}",
-        )
+        # Failure alerts are separate from successful report delivery. They
+        # never mark the successful notification as sent.
+        if existing is not None and existing.status == "success":
+            run_id = existing.id
+            await session.rollback()
+            return await session.get(WeeklyReportRun, run_id)
+        notification_text = None
 
     stmt = (
         pg_insert(WeeklyReportRun)
@@ -99,8 +141,9 @@ async def generate_weekly_report(session: AsyncSession, reference_date: date | N
             status=status,
             html_content=html_content,
             narrative=narrative,
+            notification_text=notification_text,
             error_message=error_message,
-            wecom_sent=wecom_sent,
+            wecom_sent=False,
         )
         .on_conflict_do_update(
             index_elements=["week_start"],
@@ -110,12 +153,51 @@ async def generate_weekly_report(session: AsyncSession, reference_date: date | N
                 "status": status,
                 "html_content": html_content,
                 "narrative": narrative,
+                "notification_text": notification_text,
                 "error_message": error_message,
-                "wecom_sent": wecom_sent,
+                "wecom_sent": case(
+                    (and_(WeeklyReportRun.status == "success", WeeklyReportRun.wecom_sent.is_(True)), True),
+                    else_=False,
+                ),
             },
         )
-        .returning(WeeklyReportRun)
+        .returning(WeeklyReportRun.id)
     )
     result = await session.execute(stmt)
+    run_id = result.scalar_one()
     await session.commit()
-    return result.scalar_one()
+
+    if status != "success":
+        try:
+            await asyncio.to_thread(
+                send_wecom_alert,
+                f"周报生成失败（{bounds.this_week_start} ~ {bounds.this_week_end}），请查看服务日志。",
+            )
+        except Exception:
+            logger.exception("weekly_report: failure alert failed for week %s", bounds.this_week_start)
+        return await session.get(WeeklyReportRun, run_id)
+
+    return await _deliver_report_notification(session, run_id, notification_text, bounds.this_week_start)
+
+
+async def _deliver_report_notification(
+    session: AsyncSession, run_id: int, notification_text: str, week_start: date,
+) -> WeeklyReportRun:
+
+    # Serialize attempts to send the same week's notification. A concurrent
+    # manual trigger waits here and observes the flag set by the first run.
+    locked = (
+        await session.execute(
+            select(WeeklyReportRun).where(WeeklyReportRun.id == run_id).with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    if not locked.wecom_sent:
+        try:
+            locked.wecom_sent = bool(await asyncio.to_thread(send_wecom_alert, notification_text))
+        except Exception:
+            logger.exception("weekly_report: notification failed for week %s", week_start)
+        await session.commit()
+    else:
+        await session.rollback()
+    return await session.get(WeeklyReportRun, run_id)

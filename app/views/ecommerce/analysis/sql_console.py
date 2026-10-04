@@ -32,6 +32,14 @@ class NLSqlRequest(BaseModel):
     model: str | None = None
 
 
+async def _restrict_reporting_session(session: AsyncSession) -> None:
+    """Run user SQL with the database role that can read only masked views."""
+    await session.execute(text("SET LOCAL ROLE rpa_analytics_readonly"))
+    await session.execute(text("SET LOCAL search_path TO reporting, pg_catalog"))
+    await session.execute(text("SET LOCAL transaction_read_only = on"))
+    await session.execute(text("SET LOCAL statement_timeout = '10000'"))
+
+
 @router.post("/sql", summary="Ad-hoc SQL query console (analyst+)")
 async def run_sql_query(
     body: SqlQueryRequest,
@@ -49,15 +57,14 @@ async def run_sql_query(
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        await session.execute(text("SET LOCAL transaction_read_only = on"))
-        await session.execute(text("SET LOCAL statement_timeout = '10000'"))
+        await _restrict_reporting_session(session)
         result = await session.execute(text(safe_sql))
         rows = result.fetchall()
         columns: list[str] = list(result.keys())
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"Query execution error: {exc}",
+            detail="查询失败。请检查字段、表名或权限。",
         )
 
     row_data = [list(row) for row in rows]
@@ -141,13 +148,12 @@ async def run_nl_sql(
     result["sql"] = safe_sql
 
     try:
-        await session.execute(text("SET LOCAL transaction_read_only = on"))
-        await session.execute(text("SET LOCAL statement_timeout = '10000'"))
+        await _restrict_reporting_session(session)
         exec_result = await session.execute(text(safe_sql))
         rows = exec_result.fetchall()
         columns = list(exec_result.keys())
     except Exception as exc:  # noqa: BLE001 - report execution errors to the UI
-        result["error"] = f"查询执行错误：{exc}"
+        result["error"] = "查询执行错误：请检查字段、表名或权限。"
         await log_operation(
             str(_u.id),
             "nl_sql_query",

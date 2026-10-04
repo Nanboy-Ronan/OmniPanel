@@ -209,6 +209,32 @@ def test_authorize_url_missing_corp_id(wecom_client, monkeypatch):
     assert r.status_code == 503
 
 
+def test_browser_login_start_sets_cookie_and_redirects(wecom_client, monkeypatch):
+    _set_wecom_env(monkeypatch)
+    response = wecom_client.get(
+        "/auth/wecom/start",
+        params={"redirect_uri": "http://localhost:8501", "flow": "qr",
+                "return_query": "page=%E6%95%B0%E6%8D%AE%E6%B5%8F%E8%A7%88"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    from urllib.parse import parse_qs, urlsplit
+    state = parse_qs(urlsplit(response.headers["location"]).query)["state"][0]
+    assert wecom_client.cookies.get("wecom_oauth_state") == state
+    assert "HttpOnly" in response.headers["set-cookie"]
+    assert "Path=/" in response.headers["set-cookie"]
+    import base64
+    saved = wecom_client.cookies.get("dashboard_login_return")
+    assert base64.urlsafe_b64decode(saved + "=" * (-len(saved) % 4)).decode() == "page=%E6%95%B0%E6%8D%AE%E6%B5%8F%E8%A7%88"
+
+
+def test_login_status_tracks_configuration(wecom_client, monkeypatch):
+    _set_wecom_env(monkeypatch)
+    assert wecom_client.get("/auth/wecom/status").json() == {"enabled": True}
+    monkeypatch.delenv("WECOM_APP_SECRET")
+    assert wecom_client.get("/auth/wecom/status").json() == {"enabled": False}
+
+
 def test_authorize_url_blocked_redirect_uri(wecom_client, monkeypatch):
     _set_wecom_env(monkeypatch)
     monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://data.example.com")
@@ -308,6 +334,46 @@ def test_exchange_returns_jwt(exchange_client):
     assert body["token_type"] == "bearer"
     assert body["access_token"]
     assert body["user"]["email"] == "wecom.lisi@wecom.local"
+    assert exchange_client.cookies.get("wecom_oauth_state") is None
+
+
+def test_browser_start_survives_reconnect_and_clears_state_after_exchange(exchange_client):
+    from urllib.parse import parse_qs, urlsplit
+
+    started = exchange_client.get(
+        "/auth/wecom/start",
+        params={"redirect_uri": "http://localhost:8501", "flow": "qr",
+                "return_query": "page=%E6%95%B0%E6%8D%AE%E6%B5%8F%E8%A7%88&orders_platform=%E4%BA%AC%E4%B8%9C"},
+        follow_redirects=False,
+    )
+    assert started.status_code == 302
+    state = parse_qs(urlsplit(started.headers["location"]).query)["state"][0]
+    assert exchange_client.cookies.get("wecom_oauth_state") == state
+
+    # A new Streamlit WebSocket session uses the browser's cookie, not the
+    # original Python API client session.
+    completed = exchange_client.post("/auth/wecom/exchange", json={"code": "mycode", "state": state})
+    assert completed.status_code == 200
+    assert completed.json()["access_token"]
+    assert exchange_client.cookies.get("wecom_oauth_state") is None
+    assert exchange_client.cookies.get("dashboard_login_return") is not None
+
+
+def test_exchange_rejects_state_from_another_login_session(exchange_client):
+    state = _get_state(exchange_client)
+    exchange_client.cookies.clear()
+    r = exchange_client.post(
+        "/auth/wecom/exchange", json={"code": "mycode", "state": state},
+    )
+    assert r.status_code == 400
+
+
+def test_exchange_rejects_replayed_state(exchange_client):
+    state = _get_state(exchange_client)
+    first = exchange_client.post("/auth/wecom/exchange", json={"code": "first", "state": state})
+    second = exchange_client.post("/auth/wecom/exchange", json={"code": "second", "state": state})
+    assert first.status_code == 200
+    assert second.status_code == 400
 
 
 def test_exchange_invalid_state_rejected(exchange_client):
@@ -347,17 +413,42 @@ def test_exchange_inactive_user_rejected(monkeypatch):
     async def fake_identity(code):
         return {"userid": "inactive", "email": "wecom.inactive@wecom.local", "name": "X"}
 
-    # Build state BEFORE patching to avoid reload undoing monkeypatch
-    state = wecom_mod._sign_state({"ts": int(time.time()), "nonce": "n"})
-
     app_ = FastAPI()
     app_.include_router(wecom_mod.router)
     app_.dependency_overrides[get_session] = fake_get_session
     monkeypatch.setattr(wecom_mod, "_fetch_wecom_identity", fake_identity)
 
     with TestClient(app_) as c:
+        state = _get_state(c)
         r = c.post(
             "/auth/wecom/exchange",
             json={"code": "code", "state": state},
         )
     assert r.status_code == 403
+
+@pytest.mark.parametrize("redirect", [
+    "https://dashboard.example.com.evil.example",
+    "https://dashboard.example.com@evil.example",
+    "https://dashboard.example.com:444",
+    "https://dashboard.example.com:0",
+    "https://dashboard.example.com/unconfigured-callback",
+    "https://dashboard.example.com?next=https://evil.example",
+    "https://dashboard.example.com#fragment",
+    "http://dashboard.example.com",
+    "https://dashboard.example.com:invalid",
+])
+def test_authorize_rejects_callback_allowlist_bypasses(wecom_client, monkeypatch, redirect):
+    _set_wecom_env(monkeypatch)
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://dashboard.example.com")
+    monkeypatch.delenv("APP_URL", raising=False)
+    monkeypatch.delenv("STREAMLIT_URL", raising=False)
+    response = wecom_client.get("/auth/wecom/authorize-url", params={"redirect_uri": redirect})
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("redirect", ["https://dashboard.example.com/", "https://dashboard.example.com:443"])
+def test_authorize_accepts_equivalent_configured_callback(wecom_client, monkeypatch, redirect):
+    _set_wecom_env(monkeypatch)
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://dashboard.example.com")
+    response = wecom_client.get("/auth/wecom/authorize-url", params={"redirect_uri": redirect})
+    assert response.status_code == 200

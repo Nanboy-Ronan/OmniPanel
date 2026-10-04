@@ -11,10 +11,11 @@ import re
 import secrets
 import time
 from typing import Any
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode, quote, urlsplit, parse_qs
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +39,7 @@ WECOM_GET_USER_URL = "https://qyapi.weixin.qq.com/cgi-bin/user/get"
 # Returns sensitive fields (email, biz_mail) when user_ticket is present (snsapi_privateinfo flow)
 WECOM_GET_USERDETAIL_URL = "https://qyapi.weixin.qq.com/cgi-bin/auth/getuserdetail"
 _STATE_TTL_SECONDS = 10 * 60
+_STATE_COOKIE = "wecom_oauth_state"
 
 _access_token_cache: dict[str, Any] = {"token": None, "expires_at": 0.0}
 
@@ -114,6 +116,11 @@ def _synthetic_email(userid: str) -> str:
 def _default_role() -> str:
     role = os.getenv("WECOM_DEFAULT_ROLE", "viewer").strip().lower()
     return role if role in {"viewer", "analyst", "admin"} else "viewer"
+
+
+@router.get("/status", include_in_schema=False)
+async def login_status() -> dict[str, bool]:
+    return {"enabled": all((_env("WECOM_CORP_ID"), _env("WECOM_AGENT_ID"), _env("WECOM_APP_SECRET")))}
 
 
 async def _wecom_get_json(url: str, params: dict[str, str]) -> dict[str, Any]:
@@ -296,7 +303,7 @@ async def _find_or_create_user(
 
 
 def _allowed_redirect_origins() -> list[str]:
-    """Return the set of allowed redirect URI prefixes from env config."""
+    """Return configured callback URLs (never interpret them as prefixes)."""
     candidates = [
         os.getenv("WECOM_STREAMLIT_REDIRECT_URI"),
         os.getenv("APP_URL"),
@@ -308,16 +315,40 @@ def _allowed_redirect_origins() -> list[str]:
     return origins
 
 
+def _callback_key(value: str) -> tuple | None:
+    """Compare callback destinations without accepting lookalike hosts or paths."""
+    try:
+        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value) or "\\" in value:
+            return None
+        uri = urlsplit(value)
+        if (uri.scheme not in {"http", "https"} or not uri.hostname
+                or uri.username is not None or uri.password is not None
+                or uri.query or uri.fragment):
+            return None
+        port = uri.port if uri.port is not None else (443 if uri.scheme == "https" else 80)
+        return (uri.scheme, uri.hostname, port,
+                uri.path.rstrip("/"))
+    except ValueError:
+        return None
+
+
 @router.get("/authorize-url")
-async def authorize_url(redirect_uri: str) -> dict[str, Any]:
+async def authorize_url(redirect_uri: str, response: Response) -> dict[str, Any]:
     allowed = _allowed_redirect_origins()
-    if not any(redirect_uri.rstrip("/").startswith(origin) for origin in allowed):
+    callback = _callback_key(redirect_uri)
+    if callback is None or callback not in {_callback_key(origin) for origin in allowed}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="redirect_uri is not in the allowed list",
         )
     corpid, agentid, _ = _required_config()
     state = _state()
+    # The API client holds this cookie in its per-Streamlit-session HTTP session.
+    # A signed state alone does not prove that this browser initiated the login.
+    response.set_cookie(
+        _STATE_COOKIE, state, max_age=_STATE_TTL_SECONDS,
+        httponly=True, samesite="lax", path="/auth/wecom",
+    )
 
     # PC browser: QR code flow
     qr_query = urlencode(
@@ -349,16 +380,48 @@ async def authorize_url(redirect_uri: str) -> dict[str, Any]:
     }
 
 
+@router.get("/start", include_in_schema=False)
+async def start_browser_login(
+    redirect_uri: str, flow: str = "qr",
+    return_query: str = Query("", max_length=500),
+) -> RedirectResponse:
+    """Start OAuth in the browser so its state cookie survives Streamlit reconnects."""
+    if flow not in {"qr", "mobile"}:
+        raise HTTPException(status_code=400, detail="Invalid login flow")
+    payload = await authorize_url(redirect_uri, Response())
+    target = payload["oauth2_url"] if flow == "mobile" else payload["authorize_url"]
+    state = parse_qs(urlsplit(target).query)["state"][0]
+    redirect = RedirectResponse(target, status_code=302)
+    redirect.set_cookie(
+        _STATE_COOKIE, state, max_age=_STATE_TTL_SECONDS,
+        httponly=True, samesite="lax", secure=urlsplit(redirect_uri).scheme == "https",
+        path="/",
+    )
+    if return_query:
+        encoded_return = base64.urlsafe_b64encode(return_query.encode()).decode().rstrip("=")
+        redirect.set_cookie(
+            "dashboard_login_return", encoded_return, max_age=_STATE_TTL_SECONDS,
+            httponly=True, samesite="lax", secure=urlsplit(redirect_uri).scheme == "https",
+            path="/",
+        )
+    redirect.headers["Cache-Control"] = "no-store"
+    return redirect
+
+
 @router.post("/exchange")
 async def exchange(
     payload: WeComExchangeRequest,
     request: Request,
+    response: Response,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     ip = get_client_ip(request)
     await login_rate_limiter.check(ip, "wecom_exchange")
 
     try:
+        expected_state = request.cookies.get(_STATE_COOKIE, "")
+        if not expected_state or not hmac.compare_digest(payload.state, expected_state):
+            raise HTTPException(status_code=400, detail="OAuth state does not match this login session")
         _decode_state(payload.state)
         identity = await _fetch_wecom_identity(payload.code)
         user = await _find_or_create_user(session, identity)
@@ -367,6 +430,10 @@ async def exchange(
         raise
 
     await login_rate_limiter.reset(ip, "wecom_exchange")
+    # /authorize-url scoped the cookie to this route, while browser /start
+    # scoped it to /. Clear both so a completed login cannot retain stale state.
+    response.delete_cookie(_STATE_COOKIE, path="/auth/wecom")
+    response.delete_cookie(_STATE_COOKIE, path="/")
     token = await get_jwt_strategy().write_token(user)
     await log_operation(str(user.id), "wecom_login", {"wecom_userid": identity["userid"]})
     display = user.display_name or identity.get("name") or user.email.split("@")[0]

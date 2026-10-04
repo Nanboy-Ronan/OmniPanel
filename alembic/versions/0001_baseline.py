@@ -27,16 +27,16 @@ depends_on = None
 
 
 def upgrade() -> None:
-    """Create all tables defined in the ORM metadata (IF NOT EXISTS)."""
-    import app.db.models  # noqa: F401 — registers dynamic models (youzan/jd/tmall)
-    from app.db import Base
+    """Create exactly the schema at revision 0001."""
+    import app.db.baseline_snapshot.models  # noqa: F401
+    from app.db.baseline_snapshot import Base
 
     Base.metadata.create_all(op.get_bind(), checkfirst=True)
 
 
 def downgrade() -> None:
-    """Drop all tables defined in the ORM metadata."""
-    import app.db.models  # noqa: F401
-    from app.db import Base
+    """Drop the tables created by revision 0001."""
+    import app.db.baseline_snapshot.models  # noqa: F401
+    from app.db.baseline_snapshot import Base
 
     Base.metadata.drop_all(op.get_bind())

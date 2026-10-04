@@ -15,7 +15,38 @@ from app.ui.pages.kpi_overview import (
     _month_range,
     _prior_same_length_week,
     _prior_same_length_month,
+    _valid_kpi_periods,
 )
+
+
+def test_incomplete_or_invalid_kpi_data_is_rejected():
+    valid = {period: {"orders": 1, "revenue": 10.0, "aov": 10.0, "unique_customers": 1}
+             for period in ("day", "prior_day", "week", "prior_week", "month", "prior_month")}
+    assert _valid_kpi_periods(valid)
+    assert not _valid_kpi_periods({**valid, "day": {"orders": 1}})
+    assert not _valid_kpi_periods({**valid, "day": {**valid["day"], "revenue": float("nan")}})
+    assert not _valid_kpi_periods({**valid, "day": {**valid["day"], "orders": "0"}})
+
+
+def test_incomplete_kpi_response_displays_no_metrics():
+    from streamlit.testing.v1 import AppTest
+    script = '''
+import streamlit as st
+from app.ui.pages.kpi_overview import page_kpi_overview
+class Response:
+    status_code = 200
+    def __init__(self, data): self.data = data
+    def json(self): return self.data
+class Client:
+    def latest_order_date(self): return Response({"latest_order_date": "2026-09-27"})
+    def kpi_periods(self, anchor): return Response({"day": {"orders": 0}})
+st.session_state["client"] = Client()
+page_kpi_overview()
+'''
+    at = AppTest.from_string(script).run(timeout=15)
+    assert not at.exception
+    assert at.error
+    assert not at.metric
 
 
 def test_week_range_starts_monday():
@@ -72,3 +103,39 @@ def test_prior_same_length_month_single_day():
     prior_start, prior_end = _prior_same_length_month(this_start, this_end)
     assert prior_start == date(2026, 6, 1)
     assert prior_end == date(2026, 6, 1)
+
+
+# ── delta rendering semantics ────────────────────────────────────────────────
+
+def test_delta_never_inverts_colour_for_declines():
+    """A fall must stay red. Passing "inverse" for negatives painted it green."""
+    from app.ui.pages.kpi_overview import _delta_str
+
+    text, colour = _delta_str(97.0, 100.0)
+    assert text == "-3%"
+    assert colour == "normal", (
+        "declines must use Streamlit's sign-aware 'normal' colouring; "
+        "'inverse' flips a fall to green"
+    )
+
+
+def test_delta_signs_a_rise_explicitly():
+    from app.ui.pages.kpi_overview import _delta_str
+
+    assert _delta_str(112.0, 100.0) == ("+12%", "normal")
+    assert _delta_str(100.0, 100.0) == ("+0%", "normal")
+
+
+def test_delta_is_omitted_when_there_is_no_baseline():
+    """No prior period → no delta at all, not an arrow beside a placeholder."""
+    from app.ui.pages.kpi_overview import _delta_str
+
+    text, colour = _delta_str(42.0, 0.0)
+    assert text is None
+    assert colour == "off"
+
+
+def test_delta_honours_the_format_spec():
+    from app.ui.pages.kpi_overview import _delta_str
+
+    assert _delta_str(97.5, 100.0, ".1f")[0] == "-2.5%"

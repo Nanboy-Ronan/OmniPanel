@@ -1,10 +1,11 @@
 from __future__ import annotations
-from datetime import date, timedelta
+from datetime import date
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
+from app.ui import theme
 from app.ui._helpers import (
     PALETTE,
     _page_hero,
@@ -32,7 +33,7 @@ def _province_charts(overview: dict) -> None:
         prov_df = pd.DataFrame(top_prov)
         chart = (
             alt.Chart(prov_df)
-            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#0ea5e9")
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=theme.PRIMARY)
             .encode(
                 x=alt.X("province:N", sort="-y", title="省份"),
                 y=alt.Y("orders:Q", title="订单数"),
@@ -45,7 +46,7 @@ def _province_charts(overview: dict) -> None:
         uniq_df = pd.DataFrame(top_prov_unique)
         chart2 = (
             alt.Chart(uniq_df)
-            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#8b5cf6")
+            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=theme.PRIMARY)
             .encode(
                 x=alt.X("province:N", sort="-y", title="省份"),
                 y=alt.Y("customers:Q", title="独立客户数"),
@@ -135,7 +136,7 @@ def _repurchase_frequency_chart(freq_dist: dict, window_label: str) -> None:
                 "购买次数:N",
                 scale=alt.Scale(
                     domain=["仅 1 单", "2 单", "3 单", "4 单及以上"],
-                    range=["#94a3b8", "#60a5fa", "#3b82f6", "#1d4ed8"],
+                    range=list(theme.SEQUENTIAL),
                 ),
                 legend=None,
             ),
@@ -227,8 +228,12 @@ def analysis_old_vs_new_page(start: date, end: date, platform: str | None = None
         return
     overview = r_over.json() if r_over.status_code == 200 else None
     data = r.json()
-    old_df = pd.DataFrame(data["old"]["rows"])
-    new_df = pd.DataFrame(data["new"]["rows"])
+    # Read defensively: a 200 carrying an unexpected shape should degrade to the
+    # empty state rather than surfacing a traceback.
+    old_seg = data.get("old") or {}
+    new_seg = data.get("new") or {}
+    old_df = pd.DataFrame(old_seg.get("rows") or [])
+    new_df = pd.DataFrame(new_seg.get("rows") or [])
 
     if overview:
         m1, m2, m3, m4 = st.columns(4)
@@ -240,34 +245,28 @@ def analysis_old_vs_new_page(start: date, end: date, platform: str | None = None
     col_old, col_new = st.columns(2)
     with col_old:
         st.markdown(
-            f"<p style='color:{PALETTE['old']};font-weight:700;font-size:0.8rem;"
-            f"text-transform:uppercase;letter-spacing:0.07em;"
-            f"border-left:3px solid {PALETTE['old']};padding-left:0.6rem;margin-bottom:0.75rem;'>"
-            f"老客户</p>",
+            "<p class='segment-label segment-old'>老客户</p>",
             unsafe_allow_html=True,
         )
-        st.metric("订单数", data["old"]["count"])
-        st.metric("客户数", data["old"].get("customer_count", 0))
-        st.metric("营业额", f"¥{data['old']['paid_sum']:,.2f}")
+        st.metric("订单数", old_seg.get("count", 0))
+        st.metric("客户数", old_seg.get("customer_count", 0))
+        st.metric("营业额", f"¥{old_seg.get('paid_sum') or 0:,.2f}")
 
     with col_new:
         st.markdown(
-            f"<p style='color:{PALETTE['new']};font-weight:700;font-size:0.8rem;"
-            f"text-transform:uppercase;letter-spacing:0.07em;"
-            f"border-left:3px solid {PALETTE['new']};padding-left:0.6rem;margin-bottom:0.75rem;'>"
-            f"新客户</p>",
+            "<p class='segment-label segment-new'>新客户</p>",
             unsafe_allow_html=True,
         )
-        st.metric("订单数", data["new"]["count"])
-        st.metric("客户数", data["new"].get("customer_count", 0))
-        st.metric("营业额", f"¥{data['new']['paid_sum']:,.2f}")
+        st.metric("订单数", new_seg.get("count", 0))
+        st.metric("客户数", new_seg.get("customer_count", 0))
+        st.metric("营业额", f"¥{new_seg.get('paid_sum') or 0:,.2f}")
 
     # 新老客户对比柱状图
     chart_df = pd.DataFrame(
         {
             "客户类型": ["老客户", "新客户"],
-            "订单数": [data["old"]["count"], data["new"]["count"]],
-            "营业额": [data["old"]["paid_sum"], data["new"]["paid_sum"]],
+            "订单数": [old_seg.get("count", 0), new_seg.get("count", 0)],
+            "营业额": [old_seg.get("paid_sum") or 0, new_seg.get("paid_sum") or 0],
         }
     )
     bar = (
@@ -299,13 +298,13 @@ def analysis_old_vs_new_page(start: date, end: date, platform: str | None = None
         _province_charts(overview)
 
     # 原始订单表（折叠）
-    with st.expander(f"老客户订单（{data['old']['count']} 条）", expanded=False):
+    with st.expander(f"老客户订单（{old_seg.get('count', 0)} 条）", expanded=False):
         if old_df.empty:
             st.info("该时段无老客户订单。")
         else:
             st.dataframe(old_df, use_container_width=True)
 
-    with st.expander(f"新客户订单（{data['new']['count']} 条）", expanded=False):
+    with st.expander(f"新客户订单（{new_seg.get('count', 0)} 条）", expanded=False):
         if new_df.empty:
             st.info("该时段无新客户订单。")
         else:
@@ -318,13 +317,13 @@ def page_analysis() -> None:
 
     with st.container():
         col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 1, 1])
-        start = col1.date_input("开始日期", value=date.today() - timedelta(days=30), key="analysis_start")
-        end = col2.date_input("结束日期", value=date.today(), key="analysis_end")
+        start = col1.date_input("开始日期", key="analysis_start")
+        end = col2.date_input("结束日期", key="analysis_end")
         platform_options = ["全部", "youzan", "jd", "tmall"]
-        selected_platform = col3.selectbox("平台", platform_options, index=0, key="analysis_platform")
-        col4.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
+        selected_platform = col3.selectbox("平台", platform_options, key="analysis_platform")
+        col4.markdown("<div class='field-spacer'></div>", unsafe_allow_html=True)
         mode = col4.radio("视图", ["概览", "新老客户"], horizontal=False, key="analysis_mode", label_visibility="collapsed")
-        col5.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
+        col5.markdown("<div class='field-spacer'></div>", unsafe_allow_html=True)
         if col5.button("保存筛选", use_container_width=True, help="将当前筛选条件保存为视图"):
             st.session_state["_save_view_open"] = True
 
@@ -352,6 +351,7 @@ def page_analysis() -> None:
                     r_sv = client.save_query(view_name.strip(), filters, is_shared)
                     if r_sv.status_code == 201:
                         st.success(f"视图「{view_name.strip()}」已保存。")
+                        st.session_state.pop("saved_views_cache", None)
                         st.session_state["_save_view_open"] = False
                         st.rerun()
                     else:
@@ -360,7 +360,7 @@ def page_analysis() -> None:
                 st.session_state["_save_view_open"] = False
                 st.rerun()
 
-    st.markdown(f"<p style='color:#475569;font-size:0.82rem;margin-bottom:0.5rem'>当前视图：<b>{mode}</b></p>", unsafe_allow_html=True)
+    st.markdown(f"<p class='view-note'>当前视图：<b>{mode}</b></p>", unsafe_allow_html=True)
     if mode == "概览":
         analysis_overview_page(start, end, pf)
     else:

@@ -4,7 +4,6 @@ import asyncio
 import datetime as dt
 import logging
 import os
-import tempfile
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -17,11 +16,11 @@ from ...db import get_session
 from ...db.etl.pgy import parse_pgy_xlsx, upsert_pgy_notes
 from ...db.models import XhsAccount, PgyNote
 from ...utils.logger import log_operation
+from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/pgy", tags=["pugongying"])
 
 _logger = logging.getLogger(__name__)
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 @router.post("/upload")
 async def upload_pgy(
@@ -42,18 +41,7 @@ async def upload_pgy(
 
     tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            total = 0
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > _MAX_UPLOAD_BYTES:
-                    os.unlink(tmp.name)
-                    raise HTTPException(status_code=413, detail="文件过大（上限 50 MB）。")
-                tmp.write(chunk)
-            tmp_path = tmp.name
+        tmp_path = await save_upload(file, ext or ".csv")
 
         def _process(path: str) -> dict:
             df_raw = pd.read_excel(path, header=None, dtype=str)

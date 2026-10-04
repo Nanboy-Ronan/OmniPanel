@@ -6,7 +6,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from app.ui._helpers import _page_hero, _styled_chart, show_api_error
+from app.ui import theme
+from app.ui._helpers import _page_hero, _styled_chart, show_api_error, fetch_all_posts, data_cache_expired, mark_data_cache_fetched, data_cache_caption
 from app.utils.topic_matching import match_article_topics
 
 _CONTENT_TYPES = {"文章": "article", "问答": "qa"}
@@ -57,7 +58,7 @@ def _generate_insight(df: pd.DataFrame, label: str, content_type: str) -> str:
 
     top = df.sort_values("reads", ascending=False).iloc[0]
 
-    insight = "**🤖 数据洞察结论**：\n"
+    insight = "**数据洞察结论**：\n"
     insight += (
         f"- **大盘表现**：共发布 {total} 条{label}，"
         f"累计阅读 {total_reads:,} 次，均篇阅读 {avg_reads:,.0f} 次。\n"
@@ -89,17 +90,18 @@ def _render_tab(client, label: str, content_type: str) -> None:
             key=f"zhihu_uploader_{content_type}",
         )
         submitted = st.form_submit_button("上传")
-    if submitted and uploaded is None:
-        st.warning("请先选择文件。")
-    elif submitted:
-        with st.spinner("上传中…"):
-            r = client.upload_zhihu(uploaded.read(), uploaded.name, content_type)
-        if r.status_code == 200:
-            data = r.json()
-            st.success(f"上传成功：共处理 **{data['total']}** 条{label}。")
-            st.session_state.pop(f"zhihu_cache_{content_type}", None)
+    if submitted:
+        if uploaded is None:
+            st.warning("请先选择文件。")
         else:
-            show_api_error(r, "上传失败。")
+            with st.spinner("上传中…"):
+                r = client.upload_zhihu(uploaded.read(), uploaded.name, content_type)
+            if r.status_code == 200:
+                data = r.json()
+                st.success(f"上传成功：共处理 **{data.get('total', 0)}** 条{label}。")
+                st.session_state.pop(f"zhihu_cache_{content_type}", None)
+            else:
+                show_api_error(r, "上传失败。")
 
     st.markdown("---")
 
@@ -119,19 +121,36 @@ def _render_tab(client, label: str, content_type: str) -> None:
         return
 
     cache_key = f"zhihu_cache_{content_type}_{start}_{end}"
+    refresh = st.button("刷新数据", key=f"zhihu_refresh_{content_type}")
     if (
+        refresh or data_cache_expired(cache_key)
+        or
         st.session_state.get(f"_zhihu_cache_key_{content_type}") != cache_key
         or f"zhihu_cache_{content_type}" not in st.session_state
+        or f"zhihu_overview_cache_{content_type}" not in st.session_state
     ):
-        r = client.zhihu_posts(content_type=content_type,
-                               start_date=str(start), end_date=str(end), limit=500)
-        if r.status_code != 200:
-            show_api_error(r)
+        posts, error = fetch_all_posts(
+            client.zhihu_posts, content_type=content_type,
+            start_date=str(start), end_date=str(end),
+        )
+        if error is not None:
+            show_api_error(error)
             return
-        st.session_state[f"zhihu_cache_{content_type}"] = r.json()
+        overview_response = client.zhihu_overview(
+            content_type=content_type, start_date=str(start), end_date=str(end)
+        )
+        if overview_response.status_code != 200:
+            show_api_error(overview_response)
+            return
+        st.session_state[f"zhihu_cache_{content_type}"] = posts
+        st.session_state[f"zhihu_overview_cache_{content_type}"] = overview_response.json()
         st.session_state[f"_zhihu_cache_key_{content_type}"] = cache_key
+        mark_data_cache_fetched(cache_key)
+
+    data_cache_caption(cache_key)
 
     posts = st.session_state[f"zhihu_cache_{content_type}"]
+    overview = st.session_state[f"zhihu_overview_cache_{content_type}"]
     if not posts:
         st.info("该时间段内暂无数据，请先上传文件。")
         return
@@ -147,12 +166,12 @@ def _render_tab(client, label: str, content_type: str) -> None:
         st.info(_generate_insight(df, label, content_type))
 
         metric_cols = st.columns(5 if content_type == "qa" else 4)
-        metric_cols[0].metric("内容数", len(df))
-        metric_cols[1].metric("总阅读", f"{df['reads'].sum():,.0f}")
-        metric_cols[2].metric("总点赞", f"{df['likes'].sum():,.0f}")
-        metric_cols[3].metric("总收藏", f"{df['collects'].sum():,.0f}")
+        metric_cols[0].metric("内容数", overview["posts"])
+        metric_cols[1].metric("总阅读", f"{overview['reads']:,.0f}")
+        metric_cols[2].metric("总点赞", f"{overview['likes']:,.0f}")
+        metric_cols[3].metric("总收藏", f"{overview['collects']:,.0f}")
         if content_type == "qa" and "plays" in df.columns:
-            metric_cols[4].metric("总播放", f"{df['plays'].sum():,.0f}")
+            metric_cols[4].metric("总播放", f"{overview['plays']:,.0f}")
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -160,7 +179,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
             st.altair_chart(
                 _styled_chart(
                     alt.Chart(top_reads)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("reads:Q", title="阅读量"),
                         y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=220)),
@@ -171,7 +190,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
                             alt.Tooltip("collects:Q", title="收藏",  format=","),
                         ],
                     )
-                    .properties(title=f"阅读量 Top 10", height=300)
+                    .properties(title="阅读量 Top 10", height=300)
                 ),
                 use_container_width=True,
             )
@@ -180,7 +199,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
             st.altair_chart(
                 _styled_chart(
                     alt.Chart(top_collects)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#8b5cf6")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("collects:Q", title="收藏数"),
                         y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=220)),
@@ -233,8 +252,8 @@ def _render_tab(client, label: str, content_type: str) -> None:
                 .properties(height=400, title="收藏率 × 点赞率（气泡大小=阅读量）")
                 .interactive()
             )
-            vline = alt.Chart(pd.DataFrame({"x": [avg_cr]})).mark_rule(strokeDash=[4, 4], color="#94a3b8").encode(x="x:Q")
-            hline = alt.Chart(pd.DataFrame({"y": [avg_lr]})).mark_rule(strokeDash=[4, 4], color="#94a3b8").encode(y="y:Q")
+            vline = alt.Chart(pd.DataFrame({"x": [avg_cr]})).mark_rule(strokeDash=[4, 4], color=theme.INK_MUTED).encode(x="x:Q")
+            hline = alt.Chart(pd.DataFrame({"y": [avg_lr]})).mark_rule(strokeDash=[4, 4], color=theme.INK_MUTED).encode(y="y:Q")
             st.altair_chart(_styled_chart(scatter + vline + hline), use_container_width=True)
             st.caption(f"虚线：收藏率均值 {avg_cr:.2%}，点赞率均值 {avg_lr:.2%}")
 
@@ -244,7 +263,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
                 st.altair_chart(
                     _styled_chart(
                         alt.Chart(top_cr)
-                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#8b5cf6")
+                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                         .encode(
                             x=alt.X("collect_rate:Q", title="收藏率", axis=alt.Axis(format="%")),
                             y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=220)),
@@ -264,7 +283,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
                 st.altair_chart(
                     _styled_chart(
                         alt.Chart(top_lr)
-                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+                        .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                         .encode(
                             x=alt.X("like_rate:Q", title="点赞率", axis=alt.Axis(format="%")),
                             y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=220)),
@@ -285,7 +304,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
             st.markdown("### 综合互动率分布")
             hist = (
                 alt.Chart(qualified)
-                .mark_bar(color="#10b981", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                .mark_bar(color=theme.PRIMARY, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                 .encode(
                     x=alt.X("engagement_rate:Q", bin=alt.Bin(maxbins=20),
                              title="综合互动率（点赞+评论+收藏+分享 / 阅读）",
@@ -305,7 +324,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
         st.markdown("### 话题标签分析")
         st.caption("自定义关键词组，系统将按标题匹配归类，对比各话题的流量与互动表现。")
 
-        with st.expander("⚙️ 设置话题关键词", expanded=True):
+        with st.expander("设置话题关键词", expanded=True):
             n_topics = st.number_input(
                 "话题数量", min_value=1, max_value=6, value=3, step=1,
                 key=f"zhihu_topic_n_{content_type}",
@@ -351,7 +370,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
             with col_t1:
                 avg_read_chart = (
                     alt.Chart(grouped)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("均篇阅读:Q", title="均篇阅读量"),
                         y=alt.Y("话题:N", sort="-x", title=""),
@@ -369,7 +388,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
             with col_t2:
                 avg_engagement_chart = (
                     alt.Chart(grouped)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#10b981")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("均篇点赞:Q", title="均篇点赞量"),
                         y=alt.Y("话题:N", sort="-x", title=""),
@@ -424,11 +443,11 @@ def _render_tab(client, label: str, content_type: str) -> None:
 
             st.markdown("### 发布量与阅读趋势")
             base = alt.Chart(trend_df).encode(x=alt.X("发布日期:T", title="发布日期"))
-            bar  = base.mark_bar(opacity=0.5, color="#94a3b8", size=12).encode(
+            bar  = base.mark_bar(opacity=0.5, color=theme.INK_MUTED, size=12).encode(
                 y=alt.Y("内容数:Q", title="发文数", axis=alt.Axis(grid=False))
             )
             line = base.mark_line(
-                point=alt.OverlayMarkDef(filled=True, size=50), color="#0ea5e9", strokeWidth=2.5
+                point=alt.OverlayMarkDef(filled=True, size=50), color=theme.PRIMARY, strokeWidth=2.5
             ).encode(y=alt.Y("总阅读:Q", title="总阅读"))
             st.altair_chart(
                 _styled_chart(
@@ -459,7 +478,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
                     st.altair_chart(
                         _styled_chart(
                             alt.Chart(wd_df)
-                            .mark_bar(color="#0ea5e9", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                            .mark_bar(color=theme.PRIMARY, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                             .encode(
                                 x=alt.X("weekday_cn:N", sort=_WEEKDAY_ORDER, title="星期"),
                                 y=alt.Y("内容数:Q", title="发文数"),
@@ -476,7 +495,7 @@ def _render_tab(client, label: str, content_type: str) -> None:
                     st.altair_chart(
                         _styled_chart(
                             alt.Chart(wd_df)
-                            .mark_bar(color="#8b5cf6", cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+                            .mark_bar(color=theme.PRIMARY, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
                             .encode(
                                 x=alt.X("weekday_cn:N", sort=_WEEKDAY_ORDER, title="星期"),
                                 y=alt.Y("均阅读:Q", title="平均阅读量"),

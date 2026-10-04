@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -26,11 +27,13 @@ if settings.app_timezone in ("Asia/Shanghai", "Asia/Beijing", "PRC", "CST"):
     except AttributeError:
         pass  # Windows — TZ env-var has no effect via tzset
 
-from .db import Base, engine
+from .db import Base, engine, sync_engine
+from . import db as db_module
+from .db.maintenance import recover_uploads
 import app.db.models  # noqa: F401 — register models with Base.metadata
 from .auth import fastapi_users, auth_backend, UserRead, UserCreate
-from .scheduler import monthly_backup_loop, wechat_auto_sync_loop, watchdog_loop, weekly_report_loop
-from .utils.leader import try_become_leader
+from .scheduler import daily_backup_loop, monthly_backup_loop, wechat_auto_sync_loop, watchdog_loop, weekly_report_loop
+from .utils.leader import try_become_leader, release as release_leader
 from .utils.rate_limiter import login_rate_limiter, get_client_ip
 
 # ─── Routers ────────────────────────────────────────────────────────────────
@@ -48,25 +51,85 @@ from .views.collector_admin import router as collector_admin_router  # /admin/co
 from .views.register      import router as register_router       # POST /auth/register
 from .views.wecom_auth    import router as wecom_auth_router     # Enterprise WeChat OAuth
 from .views.saved_queries import router as saved_queries_router  # GET/POST/DELETE /saved-queries/
+from .views.data_freshness import router as data_freshness_router
 from .views.reports import router as reports_router, admin_router as reports_admin_router  # /reports/weekly, /admin/reports/weekly/run
 
 # ─── Lifespan ───────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if try_become_leader():
+    async def upload_recovery_loop():
+        from .views.ecommerce.upload import _run_ingestion
+        while True:
+            async with db_module.AsyncSessionLocal() as session:
+                jobs = await recover_uploads(session)
+            for path, filename, user_id, digest, batch_id in jobs:
+                await _run_ingestion(path, filename, user_id, digest, batch_id)
+            await asyncio.sleep(60)
+
+    async def supervise(name, factory):
+        while True:
+            try:
+                app.state.background_status[name] = "running"
+                await factory()
+                raise RuntimeError(f"{name} loop returned unexpectedly")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                app.state.background_status[name] = "restarting"
+                logging.exception("Background loop %s failed; retrying", name)
+                await asyncio.sleep(30)
+
+    async def run_leader_tasks():
+        while not try_become_leader():
+            await asyncio.sleep(30)
+        app.state.background_leader = True
+        tasks = [asyncio.create_task(supervise("upload_recovery", upload_recovery_loop))]
         if not settings.rap_disable_monthly_backup:
-            asyncio.create_task(monthly_backup_loop(settings))
+            tasks.append(asyncio.create_task(supervise("daily_backup", lambda: daily_backup_loop(settings))))
+            tasks.append(asyncio.create_task(supervise("backup", lambda: monthly_backup_loop(settings))))
         if settings.wechat_auto_sync_enabled:
-            asyncio.create_task(wechat_auto_sync_loop(settings))
+            tasks.append(asyncio.create_task(supervise("wechat_sync", lambda: wechat_auto_sync_loop(settings))))
         if settings.watchdog_enabled:
-            asyncio.create_task(watchdog_loop(settings))
+            tasks.append(asyncio.create_task(supervise("watchdog", lambda: watchdog_loop(settings))))
         if settings.weekly_report_enabled:
-            asyncio.create_task(weekly_report_loop(settings))
-    yield
+            tasks.append(asyncio.create_task(supervise("weekly_report", lambda: weekly_report_loop(settings))))
+        try:
+            if tasks:
+                await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    app.state.background_status = {}
+    app.state.background_leader = False
+    leader_task = asyncio.create_task(run_leader_tasks())
+    try:
+        yield
+    finally:
+        leader_task.cancel()
+        await asyncio.gather(leader_task, return_exceptions=True)
+        release_leader()
+        await engine.dispose()
+        await asyncio.to_thread(sync_engine.dispose)
 
 # ─── FastAPI instance ───────────────────────────────────────────────────────
-app = FastAPI(title="RPA internal API", lifespan=lifespan)
+app = FastAPI(title="OmniPanel API", lifespan=lifespan)
+
+
+@app.exception_handler(HTTPException)
+async def safe_http_errors(request: Request, exc: HTTPException):
+    if exc.status_code != 500:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
+    error_id = uuid.uuid4().hex[:12]
+    logging.error("request_failed id=%s path=%s status=%s detail=%s", error_id, request.url.path, exc.status_code, exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": "服务器处理失败，请稍后重试。", "request_id": error_id},
+        headers=exc.headers,
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -151,6 +214,7 @@ app.include_router(wecom_auth_router)
 app.include_router(upload_router)        # /upload/
 app.include_router(analysis_router)      # /analysis/
 app.include_router(orders_all_router)    # /orders_all/
+app.include_router(data_freshness_router) # /data/freshness
 app.include_router(identity_router)      # /analysis/identity/clusters
 app.include_router(admin_router)         # /admin/clear-db
 app.include_router(collector_admin_router)  # /admin/collector/*
@@ -174,6 +238,10 @@ async def _check_db() -> None:
 
 async def _check_redis() -> str:
     """Ping Redis. Returns 'ok' or 'unavailable' (never raises)."""
+    from .utils.cache import _RedisCache, analysis_cache
+
+    if not isinstance(analysis_cache, _RedisCache):
+        return "unavailable"
     try:
         import redis.asyncio as _aioredis  # optional dep — lazy to avoid hard dependency
         r = _aioredis.from_url(settings.redis_url, socket_connect_timeout=1)
@@ -201,10 +269,12 @@ async def health():
     redis_status = await _check_redis()
 
     ok = db_status == "ok"
+    background = getattr(app.state, "background_status", {})
     body = {
         "status": "ok" if ok else "degraded",
         "database": db_status,
         "redis": redis_status,
+        "background": background if getattr(app.state, "background_leader", False) else "other_worker",
     }
     return JSONResponse(content=body, status_code=200 if ok else 503)
 

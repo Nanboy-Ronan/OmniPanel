@@ -67,7 +67,7 @@ def test_media_sync_upserts_posts_and_metrics(client, tokens, monkeypatch):
     monkeypatch.setenv("WECHAT_OFFICIAL_APP_SECRET", "secret-env")
     monkeypatch.setenv("WECHAT_OFFICIAL_ACCOUNT_NAME", "Env Account")
 
-    import app.views.media.routes as media_view
+    import app.services.wechat as media_view
 
     class FakeClient:
         def __init__(self, app_id, app_secret):
@@ -154,7 +154,7 @@ def test_media_metrics_use_latest_snapshot_not_sum(client, tokens, monkeypatch):
     monkeypatch.setenv("WECHAT_OFFICIAL_APP_SECRET", "secret-env")
     monkeypatch.setenv("WECHAT_OFFICIAL_ACCOUNT_NAME", "Env Account")
 
-    import app.views.media.routes as media_view
+    import app.services.wechat as media_view
 
     class FakeClient:
         def __init__(self, app_id, app_secret):
@@ -233,7 +233,7 @@ def test_media_sync_without_account_id_syncs_all_configured_accounts(client, tok
     monkeypatch.setenv("WECHAT_APP_SECRET_3", "secret-c")
     monkeypatch.setenv("WECHAT_ACCOUNT_NAME_3", "Subscription C")
 
-    import app.views.media.routes as media_view
+    import app.services.wechat as media_view
 
     class FakeClient:
         def __init__(self, app_id, app_secret):

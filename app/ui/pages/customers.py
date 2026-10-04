@@ -1,10 +1,10 @@
 from __future__ import annotations
-from datetime import date, timedelta
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
+from app.ui import theme
 from app.ui._helpers import PALETTE, _page_hero, _styled_chart, show_api_error
 
 _PAGE_SIZE = 2000
@@ -32,11 +32,11 @@ def page_customers() -> None:
 
     _page_hero("客户管理")
     col1, col2, col3, col4 = st.columns([2, 2, 1, 2])
-    start = col1.date_input("开始日期", value=date.today() - timedelta(days=30), key="cust_start")
-    end = col2.date_input("结束日期", value=date.today(), key="cust_end")
-    min_orders = col3.number_input("最少订单数", min_value=1, value=1, key="cust_min_orders")
+    start = col1.date_input("开始日期", key="cust_start")
+    end = col2.date_input("结束日期", key="cust_end")
+    min_orders = col3.number_input("最少订单数", min_value=1, key="cust_min_orders")
     platform_options = ["全部", "youzan", "jd", "tmall"]
-    selected_platform = col4.selectbox("平台", platform_options, index=0, key="cust_platform")
+    selected_platform = col4.selectbox("平台", platform_options, key="cust_platform")
     pf = None if selected_platform == "全部" else selected_platform
     if start > end:
         st.error("开始日期不能晚于结束日期。")
@@ -93,7 +93,7 @@ def page_customers() -> None:
         "buyer_nick", "coupon_name", "distributor",
     ]
     df_display = df[[c for c in display_cols if c in df.columns]]
-    export_col.markdown("<div style='height:1.85rem'></div>", unsafe_allow_html=True)
+    export_col.markdown("<div class='field-spacer'></div>", unsafe_allow_html=True)
     export_col.download_button(
         "导出 CSV",
         df_display.to_csv(index=False).encode("utf-8-sig"),
@@ -125,7 +125,7 @@ def page_customers() -> None:
             left.dataframe(counts, use_container_width=True, hide_index=True)
             prov_chart = (
                 alt.Chart(counts)
-                .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color="#0ea5e9")
+                .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4, color=theme.PRIMARY)
                 .encode(
                     x=alt.X("province:N", sort="-y", title="省份"),
                     y=alt.Y("customers:Q", title="客户数"),
@@ -160,7 +160,8 @@ def page_customers() -> None:
         return
 
     data = r2.json()
-    orders_df = pd.DataFrame(data["orders"])
+    # See analysis.py — tolerate a 200 whose shape is not what we expect.
+    orders_df = pd.DataFrame(data.get("orders") or [])
     order_cols = [
         "order_date", "sku", "quantity", "price",
         "receiver", "receiver_phone", "province", "area",
@@ -169,8 +170,8 @@ def page_customers() -> None:
     orders_df = orders_df[[c for c in order_cols if c in orders_df.columns]]
 
     m1, m2 = st.columns(2)
-    m1.metric("订单数", data["count"])
-    m2.metric("累计消费", f"¥{data['total_spend']:,.2f}")
+    m1.metric("订单数", data.get("count", 0))
+    m2.metric("累计消费", f"¥{data.get('total_spend') or 0:,.2f}")
 
     st.dataframe(
         orders_df,

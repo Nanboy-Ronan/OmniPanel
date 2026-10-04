@@ -6,12 +6,11 @@ import datetime as dt
 import json
 import logging
 import os
-import tempfile
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import current_active_user, current_admin_user, current_analyst_user
@@ -24,12 +23,13 @@ from ...db.etl.xhs_overview import (
     upsert_xhs_daily_metrics,
 )
 from ...db.models import XhsAccount, XhsPost
+from ...config import settings
 from ...utils.logger import log_operation
+from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/xhs", tags=["xhs"])
 
 _logger = logging.getLogger(__name__)
-_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 
 # ── Account CRUD ──────────────────────────────────────────────────────────────
@@ -144,18 +144,7 @@ async def upload_xhs(
 
     tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            total = 0
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > _MAX_UPLOAD_BYTES:
-                    os.unlink(tmp.name)
-                    raise HTTPException(status_code=413, detail="文件过大（上限 50 MB）。")
-                tmp.write(chunk)
-            tmp_path = tmp.name
+        tmp_path = await save_upload(file, ext or ".csv")
 
         def _process(path: str) -> dict:
             df_raw = pd.read_excel(path, header=None, dtype=str)
@@ -207,7 +196,9 @@ async def upload_xhs_overview(
     if acc is None:
         raise HTTPException(status_code=404, detail=f"XHS account {account_id} not found")
 
-    raw = await file.read()
+    raw = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
+    if len(raw) > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"文件过大（上限 {settings.max_upload_mb} MB）。")
     try:
         payload = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -239,22 +230,63 @@ async def upload_xhs_overview(
 
 # ── Post listing ──────────────────────────────────────────────────────────────
 
-@router.get("/posts")
-async def list_xhs_posts(
+class XhsOverview(BaseModel):
+    posts: int
+    impressions: int
+    views: int
+    engagement: int
+    new_followers: int
+    avg_cover_click_rate: float
+
+
+@router.get("/overview", response_model=XhsOverview)
+async def xhs_overview(
     account_id: int | None = Query(None),
     start_date: dt.date | None = Query(None),
     end_date: dt.date | None = Query(None),
-    limit: int = Query(200, ge=1, le=1000),
     _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
 ):
-    stmt = select(XhsPost).order_by(XhsPost.publish_date.desc()).limit(limit)
+    stmt = select(
+        func.count(XhsPost.id),
+        func.sum(XhsPost.impressions),
+        func.sum(XhsPost.views),
+        func.sum(func.coalesce(XhsPost.likes, 0) + func.coalesce(XhsPost.comments, 0)
+                 + func.coalesce(XhsPost.collects, 0) + func.coalesce(XhsPost.shares, 0)),
+        func.sum(XhsPost.new_followers),
+        func.avg(func.coalesce(XhsPost.cover_click_rate, 0)),
+    )
     if account_id is not None:
         stmt = stmt.where(XhsPost.account_id == account_id)
     if start_date:
         stmt = stmt.where(XhsPost.publish_date >= start_date)
     if end_date:
         stmt = stmt.where(XhsPost.publish_date <= end_date)
+    posts, impressions, views, engagement, followers, cover_rate = (await session.execute(stmt)).one()
+    return XhsOverview(
+        posts=posts or 0, impressions=impressions or 0, views=views or 0,
+        engagement=engagement or 0, new_followers=followers or 0,
+        avg_cover_click_rate=float(cover_rate or 0),
+    )
+
+@router.get("/posts")
+async def list_xhs_posts(
+    account_id: int | None = Query(None),
+    start_date: dt.date | None = Query(None),
+    end_date: dt.date | None = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    _u=Depends(current_analyst_user),
+    session: AsyncSession = Depends(get_session),
+):
+    stmt = select(XhsPost).order_by(XhsPost.publish_date.desc(), XhsPost.id.desc())
+    if account_id is not None:
+        stmt = stmt.where(XhsPost.account_id == account_id)
+    if start_date:
+        stmt = stmt.where(XhsPost.publish_date >= start_date)
+    if end_date:
+        stmt = stmt.where(XhsPost.publish_date <= end_date)
+    stmt = stmt.offset(offset).limit(limit)
     rows = (await session.execute(stmt)).scalars().all()
     return [
         {

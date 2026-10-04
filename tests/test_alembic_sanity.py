@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 import psycopg2
@@ -194,3 +195,31 @@ class TestAlembicUpgrade:
         assert result.returncode == 0, (
             f"alembic check reported pending migrations:\n{result.stdout}\n{result.stderr}"
         )
+
+    def test_upgrade_from_0014_preserves_legacy_xhs_posts(self, fresh_pg_db):
+        async_url, sync_url, _ = fresh_pg_db
+        # The fixture is shared by this module, so establish the same start
+        # state whether this test runs alone or after the other upgrade tests.
+        result = _alembic(["upgrade", "head"], async_url)
+        assert result.returncode == 0, result.stderr
+        result = _alembic(["downgrade", "0014_add_xhs_account_overview"], async_url)
+        assert result.returncode == 0, result.stderr
+        # Older create_all-managed databases could have nullable account IDs.
+        with closing(psycopg2.connect(sync_url)) as conn:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("ALTER TABLE xhs_posts ALTER COLUMN account_id DROP NOT NULL")
+                    cur.execute(
+                        "INSERT INTO xhs_posts (title, publish_date) VALUES (%s, %s)",
+                        ("legacy note", "2026-01-01"),
+                    )
+        result = _alembic(["upgrade", "head"], async_url)
+        assert result.returncode == 0, result.stderr
+        with closing(psycopg2.connect(sync_url)) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT a.name FROM xhs_posts AS p
+                    JOIN xhs_accounts AS a ON a.id = p.account_id
+                    WHERE p.title = 'legacy note'
+                """)
+                assert cur.fetchone() == ("未归属历史笔记",)

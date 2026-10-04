@@ -419,7 +419,7 @@ class TestRunCollectFailureClassification:
         assert "小红书·阳光严选" in alerts[0]
 
     def test_login_failure_alerts_and_returns_nonzero(self, sessions, _fake_bookkeeping, alerts, monkeypatch):
-        import app.ui.api_client as api_client_mod
+        import app.api_client as api_client_mod
 
         class _FailingAPIClient:
             def __init__(self, base_url=None):
@@ -647,7 +647,7 @@ class TestRunVerify:
         assert "未找到登录态文件" in alerts[0]
 
     def test_login_failure_alerts_and_returns_nonzero(self, sessions, _fake_bookkeeping, alerts, monkeypatch):
-        import app.ui.api_client as api_client_mod
+        import app.api_client as api_client_mod
 
         class _FailingAPIClient:
             def __init__(self, base_url=None):

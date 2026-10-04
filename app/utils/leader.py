@@ -38,7 +38,7 @@ def default_lock_path() -> str:
     override = os.getenv("RAP_LEADER_LOCK_PATH")
     if override:
         return override
-    return os.path.join(tempfile.gettempdir(), "rpa-leader.lock")
+    return os.path.join(tempfile.gettempdir(), "dashboard-leader.lock")
 
 
 def try_become_leader(lock_path: str | None = None) -> bool:

@@ -120,44 +120,30 @@ SCHEMA_DOC = """\
   id            integer   主键
   order_date    date      下单 / 付款日期
   order_id      text      原始平台订单号
-  customer_key  text      客户标识。有赞=收货人手机号；京东/天猫=收货地址（注意：同一人不同地址会算作不同客户）
   platform      text      取值只有 'youzan' | 'jd' | 'tmall'
   sku           text      商品 SKU 名称
   quantity      integer   购买数量
   price         numeric   订单金额，单位人民币（¥）
-  receiver          text  收货人姓名
-  receiver_phone    text  收货人手机号
   province          text  省份
   area              text  城市 / 地区
-  full_address      text  完整收货地址
-  buyer_nick        text  买家昵称
   coupon_name       text  使用的优惠券
   distributor       text  分销员 / 导购
-
-表 customers（客户身份索引，不含金额统计）:
-  customer_key      text  主键
-  platform          text  来源平台
-  first_order_date  date  首次下单日期
 
 表 upload_batches（每次上传一行）:
   id, filename, platform, uploaded_at(timestamp), row_count,
   inserted_orders, duplicate_rows, invalid_rows, status
 
-表 operation_log（操作审计日志）:
-  id, user_id(uuid), action(text), timestamp, detail(text, JSON)
-
 表 xhs_posts（小红书笔记指标，按 (title, publish_date) 去重）:
   id, title, publish_date(date), genre, impressions(曝光), views(观看量),
   likes(点赞), comments(评论), collects(收藏), new_followers(涨粉), shares(分享)
 
-原始平台表 youzan_orders / jd_orders / tmall_orders 保留源文件原始列，一般无需查询。
+只能查询 reporting 模式提供的脱敏业务视图。用户、密钥、客户标识和审计日志不可查询。
 
 口径要点:
-- 营业额 = SUM(price)；客单价 = AVG(price)；独立客户数 = COUNT(DISTINCT customer_key)。
+- 营业额 = SUM(price)；订单均价 = AVG(price)。
 - 平台过滤用 platform IN ('youzan','jd','tmall')，不要凭空构造其它平台值。
 - 涉及金额时用 ROUND(SUM(price)::numeric, 2) 保留两位。
 - "最近 N 天" 用 order_date >= CURRENT_DATE - INTERVAL 'N days'。
-- 复购客户 = 同一 customer_key 订单数 >= 2。
 """
 
 SYSTEM_PROMPT = f"""你是一个把中文业务问题转换为 PostgreSQL 查询的助手。

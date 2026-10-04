@@ -310,3 +310,52 @@ async def latest_order_date(
     result_data = {"latest_order_date": str(latest) if latest else None}
     await analysis_cache.set(cache_key, result_data)
     return result_data
+
+
+@router.get("/kpi-periods", summary="Six KPI comparison periods in one query")
+async def kpi_periods(
+    anchor: dt.date = Query(...),
+    _u=Depends(current_analyst_user),
+    session: AsyncSession = Depends(get_session),
+):
+    week_start = anchor - dt.timedelta(days=anchor.weekday())
+    prior_week_start = week_start - dt.timedelta(days=7)
+    prior_week_end = prior_week_start + (anchor - week_start)
+    month_start = anchor.replace(day=1)
+    prior_month_end = month_start - dt.timedelta(days=1)
+    prior_month_start = prior_month_end.replace(day=1)
+    prior_month_same_end = min(
+        prior_month_start + (anchor - month_start), prior_month_end,
+    )
+    windows = {
+        "day": (anchor, anchor),
+        "prior_day": (anchor - dt.timedelta(days=1), anchor - dt.timedelta(days=1)),
+        "week": (week_start, anchor),
+        "prior_week": (prior_week_start, prior_week_end),
+        "month": (month_start, anchor),
+        "prior_month": (prior_month_start, prior_month_same_end),
+    }
+    columns = []
+    for name, (start, end) in windows.items():
+        in_window = Order.order_date.between(start, end)
+        columns.extend((
+            func.count(case((in_window, Order.id))).label(f"{name}_orders"),
+            func.coalesce(func.sum(case((in_window, Order.price), else_=0)), 0).label(f"{name}_revenue"),
+            func.avg(case((in_window, Order.price))).label(f"{name}_aov"),
+            func.count(func.distinct(case((in_window, Order.customer_key)))).label(f"{name}_customers"),
+        ))
+    first_date = min(start for start, _ in windows.values())
+    row = (await session.execute(
+        select(*columns).where(Order.order_date.between(first_date, anchor))
+    )).one()._mapping
+    result = {}
+    for name in windows:
+        orders = int(row[f"{name}_orders"] or 0)
+        revenue = float(row[f"{name}_revenue"] or 0)
+        result[name] = {
+            "orders": orders,
+            "revenue": revenue,
+            "aov": float(row[f"{name}_aov"] or 0),
+            "unique_customers": int(row[f"{name}_customers"] or 0),
+        }
+    return result

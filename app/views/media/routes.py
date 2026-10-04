@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import date, timedelta
 from typing import Any
 
@@ -11,17 +10,19 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import current_admin_user, current_analyst_user
-from ...connectors.wechat_official import WeChatOfficialClient
 from ...db import get_session
 from ...db.models import (
     MediaAccount,
     MediaArticleTraffic,
     MediaPost,
     MediaPostMetricDaily,
-    MediaSyncRun,
     Order,
     XhsPost,
     ZhihuPost,
+)
+from ...services.wechat import (
+    WECHAT_PLATFORM, _wechat_env_accounts, _ensure_env_wechat_accounts,
+    _wechat_secret_for_account, _sync_one_wechat_account, _record_failed_wechat_sync,
 )
 from .analysis import aggregate_read_sources, compute_content_impact
 
@@ -29,75 +30,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/media", tags=["media"])
 
-WECHAT_PLATFORM = "wechat_official"
-
 
 class WeChatSyncRequest(BaseModel):
     start_date: date
     end_date: date
     account_id: int | None = None
-
-
-def _wechat_env_accounts() -> list[dict[str, str]]:
-    accounts: list[dict[str, str]] = []
-
-    legacy_app_id = os.getenv("WECHAT_OFFICIAL_APP_ID")
-    legacy_secret = os.getenv("WECHAT_OFFICIAL_APP_SECRET")
-    if legacy_app_id and legacy_secret:
-        accounts.append(
-            {
-                "name": os.getenv("WECHAT_OFFICIAL_ACCOUNT_NAME", "微信公众号"),
-                "app_id": legacy_app_id,
-                "app_secret": legacy_secret,
-            }
-        )
-
-    for idx in range(1, 11):
-        app_id = os.getenv(f"WECHAT_APP_ID_{idx}")
-        app_secret = os.getenv(f"WECHAT_APP_SECRET_{idx}")
-        if not app_id or not app_secret:
-            continue
-        accounts.append(
-            {
-                "name": os.getenv(f"WECHAT_ACCOUNT_NAME_{idx}", f"微信公众号 {idx}"),
-                "app_id": app_id,
-                "app_secret": app_secret,
-            }
-        )
-
-    deduped: dict[str, dict[str, str]] = {}
-    for account in accounts:
-        deduped[account["app_id"]] = account
-    return list(deduped.values())
-
-
-async def _ensure_env_wechat_accounts(session: AsyncSession) -> list[MediaAccount]:
-    accounts: list[MediaAccount] = []
-    for env_account in _wechat_env_accounts():
-        app_id = env_account["app_id"]
-
-        result = await session.execute(
-            select(MediaAccount).where(
-                MediaAccount.platform == WECHAT_PLATFORM,
-                MediaAccount.app_id == app_id,
-            )
-        )
-        account = result.scalar_one_or_none()
-        if account:
-            account.name = env_account["name"] or account.name
-            accounts.append(account)
-            continue
-
-        account = MediaAccount(
-            platform=WECHAT_PLATFORM,
-            name=env_account["name"],
-            app_id=app_id,
-            is_active=True,
-        )
-        session.add(account)
-        await session.flush()
-        accounts.append(account)
-    return accounts
 
 
 async def _get_account(session: AsyncSession, account_id: int | None = None) -> MediaAccount:
@@ -117,13 +54,6 @@ async def _get_account(session: AsyncSession, account_id: int | None = None) -> 
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="No WeChat Official Account credentials are configured",
     )
-
-
-def _wechat_secret_for_account(account: MediaAccount) -> str | None:
-    for env_account in _wechat_env_accounts():
-        if account.platform == WECHAT_PLATFORM and account.app_id == env_account["app_id"]:
-            return env_account["app_secret"]
-    return account.app_secret
 
 
 def _account_json(account: MediaAccount) -> dict[str, Any]:
@@ -147,133 +77,6 @@ async def list_media_accounts(
     return [_account_json(row) for row in result.scalars().all()]
 
 
-async def _sync_one_wechat_account(
-    session: AsyncSession,
-    account: MediaAccount,
-    start_date: date,
-    end_date: date,
-) -> dict[str, Any]:
-    if account.platform != WECHAT_PLATFORM:
-        raise HTTPException(status_code=400, detail="Only wechat_official accounts can be synced here")
-    app_secret = _wechat_secret_for_account(account)
-    if not account.app_id or not app_secret:
-        raise HTTPException(status_code=400, detail="WeChat app_id/app_secret missing for account")
-
-    run = MediaSyncRun(
-        account_id=account.id,
-        status="running",
-        start_date=start_date,
-        end_date=end_date,
-    )
-    session.add(run)
-    await session.flush()
-
-    try:
-        client = WeChatOfficialClient(account.app_id, app_secret)
-        logger.info("WeChat sync start: account=%s range=%s~%s", account.id, start_date, end_date)
-        rows = client.fetch_article_total_rows(start_date, end_date)
-        logger.info("WeChat sync fetched %d rows for account=%s", len(rows), account.id)
-        posts_seen: set[int] = set()
-        metrics_count = 0
-        for row in rows:
-            if not row.get("external_id") or not row.get("metric_date"):
-                continue
-            post = await _upsert_post(session, account, row)
-            posts_seen.add(post.id)
-            await _upsert_metric(session, post, row)
-            metrics_count += 1
-
-        run.status = "success"
-        run.posts_upserted = len(posts_seen)
-        run.metrics_upserted = metrics_count
-        # Same server-side clock as MediaSyncRun.started_at's
-        # server_default=func.now() — see app/collector/runs.py's identical fix.
-        run.finished_at = func.now()
-        return {
-            "account_id": account.id,
-            "account_name": account.name,
-            "status": run.status,
-            "posts_upserted": run.posts_upserted,
-            "metrics_upserted": run.metrics_upserted,
-        }
-    except Exception as exc:
-        run.status = "failed"
-        run.error_message = str(exc)
-        run.finished_at = func.now()
-        raise
-
-
-async def _upsert_post(
-    session: AsyncSession,
-    account: MediaAccount,
-    row: dict[str, Any],
-) -> MediaPost:
-    external_id = row["external_id"]
-    result = await session.execute(
-        select(MediaPost).where(
-            MediaPost.account_id == account.id,
-            MediaPost.external_id == external_id,
-        )
-    )
-    post = result.scalar_one_or_none()
-    if post is None:
-        post = MediaPost(
-            account_id=account.id,
-            platform=account.platform,
-            external_id=external_id,
-            title=row["title"],
-            publish_date=row.get("publish_date"),
-            url=row.get("url"),
-            author=row.get("author"),
-        )
-        session.add(post)
-        await session.flush()
-    else:
-        post.title = row["title"] or post.title
-        post.publish_date = row.get("publish_date") or post.publish_date
-        post.url = row.get("url") or post.url
-        post.author = row.get("author") or post.author
-    return post
-
-
-async def _upsert_metric(
-    session: AsyncSession,
-    post: MediaPost,
-    row: dict[str, Any],
-) -> None:
-    metric_date = row["metric_date"]
-    result = await session.execute(
-        select(MediaPostMetricDaily).where(
-            MediaPostMetricDaily.post_id == post.id,
-            MediaPostMetricDaily.metric_date == metric_date,
-        )
-    )
-    metric = result.scalar_one_or_none()
-    values = {
-        "read_user_count": row.get("read_user_count", 0),
-        "share_user_count": row.get("share_user_count", 0),
-        "add_to_fav_count": row.get("collection_user", 0),
-        "like_user": row.get("like_user"),
-        "comment_count": row.get("comment_count"),
-        "collection_user": row.get("collection_user"),
-        "read_avg_time": row.get("read_avg_time"),
-        "read_user_source": row.get("read_user_source"),
-        "publish_type": row.get("publish_type"),
-        "zaikan_user": row.get("zaikan_user"),
-        "read_subscribe_user": row.get("read_subscribe_user"),
-        "read_delivery_rate": row.get("read_delivery_rate"),
-        "praise_money": row.get("praise_money"),
-        "read_jump_position": row.get("read_jump_position"),
-        "read_finish_rate": row.get("read_finish_rate"),
-        "raw_payload": row.get("raw_payload"),
-    }
-    if metric is None:
-        session.add(MediaPostMetricDaily(post_id=post.id, metric_date=metric_date, **values))
-    else:
-        for key, value in values.items():
-            setattr(metric, key, value)
-
-
 @router.post("/wechat/sync")
 async def sync_wechat_official(
     payload: WeChatSyncRequest,
@@ -283,35 +86,48 @@ async def sync_wechat_official(
     if payload.start_date > payload.end_date:
         raise HTTPException(status_code=400, detail="start_date cannot be after end_date")
 
-    try:
-        if payload.account_id is not None:
-            accounts = [await _get_account(session, payload.account_id)]
-        else:
-            accounts = await _ensure_env_wechat_accounts(session)
-            if not accounts:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="No WeChat Official Account credentials are configured",
-                )
+    if payload.account_id is not None:
+        accounts = [await _get_account(session, payload.account_id)]
+    else:
+        accounts = await _ensure_env_wechat_accounts(session)
+        if not accounts:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No WeChat Official Account credentials are configured",
+            )
+    account_ids = [account.id for account in accounts]
+    await session.commit()
 
-        results = [
-            await _sync_one_wechat_account(session, account, payload.start_date, payload.end_date)
-            for account in accounts
-        ]
-        await session.commit()
-    except HTTPException:
-        await session.rollback()
-        raise
-    except Exception as exc:
-        await session.rollback()
-        raise HTTPException(status_code=502, detail=f"WeChat sync failed: {exc}")
+    results = []
+    failures = []
+    for account_id in account_ids:
+        account = await session.get(MediaAccount, account_id)
+        account_id, account_name = account.id, account.name
+        try:
+            result = await _sync_one_wechat_account(session, account, payload.start_date, payload.end_date)
+            await session.commit()
+            results.append(result)
+        except Exception as exc:
+            await session.rollback()
+            failures.append({"account_id": account_id, "account_name": account_name, "error": str(exc)})
+            try:
+                await _record_failed_wechat_sync(
+                    session, account_id, payload.start_date, payload.end_date, exc
+                )
+            except Exception:
+                await session.rollback()
+                logger.exception("Could not record failed WeChat sync for account=%s", account_id)
+
+    if failures and not results:
+        raise HTTPException(status_code=502, detail={"accounts_failed": failures})
 
     return {
         "accounts_synced": len(results),
-        "status": "success",
+        "status": "partial" if failures else "success",
         "posts_upserted": sum(item["posts_upserted"] for item in results),
         "metrics_upserted": sum(item["metrics_upserted"] for item in results),
         "results": results,
+        "failures": failures,
     }
 
 

@@ -6,6 +6,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from app.ui import theme
 from app.ui._helpers import _page_hero, _styled_chart, show_api_error
 from app.utils.topic_matching import match_article_topics
 from app.views.media.analysis import aggregate_read_sources, build_topic_source_matrix
@@ -61,7 +62,7 @@ def _generate_overall_analysis(df, overview):
     
     top_post = df.sort_values("read_user_count", ascending=False).iloc[0]
     
-    analysis = f"**🤖 数据洞察结论**：\n"
+    analysis = "**数据洞察结论**：\n"
     analysis += f"- **大盘表现**：在选定区间内，共发布 {overview.get('posts', 0)} 篇文章，累计收获阅读 {total_reads:,} 次。平均单篇阅读量约 {avg_read:,.0f}。\n"
     analysis += f"- **互动健康度**：整体分享率达 {avg_share_rate:.2%}。" + ("分享意愿较好，账号具备一定的自发传播力。" if avg_share_rate >= 0.03 else "整体分享动力较弱，建议增加引导分享或提升内容共鸣。") + "\n"
     analysis += f"- **流量担当**：本期最受关注的文章是《{top_post['title']}》（阅读 {top_post['read_user_count']:,} 次，分享 {top_post['share_user_count']:,} 次）。"
@@ -165,7 +166,7 @@ def page_media() -> None:
             top_read_df = df.sort_values("read_user_count", ascending=False).head(10)
             top_read_chart = (
                 alt.Chart(top_read_df)
-                .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+                .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                 .encode(
                     x=alt.X("read_user_count:Q", title="阅读人数"),
                     y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -184,7 +185,7 @@ def page_media() -> None:
             top_share_df = df.sort_values("share_user_count", ascending=False).head(10)
             top_share_chart = (
                 alt.Chart(top_share_df)
-                .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#10b981")
+                .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                 .encode(
                     x=alt.X("share_user_count:Q", title="分享人数"),
                     y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -209,10 +210,10 @@ def page_media() -> None:
             ).reset_index()
             
             base = alt.Chart(trend_df).encode(x=alt.X("publish_date_only:T", title="发布日期"))
-            bar = base.mark_bar(opacity=0.6, color="#94a3b8", size=15).encode(
+            bar = base.mark_bar(opacity=0.6, color=theme.INK_MUTED, size=15).encode(
                 y=alt.Y("post_count:Q", title="发文数", axis=alt.Axis(grid=False))
             )
-            line = base.mark_line(point=alt.OverlayMarkDef(filled=True, size=60), color="#0ea5e9", strokeWidth=3).encode(
+            line = base.mark_line(point=alt.OverlayMarkDef(filled=True, size=60), color=theme.PRIMARY, strokeWidth=3).encode(
                 y=alt.Y("total_reads:Q", title="阅读总数")
             )
             trend_chart = alt.layer(bar, line).resolve_scale(y="independent").properties(height=350, title="每日发文数与阅读总量趋势")
@@ -225,7 +226,7 @@ def page_media() -> None:
         
         scatter_chart = (
             alt.Chart(df)
-            .mark_circle(size=80, opacity=0.7, color="#8b5cf6")
+            .mark_circle(size=80, opacity=0.7, color=theme.PRIMARY)
             .encode(
                 x=alt.X("read_user_count:Q", title="阅读人数"),
                 y=alt.Y("share_user_count:Q", title="分享人数"),
@@ -249,7 +250,7 @@ def page_media() -> None:
             top_share_rate_df = filtered_df.sort_values("share_rate", ascending=False).head(10)
             share_rate_chart = (
                 alt.Chart(top_share_rate_df)
-                .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#f59e0b")
+                .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                 .encode(
                     x=alt.X("share_rate:Q", title="分享率", axis=alt.Axis(format="%")),
                     y=alt.Y("title:N", sort="-x", title="", axis=alt.Axis(labelLimit=200)),
@@ -292,8 +293,8 @@ def page_media() -> None:
                     .properties(height=420, title="完读率 × 分享率分布（气泡大小=阅读人数）")
                     .interactive()
                 )
-                avg_finish_line = alt.Chart(pd.DataFrame({"x": [avg_finish]})).mark_rule(strokeDash=[4, 4], color="#94a3b8").encode(x="x:Q")
-                avg_share_line = alt.Chart(pd.DataFrame({"y": [avg_share_r]})).mark_rule(strokeDash=[4, 4], color="#94a3b8").encode(y="y:Q")
+                avg_finish_line = alt.Chart(pd.DataFrame({"x": [avg_finish]})).mark_rule(strokeDash=[4, 4], color=theme.INK_MUTED).encode(x="x:Q")
+                avg_share_line = alt.Chart(pd.DataFrame({"y": [avg_share_r]})).mark_rule(strokeDash=[4, 4], color=theme.INK_MUTED).encode(y="y:Q")
                 st.altair_chart(_styled_chart(quadrant_chart + avg_finish_line + avg_share_line), use_container_width=True)
                 st.caption(f"虚线：完读率均值 {avg_finish:.1%}，分享率均值 {avg_share_r:.2%}")
             else:
@@ -317,7 +318,7 @@ def page_media() -> None:
                 )
                 source_chart = (
                     alt.Chart(source_df)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#6366f1")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("阅读人数:Q", title="阅读人数"),
                         y=alt.Y("来源渠道:N", sort="-x", title=""),
@@ -382,13 +383,13 @@ def page_media() -> None:
         st.markdown("### 话题标签分析")
         st.caption("自定义关键词组，系统将按标题匹配归类，对比各话题的流量与互动表现。")
 
-        with st.expander("⚙️ 设置话题关键词", expanded=True):
+        with st.expander("设置话题关键词", expanded=True):
             n_topics = st.number_input("话题数量", min_value=1, max_value=6, value=3, step=1, key="topic_n")
             topic_map: dict[str, list[str]] = {}
             for i in range(int(n_topics)):
                 c1, c2 = st.columns([1, 3])
                 topic_name = c1.text_input(f"话题 {i+1} 名称", value=["新品发布", "行业报告", "促销活动"][i] if i < 3 else f"话题{i+1}", key=f"topic_name_{i}")
-                kw_raw = c2.text_input(f"关键词（逗号分隔）", value=["新品,上市,发布", "行业,报告,趋势", "折扣,优惠,特惠"][i] if i < 3 else "", key=f"topic_kw_{i}")
+                kw_raw = c2.text_input("关键词（逗号分隔）", value=["新品,上市,发布", "行业,报告,趋势", "折扣,优惠,特惠"][i] if i < 3 else "", key=f"topic_kw_{i}")
                 if topic_name and kw_raw:
                     topic_map[topic_name] = [k.strip() for k in kw_raw.split(",") if k.strip()]
 
@@ -417,7 +418,7 @@ def page_media() -> None:
             with col_t1:
                 avg_read_chart = (
                     alt.Chart(grouped)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#0ea5e9")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("均篇阅读:Q", title="均篇阅读人数"),
                         y=alt.Y("话题:N", sort="-x", title=""),
@@ -435,7 +436,7 @@ def page_media() -> None:
             with col_t2:
                 avg_share_chart = (
                     alt.Chart(grouped)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color="#10b981")
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4, color=theme.PRIMARY)
                     .encode(
                         x=alt.X("均篇分享:Q", title="均篇分享人数"),
                         y=alt.Y("话题:N", sort="-x", title=""),

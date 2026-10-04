@@ -1,4 +1,4 @@
-"""公众号 + 小红书 周报 (weekly media report).
+"""自媒体 + 商城 周报 (weekly media & e-commerce report).
 
 app/reports/weekly_media.py   — deterministic aggregation (no LLM, unit-testable)
 app/reports/narrative.py      — optional one-paragraph LLM narration on top

@@ -54,13 +54,15 @@ def page_cohort_retention() -> None:
         return
 
     data = r.json()
-    cohorts = data["cohorts"]
+    # See customer_identity.py — a 200 with an unexpected shape degrades to the
+    # empty state rather than raising.
+    cohorts = data.get("cohorts") or []
     if not cohorts:
         st.info("当前筛选范围内没有队列数据。请先上传订单或放宽日期范围。")
         return
 
     st.caption(
-        f"最新数据月：{data['latest_data_month']}。"
+        f"最新数据月：{data.get('latest_data_month') or '暂无'}。"
         "空白单元格＝该队列尚未到达观测期（右删失），并非 0；最近一个月数据可能不完整。"
     )
 

@@ -182,7 +182,7 @@ def _login_api_client(settings, *, log_prefix: str):
     """Create and log in the service-account API client used by both
     run_collect and run_verify. Returns (client, error_message); on failure
     client is None and error_message is the ready-to-send/log string."""
-    from ..ui.api_client import APIClient
+    from ..api_client import APIClient
     api_client = APIClient(base_url=settings.collector_api_url)
     login_resp = api_client.login(settings.collector_service_email or "", settings.collector_service_password or "")
     if login_resp.status_code != 200:

@@ -66,7 +66,8 @@ class _FakeSchedulerSettings:
     rap_disable_monthly_backup: bool = True
     watchdog_max_age_hours: int = 30
     watchdog_backup_max_age_days: int = 35
-    rpa_backup_dir: str = "unused"
+    watchdog_daily_backup_max_age_days: int = 2
+    backup_dir: str = "unused"
 
 
 # ── run_watchdog_checks: collector (CollectorRun via the sync engine) ───────
@@ -243,20 +244,20 @@ class TestRunWatchdogChecksWechatSync:
 
 class TestRunWatchdogChecksBackup:
     def test_disabled_skips_check(self, tmp_path):
-        settings = _FakeSchedulerSettings(rap_disable_monthly_backup=True, rpa_backup_dir=str(tmp_path))
+        settings = _FakeSchedulerSettings(rap_disable_monthly_backup=True, backup_dir=str(tmp_path))
         problems = asyncio.run(run_watchdog_checks(settings))
         assert problems == []
 
     def test_missing_stamp_reports_problem(self, tmp_path):
-        settings = _FakeSchedulerSettings(rap_disable_monthly_backup=False, rpa_backup_dir=str(tmp_path))
+        settings = _FakeSchedulerSettings(rap_disable_monthly_backup=False, backup_dir=str(tmp_path))
         problems = asyncio.run(run_watchdog_checks(settings))
-        assert len(problems) == 1
-        assert "备份" in problems[0]
-        assert "从未" in problems[0]
+        assert len(problems) == 2
+        assert all("备份" in problem and "从未" in problem for problem in problems)
 
     def test_recent_stamp_is_healthy(self, tmp_path):
         (tmp_path / ".last_monthly_backup").write_text(datetime.now().isoformat())
-        settings = _FakeSchedulerSettings(rap_disable_monthly_backup=False, rpa_backup_dir=str(tmp_path))
+        (tmp_path / ".last_daily_backup").write_text(datetime.now().isoformat())
+        settings = _FakeSchedulerSettings(rap_disable_monthly_backup=False, backup_dir=str(tmp_path))
         problems = asyncio.run(run_watchdog_checks(settings))
         assert problems == []
 
@@ -265,8 +266,9 @@ class TestRunWatchdogChecksBackup:
 
         stale = datetime.now() - timedelta(days=40)
         (tmp_path / ".last_monthly_backup").write_text(stale.isoformat())
+        (tmp_path / ".last_daily_backup").write_text(datetime.now().isoformat())
         settings = _FakeSchedulerSettings(
-            rap_disable_monthly_backup=False, watchdog_backup_max_age_days=35, rpa_backup_dir=str(tmp_path)
+            rap_disable_monthly_backup=False, watchdog_backup_max_age_days=35, backup_dir=str(tmp_path)
         )
         problems = asyncio.run(run_watchdog_checks(settings))
         assert len(problems) == 1
@@ -312,7 +314,7 @@ class TestRunWechatSyncOnceNotifications:
         return sent
 
     def test_all_accounts_succeed_sends_success_notification(self, monkeypatch, wecom_sent):
-        import app.views.media.routes as routes_mod
+        import app.services.wechat as routes_mod
 
         async def fake_ensure(session):
             return [_FakeMediaAccount(name="acct1"), _FakeMediaAccount(name="acct2")]
@@ -332,7 +334,7 @@ class TestRunWechatSyncOnceNotifications:
         assert "acct2" in wecom_sent[0]
 
     def test_success_notification_suppressed_when_disabled(self, monkeypatch, wecom_sent):
-        import app.views.media.routes as routes_mod
+        import app.services.wechat as routes_mod
 
         async def fake_ensure(session):
             return [_FakeMediaAccount(name="acct1")]
@@ -349,7 +351,7 @@ class TestRunWechatSyncOnceNotifications:
         assert wecom_sent == []
 
     def test_partial_failure_sends_single_alert_with_both(self, monkeypatch, wecom_sent):
-        import app.views.media.routes as routes_mod
+        import app.services.wechat as routes_mod
 
         async def fake_ensure(session):
             return [_FakeMediaAccount(name="ok_acct"), _FakeMediaAccount(name="bad_acct")]
@@ -371,7 +373,7 @@ class TestRunWechatSyncOnceNotifications:
         assert "ok_acct" in wecom_sent[0]
 
     def test_all_accounts_fail_sends_failure_alert_only(self, monkeypatch, wecom_sent):
-        import app.views.media.routes as routes_mod
+        import app.services.wechat as routes_mod
 
         async def fake_ensure(session):
             return [_FakeMediaAccount(name="bad_acct")]
@@ -390,7 +392,7 @@ class TestRunWechatSyncOnceNotifications:
         assert "成功的账号" not in wecom_sent[0]
 
     def test_no_accounts_configured_sends_nothing(self, monkeypatch, wecom_sent):
-        import app.views.media.routes as routes_mod
+        import app.services.wechat as routes_mod
 
         async def fake_ensure(session):
             return []
@@ -405,11 +407,13 @@ class TestRunWechatSyncOnceNotifications:
 
 # ── _weekly_report_due: gate is success-only, not row-existence ─────────────
 
-async def _insert_weekly_report_run(session_factory, *, week_start, week_end, status: str) -> None:
+async def _insert_weekly_report_run(session_factory, *, week_start, week_end, status: str,
+                                    wecom_sent: bool = False) -> None:
     from app.db.models import WeeklyReportRun
 
     async with session_factory() as session:
-        session.add(WeeklyReportRun(week_start=week_start, week_end=week_end, status=status))
+        session.add(WeeklyReportRun(week_start=week_start, week_end=week_end,
+                                    status=status, wecom_sent=wecom_sent))
         await session.commit()
 
 
@@ -440,7 +444,8 @@ class TestWeeklyReportDue:
 
         asyncio.run(
             _insert_weekly_report_run(
-                async_session_factory, week_start=date(2026, 9, 7), week_end=date(2026, 9, 13), status="success"
+                async_session_factory, week_start=date(2026, 9, 7), week_end=date(2026, 9, 13),
+                status="success", wecom_sent=True,
             )
         )
         today = date(2026, 9, 15)

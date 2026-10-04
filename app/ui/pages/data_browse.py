@@ -1,26 +1,75 @@
 from __future__ import annotations
+from datetime import date
+from decimal import Decimal, InvalidOperation
 import pandas as pd
 import streamlit as st
 
-from app.ui._helpers import _page_hero, show_api_error
+from app.ui._helpers import _page_hero, show_api_error, data_cache_expired, mark_data_cache_fetched, data_cache_caption
 
-_PAGE_SIZE = 5000
+_PAGE_SIZE = 200
+_FILTER_COLUMNS = {
+    "order_id": "订单号", "order_date": "订单日期", "customer_key": "客户标识",
+    "sku": "商品", "quantity": "数量", "price": "金额", "receiver": "收货人",
+    "receiver_phone": "手机号", "province": "省份", "area": "地区",
+    "full_address": "地址", "buyer_nick": "买家昵称", "coupon_name": "优惠券",
+    "distributor": "分销员",
+}
 
 
 def page_data() -> None:
     client = st.session_state["client"]
     _page_hero("数据浏览")
 
+    search = st.text_input("搜索全部订单", placeholder="订单号、商品、地区、客户…", key="orders_search")
+    platform_label = st.selectbox("平台", ["全部", "有赞", "京东", "天猫"], key="orders_platform")
+    platform = {"有赞": "youzan", "京东": "jd", "天猫": "tmall"}.get(platform_label)
+    chosen_columns = st.multiselect(
+        "按列筛选（作用于全部订单）", list(_FILTER_COLUMNS),
+        format_func=lambda field: _FILTER_COLUMNS[field], key="orders_filter_columns",
+        max_selections=12,
+    )
+    column_filters = []
+    for field in chosen_columns:
+        if field in {"quantity", "price", "order_date"}:
+            low_col, high_col = st.columns(2)
+            low = low_col.text_input(f"{_FILTER_COLUMNS[field]}从", key=f"orders_col_{field}_min").strip()
+            high = high_col.text_input(f"{_FILTER_COLUMNS[field]}到", key=f"orders_col_{field}_max").strip()
+            if not low and not high:
+                continue
+            try:
+                parse = date.fromisoformat if field == "order_date" else Decimal
+                parsed = [parse(value) for value in (low, high) if value]
+                if field != "order_date" and not all(value.is_finite() for value in parsed):
+                    raise ValueError
+                if low and high and parsed[0] > parsed[1]:
+                    raise ValueError
+            except (ValueError, InvalidOperation):
+                st.warning(f"{_FILTER_COLUMNS[field]}范围无效。日期请使用 YYYY-MM-DD，起始值不能大于结束值。")
+                return
+            column_filters.append({"field": field, **({"min": low} if low else {}), **({"max": high} if high else {})})
+        else:
+            value = st.text_input(f"{_FILTER_COLUMNS[field]}包含", key=f"orders_col_{field}").strip()
+            if value:
+                column_filters.append({"field": field, "value": value})
+    filters = (search.strip(), platform, tuple(tuple(sorted(f.items())) for f in column_filters))
+    if st.session_state.get("orders_filters") != filters:
+        st.session_state["orders_filters"] = filters
+        st.session_state["orders_offset"] = 0
+        st.session_state.pop("orders_df", None)
+        st.session_state.pop("orders_export_bytes", None)
+
     col_refresh, _ = st.columns([1, 5])
     refresh = col_refresh.button("刷新")
     if refresh:
         st.session_state.pop("orders_df", None)
-        st.session_state["orders_loaded_limit"] = _PAGE_SIZE
+    elif data_cache_expired("orders"):
+        st.session_state.pop("orders_df", None)
 
-    loaded_limit = st.session_state.get("orders_loaded_limit", _PAGE_SIZE)
+    offset = st.session_state.get("orders_offset", 0)
     df = st.session_state.get("orders_df")
     if df is None:
-        r = client.orders_all(limit=loaded_limit)
+        r = client.orders_all(limit=_PAGE_SIZE, offset=offset, search=filters[0],
+                              platform=platform, column_filters=column_filters)
         if r.status_code != 200:
             show_api_error(r)
             return
@@ -29,59 +78,40 @@ def page_data() -> None:
         st.session_state["orders_total_count"] = int(
             r.headers.get("X-Total-Count", len(df))
         )
-        st.session_state["orders_loaded_limit"] = loaded_limit
+        mark_data_cache_fetched("orders")
+
+    data_cache_caption("orders")
 
     if df.empty:
-        st.info("暂无数据，请先上传订单文件。")
+        st.info("没有匹配的订单。" if filters[0] or platform or column_filters else "暂无数据，请先上传订单文件。")
         return
 
     total_count = st.session_state.get("orders_total_count", len(df))
-    if len(df) < total_count:
-        info_col, load_col = st.columns([4, 1])
-        info_col.info(
-            f"已加载 {len(df):,} / 共 {total_count:,} 条订单（按日期排序）。"
-            f"下方搜索和筛选仅作用于已加载的数据。"
-        )
-        if load_col.button(f"加载更多 (+{_PAGE_SIZE:,})", use_container_width=True):
-            st.session_state["orders_loaded_limit"] = loaded_limit + _PAGE_SIZE
-            st.session_state.pop("orders_df", None)
-            st.rerun()
-
-    # 搜索 + 列筛选
-    search = st.text_input("搜索所有文本列", placeholder="例：山东省、订单号、SKU 名称…")
-    chosen = st.multiselect("按列筛选", list(df.columns), placeholder="选择要添加筛选的列…")
-
-    df_view = df.copy()
-    if search:
-        mask = (
-            df_view.select_dtypes(include="object")
-            .apply(lambda c: c.str.contains(search, case=False, na=False))
-            .any(axis=1)
-        )
-        df_view = df_view[mask]
-
-    for c in chosen:
-        if pd.api.types.is_numeric_dtype(df_view[c]):
-            col_min = float(df_view[c].min())
-            col_max = float(df_view[c].max())
-            if col_min < col_max:
-                rng = st.slider(c, col_min, col_max, (col_min, col_max))
-                df_view = df_view[(df_view[c] >= rng[0]) & (df_view[c] <= rng[1])]
+    st.caption(f"共匹配 {total_count:,} 条；显示第 {offset + 1:,}–{offset + len(df):,} 条")
+    prev_col, next_col, page_col, export_col = st.columns([1, 1, 2, 2])
+    if prev_col.button("上一页", disabled=offset == 0):
+        st.session_state["orders_offset"] = max(0, offset - _PAGE_SIZE)
+        st.session_state.pop("orders_df", None)
+        st.rerun()
+    if next_col.button("下一页", disabled=offset + len(df) >= total_count):
+        st.session_state["orders_offset"] = offset + _PAGE_SIZE
+        st.session_state.pop("orders_df", None)
+        st.rerun()
+    page_col.download_button("下载当前页 CSV", df.to_csv(index=False).encode("utf-8-sig"),
+                             "orders_current_page.csv", mime="text/csv")
+    if export_col.button("准备导出全部匹配结果"):
+        with st.spinner("正在生成导出文件…"):
+            r_export = client.orders_export(search=filters[0], platform=platform,
+                                            column_filters=column_filters)
+        if r_export.status_code == 200:
+            st.session_state["orders_export_bytes"] = r_export.content
         else:
-            vals = sorted(df_view[c].dropna().unique())
-            sel = st.multiselect(c, vals, default=vals, key=f"filter_{c}")
-            df_view = df_view[df_view[c].isin(sel)]
+            show_api_error(r_export, "导出失败。")
+    if st.session_state.get("orders_export_bytes"):
+        st.download_button("下载全部匹配结果 CSV", st.session_state["orders_export_bytes"],
+                           "filtered_orders.csv", mime="text/csv")
 
-    row_col, download_col = st.columns([3, 1])
-    row_col.write(f"显示 **{len(df_view):,} / {len(df):,}** 条已加载记录")
-    download_col.download_button(
-        "下载 CSV",
-        df_view.to_csv(index=False).encode("utf-8-sig"),
-        "filtered_orders.csv",
-        mime="text/csv",
-    )
-
-    display_df = df_view.reset_index(drop=True)
+    display_df = df.reset_index(drop=True)
     selection = st.dataframe(
         display_df,
         use_container_width=True,
@@ -108,8 +138,8 @@ def page_data() -> None:
         return
 
     st.caption(
-        f"平台：{raw_data['order']['platform']} · "
-        f"订单号：{raw_data['order']['order_id']} · "
+        f"平台：{(raw_data.get('order') or {}).get('platform', '—')} · "
+        f"订单号：{(raw_data.get('order') or {}).get('order_id', '—')} · "
         f"原始行数：{raw_data.get('row_count', len(raw_rows))}"
     )
     st.dataframe(pd.DataFrame(raw_rows), use_container_width=True)

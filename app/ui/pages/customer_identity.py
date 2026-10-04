@@ -48,22 +48,28 @@ def page_customer_identity() -> None:
         return
 
     data = r.json()
-    exact = data["exact"]
-    fuzzy = data["fuzzy"]
+    # Read defensively: a 200 carrying an unexpected shape should degrade to the
+    # empty state like every other page, not surface a traceback to the user.
+    exact = data.get("exact") or {}
+    fuzzy = data.get("fuzzy") or {}
+    if not exact and not fuzzy:
+        st.info("当前筛选范围内没有跨平台客户数据。请先上传订单或放宽日期范围。")
+        return
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("精确匹配客户数", exact["cluster_count"])
-    m2.metric("精确匹配营收", f"¥{exact['total_revenue']:,.2f}")
-    m3.metric("模糊匹配客户数", fuzzy["cluster_count"])
-    m4.metric("模糊匹配营收", f"¥{fuzzy['total_revenue']:,.2f}")
+    m1.metric("精确匹配客户数", exact.get("cluster_count", 0))
+    m2.metric("精确匹配营收", f"¥{exact.get('total_revenue') or 0:,.2f}")
+    m3.metric("模糊匹配客户数", fuzzy.get("cluster_count", 0))
+    m4.metric("模糊匹配营收", f"¥{fuzzy.get('total_revenue') or 0:,.2f}")
     st.caption("⚠️ 精确匹配与模糊匹配的数字不应相加汇总——置信度不同，分开看。")
 
     tab_exact, tab_fuzzy = st.tabs(["精确匹配（有赞 ↔ 天猫）", "模糊匹配（含京东，置信度较低）"])
 
     with tab_exact:
-        cross_platform = [c for c in exact["clusters"] if len(c["platforms"]) > 1]
-        st.caption(f"共 {exact['cluster_count']} 个客户身份，其中 {len(cross_platform)} 个跨平台。")
-        df = _clusters_df(exact["clusters"])
+        exact_clusters = exact.get("clusters") or []
+        cross_platform = [c for c in exact_clusters if len(c.get("platforms") or []) > 1]
+        st.caption(f"共 {exact.get('cluster_count', 0)} 个客户身份，其中 {len(cross_platform)} 个跨平台。")
+        df = _clusters_df(exact_clusters)
         if df.empty:
             st.info("当前筛选范围内没有数据。")
         else:
@@ -71,7 +77,7 @@ def page_customer_identity() -> None:
 
     with tab_fuzzy:
         st.warning(fuzzy.get("caveat", ""))
-        df = _clusters_df(fuzzy["clusters"])
+        df = _clusters_df(fuzzy.get("clusters") or [])
         if df.empty:
             st.info("当前筛选范围内没有数据。")
         else:

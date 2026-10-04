@@ -8,7 +8,7 @@ from app.ui._helpers import _page_hero, show_api_error
 
 def page_weekly_report() -> None:
     client = st.session_state["client"]
-    _page_hero("周报", "公众号 + 小红书 每周数据报告")
+    _page_hero("周报", "自媒体与商城全平台每周数据报告")
 
     if st.session_state.get("is_admin"):
         if st.button("立即生成/重试本周周报"):

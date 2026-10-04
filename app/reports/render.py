@@ -6,40 +6,54 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2.runtime import Undefined
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 _env = Environment(
     loader=FileSystemLoader(str(_TEMPLATE_DIR)),
-    autoescape=select_autoescape(["html"]),
+    autoescape=select_autoescape(["html", "j2"]),
 )
+
+
+def _is_invalid(value: Any) -> bool:
+    return value is None or isinstance(value, Undefined)
 
 
 def _fmt_num(value: Any) -> str:
     """For values where a decimal is meaningful (durations, rates)."""
-    if value is None:
+    if _is_invalid(value):
         return "—"
-    if isinstance(value, float):
-        return f"{value:,.2f}"
-    return f"{value:,}"
+    try:
+        if isinstance(value, float):
+            return f"{value:,.2f}"
+        return f"{int(value):,}"
+    except (ValueError, TypeError):
+        return "—"
 
 
 def _fmt_int(value: Any) -> str:
     """For counts/totals, which should never show a decimal — a float here
     (e.g. an averaged view count) is rounded, not truncated to two decimals."""
-    if value is None:
+    if _is_invalid(value):
         return "—"
-    return f"{round(value):,}"
+    try:
+        return f"{round(float(value)):,}"
+    except (ValueError, TypeError):
+        return "—"
 
 
 def _fmt_pct(value: Any) -> str:
-    if value is None:
+    if _is_invalid(value):
         return "—"
-    return f"{value * 100:.1f}%"
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except (ValueError, TypeError):
+        return "—"
 
 
 def _fmt_date(value: Any) -> str:
-    if value is None:
+    if _is_invalid(value):
         return "—"
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
 

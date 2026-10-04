@@ -7,7 +7,7 @@ and prevents the scattered boolean-parsing pattern spread across the codebase.
 """
 from __future__ import annotations
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,16 +63,17 @@ class Settings(BaseSettings):
     app_timezone: str = "Asia/Shanghai"
 
     # ── Backup ───────────────────────────────────────────────────────────────
-    rpa_backup_dir: str = "backups"
+    backup_dir: str = Field("backups", validation_alias=AliasChoices("BACKUP_DIR", "RPA_BACKUP_DIR"))
     # Number of most-recent backup files to keep; older ones are pruned.
-    rpa_backup_keep: int = 5
+    backup_keep: int = Field(5, validation_alias=AliasChoices("BACKUP_KEEP", "RPA_BACKUP_KEEP"))
+    daily_backup_keep: int = Field(7, validation_alias=AliasChoices("DAILY_BACKUP_KEEP", "RPA_DAILY_BACKUP_KEEP"))
     rap_disable_monthly_backup: bool = False
     # Hour of the day (0-23) in app_timezone at which the daily backup check runs.
     # The actual dump only fires when >= 30 days have elapsed since the last one.
     backup_hour: int = 2
     # When set, pg_dump/psql run inside this Docker container (where the client
     # binaries live); dumps still land on the host via stdin/stdout streaming.
-    rpa_pg_docker_container: str | None = None
+    pg_docker_container: str | None = Field(None, validation_alias=AliasChoices("PG_DOCKER_CONTAINER", "RPA_PG_DOCKER_CONTAINER"))
 
     # ── Upload ───────────────────────────────────────────────────────────────
     max_upload_mb: int = 50
@@ -146,6 +147,7 @@ class Settings(BaseSettings):
     watchdog_hour: int = 9  # after backup (02:00), WeChat sync (03:00), collector (06:30)
     watchdog_max_age_hours: int = 30  # daily pipelines: alert if no run in this long
     watchdog_backup_max_age_days: int = 35  # monthly backup: 30-day cadence + buffer
+    watchdog_daily_backup_max_age_days: int = 2
 
     # ── WeChat auto-sync scheduler ────────────────────────────────────────────
     # Set WECHAT_AUTO_SYNC_ENABLED=true to enable the daily background sync.

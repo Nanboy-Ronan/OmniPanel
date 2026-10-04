@@ -659,11 +659,22 @@ class TestSqlConsoleEdgeCases:
         """Filtering by a value that contains a DML keyword must not be blocked."""
         r = client.post(
             "/analysis/sql",
-            json={"sql": "SELECT * FROM operation_log WHERE action = 'update_role' LIMIT 5"},
+            json={"sql": "SELECT * FROM orders WHERE sku = 'update_role' LIMIT 5"},
             headers=_auth(tokens["analyst"]),
         )
         # 200 (rows found) or 503 (no data yet) — both mean validation passed
         assert r.status_code in (200, 503)
+
+    @pytest.mark.parametrize("sql", [
+        'SELECT hashed_password FROM "user"',
+        "SELECT app_secret FROM media_accounts",
+        "SELECT customer_key FROM orders",
+        "SELECT * FROM public.orders",
+        "SELECT * FROM operation_log",
+    ])
+    def test_sensitive_data_is_not_available(self, client, tokens, sql):
+        r = client.post("/analysis/sql", json={"sql": sql}, headers=_auth(tokens["analyst"]))
+        assert r.status_code == 400
 
     def test_union_select_is_allowed(self, client, tokens):
         """UNION between two SELECTs is a valid read-only query."""
@@ -730,7 +741,7 @@ class TestSqlReadOnlyDbProtection:
         )
         assert r.status_code == 400
         detail = r.json()["detail"].lower()
-        assert "read-only" in detail or "cannot execute" in detail
+        assert "查询失败" in detail
 
     def test_db_rejects_delete_even_if_validator_bypassed(self, client, tokens, monkeypatch):
         from app.views.ecommerce.analysis import sql_console as analysis_mod
@@ -744,7 +755,7 @@ class TestSqlReadOnlyDbProtection:
         )
         assert r.status_code == 400
         detail = r.json()["detail"].lower()
-        assert "read-only" in detail or "cannot execute" in detail
+        assert "查询失败" in detail
 
     def test_db_rejects_drop_even_if_validator_bypassed(self, client, tokens, monkeypatch):
         from app.views.ecommerce.analysis import sql_console as analysis_mod

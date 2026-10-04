@@ -17,7 +17,7 @@ def test_monthly_backup_runs_once_and_records_timestamp(monkeypatch, tmp_path):
         kwargs["stdout"].write(b"-- backup sql")
         return subprocess.CompletedProcess(args, 0)
 
-    monkeypatch.setattr(backup.settings, "rpa_pg_docker_container", None)
+    monkeypatch.setattr(backup.settings, "pg_docker_container", None)
     monkeypatch.setattr(
         backup,
         "DATABASE_URL",
@@ -36,7 +36,7 @@ def test_monthly_backup_runs_once_and_records_timestamp(monkeypatch, tmp_path):
 
     args, kwargs = calls[0]
     # Dump streams to stdout (no -f) so the file lands on the host.
-    assert args[:5] == ["pg_dump", "--clean", "--if-exists", "--no-owner", "--no-acl"]
+    assert args[:4] == ["pg_dump", "--clean", "--if-exists", "--no-owner"]
     assert "-f" not in args
     assert ["-h", "127.0.0.1"] == args[args.index("-h") : args.index("-h") + 2]
     assert ["-p", "55432"] == args[args.index("-p") : args.index("-p") + 2]
@@ -55,7 +55,7 @@ def test_backup_database_routes_through_docker_when_configured(monkeypatch, tmp_
         kwargs["stdout"].write(b"-- backup sql")
         return subprocess.CompletedProcess(args, 0)
 
-    monkeypatch.setattr(backup.settings, "rpa_pg_docker_container", "rpa-postgres")
+    monkeypatch.setattr(backup.settings, "pg_docker_container", "rpa-postgres")
     monkeypatch.setattr(
         backup,
         "DATABASE_URL",
@@ -85,7 +85,7 @@ def test_restore_database_uses_psql_with_error_stop(monkeypatch, tmp_path):
         calls.append((args, kwargs))
         return subprocess.CompletedProcess(args, 0)
 
-    monkeypatch.setattr(backup.settings, "rpa_pg_docker_container", None)
+    monkeypatch.setattr(backup.settings, "pg_docker_container", None)
     monkeypatch.setattr(
         backup,
         "DATABASE_URL",
@@ -186,11 +186,11 @@ def test_prune_called_after_successful_monthly_backup(monkeypatch, tmp_path):
         kwargs["stdout"].write(b"-- backup sql")
         return subprocess.CompletedProcess(args, 0)
 
-    def fake_prune(root, keep=None):
+    def fake_prune(root, keep=None, reason=None):
         prune_calls.append(root)
         return 0
 
-    monkeypatch.setattr(backup.settings, "rpa_pg_docker_container", None)
+    monkeypatch.setattr(backup.settings, "pg_docker_container", None)
     monkeypatch.setattr(backup, "DATABASE_URL", "postgresql+asyncpg://rpa:rpa@127.0.0.1:5432/rpa")
     monkeypatch.setattr(backup.subprocess, "run", fake_run)
     monkeypatch.setattr(backup, "prune_old_backups", fake_prune)
@@ -198,6 +198,25 @@ def test_prune_called_after_successful_monthly_backup(monkeypatch, tmp_path):
     result = backup.monthly_backup(tmp_path)
     assert result is not None
     assert len(prune_calls) == 1
+
+
+def test_daily_backup_keeps_manual_and_monthly_files(monkeypatch, tmp_path):
+    def fake_run(args, **kwargs):
+        kwargs["stdout"].write(b"-- backup sql")
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(backup.settings, "pg_docker_container", None)
+    monkeypatch.setattr(backup.settings, "daily_backup_keep", 1)
+    monkeypatch.setattr(backup, "DATABASE_URL", "postgresql+asyncpg://rpa:rpa@127.0.0.1:5432/rpa")
+    monkeypatch.setattr(backup.subprocess, "run", fake_run)
+    manual = tmp_path / "rpa-20260101-000000-before-clear-db.sql"
+    monthly = tmp_path / "rpa-20260101-000000-monthly.sql"
+    old_daily = tmp_path / "rpa-20260101-000000-daily.sql"
+    for file in (manual, monthly, old_daily):
+        file.write_text("-- old")
+    assert backup.daily_backup(tmp_path)
+    assert manual.exists() and monthly.exists() and not old_daily.exists()
+    assert backup.daily_backup(tmp_path) is None
 
 
 def test_monthly_backup_can_restore_polluted_database(

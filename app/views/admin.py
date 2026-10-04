@@ -1,7 +1,9 @@
 # rap/app/views/admin.py
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from fastapi_users import exceptions
@@ -28,6 +30,8 @@ from ..db.models import (
 from ..utils.logger import log_operation
 from ..utils.cache import analysis_cache
 
+logger = logging.getLogger(__name__)
+
 
 @router.post("/clear-db")
 async def clear_database(
@@ -39,7 +43,7 @@ async def clear_database(
     (and any Alembic tables). This preserves your user accounts but wipes orders, customers, etc.
     """
     try:
-        backup_path = backup_database("before-clear-db")
+        backup_path = await asyncio.to_thread(backup_database, "before-clear-db")
 
         # Delete business data while preserving user accounts.
         # Order matters: children before parents (FK constraints).
@@ -54,7 +58,18 @@ async def clear_database(
 
         await session.commit()
 
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear database: {e}",
+        )
+
+    try:
         await analysis_cache.invalidate()
+    except Exception:
+        logger.exception("Database cleared, but analysis cache invalidation failed")
+    try:
         await log_operation(
             str(_user.id),
             "clear_db",
@@ -73,21 +88,17 @@ async def clear_database(
             },
             session=session,
         )
-
-        return {
-            "detail": (
-                "Dropped tables: upload_rejected_rows, youzan_orders, jd_orders, "
-                "tmall_orders, upload_batches, orders, customers, operation_log"
-            ),
-            "backup_path": str(backup_path) if backup_path else None,
-        }
-
-    except Exception as e:
+    except Exception:
         await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to clear database: {e}",
-        )
+        logger.exception("Database cleared, but audit logging failed")
+
+    return {
+        "detail": (
+            "Dropped tables: upload_rejected_rows, youzan_orders, jd_orders, "
+            "tmall_orders, upload_batches, orders, customers, operation_log"
+        ),
+        "backup_path": str(backup_path) if backup_path else None,
+    }
 
 
 @router.get("/users")

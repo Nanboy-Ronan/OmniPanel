@@ -8,6 +8,8 @@ from typing import Any, Iterable
 
 import requests
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 WECHAT_API_BASE = "https://api.weixin.qq.com"
@@ -119,7 +121,7 @@ def normalize_article_total_detail_item(item: dict[str, Any]) -> list[dict[str, 
     return rows
 
 
-_DEFAULT_WECHAT_TIMEOUT = float(os.getenv("WECHAT_HTTP_TIMEOUT", "10"))
+_DEFAULT_WECHAT_TIMEOUT = float(os.getenv("WECHAT_HTTP_TIMEOUT", settings.wechat_request_timeout))
 
 
 @dataclass
