@@ -3,8 +3,7 @@
 Keyed by (identifier, endpoint) where ``identifier`` is the email address for
 the password-login endpoint and the client IP for other endpoints (e.g. WeCom
 exchange). Keying by email rather than IP prevents one user's failed attempts
-from locking everyone else out when all Streamlit→FastAPI traffic shares the
-same loopback IP (127.0.0.1).
+from locking everyone else out when multiple clients share a proxy or NAT.
 
 When Redis is unavailable, falls back to a process-local in-memory counter
 instead of letting every request through unchecked. The fallback is weaker

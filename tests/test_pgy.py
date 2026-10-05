@@ -185,3 +185,29 @@ def test_pgy_api_upload_and_query(client, tokens):
     assert r_campaigns.status_code == 200
     campaigns = r_campaigns.json()
     assert len(campaigns) > 0
+
+
+def test_pgy_pagination_and_aggregate_date_filters(client, tokens):
+    headers = _auth(tokens['admin'])
+    account = client.post('/media/xhs/accounts', json={'name': '分页回归', 'account_type': 'company'}, headers=headers).json()['id']
+    sample = _make_pgy_xlsx_bytes([
+        _one_row({10: f"synthetic-page-{index}", 8: f"2026/01/{10 + index % 2}",
+                  1: f"示例博主{index % 3}", 13: f"示例合作{index % 2}"})
+        for index in range(12)
+    ])
+    response = client.post('/media/pgy/upload', data={'account_id': account}, files={'file': ('pgy.xlsx', sample)}, headers=headers)
+    assert response.status_code == 200
+    rows = client.get('/media/pgy/notes', params={'account_id': account, 'limit': 1000}, headers=headers).json()
+    pages = [client.get('/media/pgy/notes', params={'account_id': account, 'limit': 5, 'offset': offset}, headers=headers).json() for offset in range(0, len(rows), 5)]
+    assert [row['id'] for page in pages for row in page] == [row['id'] for row in rows]
+    for suffix in ['notes', 'bloggers', 'campaigns']:
+        result = client.get(f'/media/pgy/{suffix}', params={'account_id': account, 'start_date': '2099-01-01', 'end_date': '2099-12-31'}, headers=headers)
+        assert result.status_code == 200
+        assert result.json() == []
+    selected_date = next(row['publish_date'] for row in rows if row['publish_date'])
+    expected = [row for row in rows if row['publish_date'] == selected_date]
+    params = {'account_id': account, 'start_date': selected_date, 'end_date': selected_date}
+    bloggers = client.get('/media/pgy/bloggers', params=params, headers=headers).json()
+    campaigns = client.get('/media/pgy/campaigns', params=params, headers=headers).json()
+    assert sum(row['total_cooperations'] for row in bloggers) == len(expected)
+    assert sum(row['total_notes'] for row in campaigns) == len(expected)

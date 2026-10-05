@@ -69,11 +69,12 @@ def test_state_missing_ts_rejected():
 # ── redirect_uri whitelist ─────────────────────────────────────────────────────
 
 def test_allowed_origins_default(monkeypatch):
+    monkeypatch.delenv("WECOM_CONSOLE_REDIRECT_URI", raising=False)
     monkeypatch.delenv("WECOM_STREAMLIT_REDIRECT_URI", raising=False)
     monkeypatch.delenv("APP_URL", raising=False)
     monkeypatch.delenv("STREAMLIT_URL", raising=False)
     m = _wecom_module()
-    assert m._allowed_redirect_origins() == ["http://localhost:8501"]
+    assert m._allowed_redirect_origins() == ["http://localhost:5173/console"]
 
 
 def test_allowed_origins_from_env(monkeypatch):
@@ -171,7 +172,7 @@ def test_authorize_url_returns_valid_url(wecom_client, monkeypatch):
     _set_wecom_env(monkeypatch)
     r = wecom_client.get(
         "/auth/wecom/authorize-url",
-        params={"redirect_uri": "http://localhost:8501"},
+        params={"redirect_uri": "http://localhost:5173/console"},
     )
     assert r.status_code == 200
     body = r.json()
@@ -187,7 +188,7 @@ def test_authorize_url_state_is_valid(wecom_client, monkeypatch):
     _set_wecom_env(monkeypatch)
     r = wecom_client.get(
         "/auth/wecom/authorize-url",
-        params={"redirect_uri": "http://localhost:8501"},
+        params={"redirect_uri": "http://localhost:5173/console"},
     )
     url = r.json()["authorize_url"]
     state = url.split("state=")[1].split("&")[0]
@@ -201,10 +202,10 @@ def test_authorize_url_missing_corp_id(wecom_client, monkeypatch):
     monkeypatch.setenv("WECOM_AGENT_ID", "1000001")
     monkeypatch.setenv("WECOM_APP_SECRET", "s")
     # Ensure the redirect_uri passes the allowlist check so we reach the config check
-    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "http://localhost:8501")
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "http://localhost:5173/console")
     r = wecom_client.get(
         "/auth/wecom/authorize-url",
-        params={"redirect_uri": "http://localhost:8501"},
+        params={"redirect_uri": "http://localhost:5173/console"},
     )
     assert r.status_code == 503
 
@@ -213,7 +214,7 @@ def test_browser_login_start_sets_cookie_and_redirects(wecom_client, monkeypatch
     _set_wecom_env(monkeypatch)
     response = wecom_client.get(
         "/auth/wecom/start",
-        params={"redirect_uri": "http://localhost:8501", "flow": "qr",
+        params={"redirect_uri": "http://localhost:5173/console", "flow": "qr",
                 "return_query": "page=%E6%95%B0%E6%8D%AE%E6%B5%8F%E8%A7%88"},
         follow_redirects=False,
     )
@@ -259,7 +260,7 @@ def test_authorize_url_expires_in_is_int(wecom_client, monkeypatch):
     _set_wecom_env(monkeypatch)
     r = wecom_client.get(
         "/auth/wecom/authorize-url",
-        params={"redirect_uri": "http://localhost:8501"},
+        params={"redirect_uri": "http://localhost:5173/console"},
     )
     assert r.status_code == 200
     assert isinstance(r.json()["expires_in"], int)
@@ -269,7 +270,7 @@ def test_authorize_url_no_fragment(wecom_client, monkeypatch):
     _set_wecom_env(monkeypatch)
     r = wecom_client.get(
         "/auth/wecom/authorize-url",
-        params={"redirect_uri": "http://localhost:8501"},
+        params={"redirect_uri": "http://localhost:5173/console"},
     )
     assert "#wechat_redirect" not in r.json()["authorize_url"]
 
@@ -317,7 +318,7 @@ def exchange_client(monkeypatch):
 def _get_state(exchange_client) -> str:
     r = exchange_client.get(
         "/auth/wecom/authorize-url",
-        params={"redirect_uri": "http://localhost:8501"},
+        params={"redirect_uri": "http://localhost:5173/console"},
     )
     url = r.json()["authorize_url"]
     return url.split("state=")[1].split("&")[0]
@@ -342,7 +343,7 @@ def test_browser_start_survives_reconnect_and_clears_state_after_exchange(exchan
 
     started = exchange_client.get(
         "/auth/wecom/start",
-        params={"redirect_uri": "http://localhost:8501", "flow": "qr",
+        params={"redirect_uri": "http://localhost:5173/console", "flow": "qr",
                 "return_query": "page=%E6%95%B0%E6%8D%AE%E6%B5%8F%E8%A7%88&orders_platform=%E4%BA%AC%E4%B8%9C"},
         follow_redirects=False,
     )
@@ -452,3 +453,22 @@ def test_authorize_accepts_equivalent_configured_callback(wecom_client, monkeypa
     monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://dashboard.example.com")
     response = wecom_client.get("/auth/wecom/authorize-url", params={"redirect_uri": redirect})
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize("callback,expected", [
+    ("https://dashboard.example.com/console/", 200),
+    ("https://dashboard.example.com/console/other", 400),
+    ("https://dashboard.example.com/console-evil", 400),
+    ("https://evil.test/console/", 400),
+])
+def test_console_callback_is_explicit_and_path_scoped(wecom_client, monkeypatch, callback, expected):
+    monkeypatch.setenv("WECOM_CONSOLE_REDIRECT_URI", "https://dashboard.example.com/console/")
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "https://dashboard.example.com")
+    monkeypatch.setenv("WECOM_CORP_ID", "corp")
+    monkeypatch.setenv("WECOM_AGENT_ID", "agent")
+    monkeypatch.setenv("WECOM_APP_SECRET", "secret")
+    result = wecom_client.get("/auth/wecom/authorize-url", params={"redirect_uri": callback})
+    assert result.status_code == expected
+    # Adding the React callback must retain the existing root callback.
+    legacy = wecom_client.get("/auth/wecom/authorize-url", params={"redirect_uri": "https://dashboard.example.com"})
+    assert legacy.status_code == 200

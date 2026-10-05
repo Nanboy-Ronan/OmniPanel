@@ -10,9 +10,9 @@
 
 ```
 ┌──────────────┐     HTTP      ┌──────────────┐
-│  Streamlit   │ ◄──────────► │   FastAPI    │
+│  React   │ ◄──────────► │   FastAPI    │
 │     前端     │   REST API   │     后端     │
-│    :8501     │              │    :8000     │
+│    :5173     │              │    :8000     │
 └──────────────┘              └──────┬───────┘
                                       │
                                ┌──────▼───────┐
@@ -87,7 +87,7 @@ FastAPI 后端（`app/`）内部组织为：
 └──────────────┘
 ```
 
-- **前端** —— Streamlit（`app/ui/`）。一个很薄的客户端：带着 JWT bearer token
+- **前端** —— React + TypeScript（`frontend/`）。一个很薄的客户端：带着 JWT bearer token
   调用后端 HTTP 接口，把拿到的 JSON 渲染出来。这里不放任何业务逻辑。
 - **后端** —— FastAPI（`app/`）。承载所有业务规则、ETL 流程、鉴权，以及 SQL
   查询台的安全防护。
@@ -98,7 +98,7 @@ FastAPI 后端（`app/`）内部组织为：
 
 ## 请求流程
 
-1. Streamlit 前端发起请求，带上 `Authorization: Bearer <token>`。
+1. React 前端发起请求，带上 `Authorization: Bearer <token>`。
 2. FastAPI-Users（`app/auth.py`）把 token 解析成一个 `User` 行及其 `role`
    （`viewer` / `analyst` / `admin`）。
 3. 某个依赖项（`current_active_user` / `current_analyst_user` /
@@ -252,7 +252,7 @@ ID）——完整的业务口径参考见 `app/utils/nl_to_sql.py` 中的 `SCHEM
 | `PROXY_HEADERS` | `true` | 信任反向代理传来的 `X-Forwarded-*` |
 | `FORWARDED_ALLOW_IPS` | `*` | 信任哪些代理 IP 的转发头 |
 | `SSL_KEYFILE` / `SSL_CERTFILE` | 未设置 | 在 uvicorn 内直接启用 HTTPS（见[快速上手](getting-started.zh-CN.md)） |
-| `CORS_ORIGINS` | 未设置（回退到 `localhost:8501`） | 允许的来源域名，逗号分隔 |
+| `CORS_ORIGINS` | 未设置（回退到 `localhost:5173`） | 允许的来源域名，逗号分隔 |
 | `APP_TIMEZONE` | `Asia/Shanghai` | 用于日志时间戳和所有定时任务 |
 | `BACKUP_DIR` / `RPA_BACKUP_DIR` | `backups` | 数据库 dump 文件存放目录 |
 | `RAP_DISABLE_MONTHLY_BACKUP` | `false` | 关闭后台每日与月度备份循环 |

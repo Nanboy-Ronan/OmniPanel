@@ -6,7 +6,10 @@ ALEMBIC = $(PYTHON) -m alembic
 help:
 	@echo "Run locally:"
 	@echo "  api                   Start the FastAPI backend (uvicorn --reload, :8000)"
-	@echo "  ui                    Start the Streamlit dashboard (:8501)"
+	@echo "  ui                    Start the React workbench (:5173/console/)"
+	@echo "  frontend-dev          Start the React console (:5173/console/)"
+	@echo "  frontend-test         Run React console tests"
+	@echo "  frontend-build        Type-check and build the React console"
 	@echo ""
 	@echo "Database migration targets:"
 	@echo "  db-upgrade            Apply all pending migrations (alembic upgrade head)"
@@ -27,8 +30,7 @@ help:
 api:
 	$(PYTHON) -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-ui:
-	PYTHONPATH=. $(PYTHON) -m streamlit run app/ui/dashboard.py
+ui: frontend-dev
 
 db-upgrade:
 	$(ALEMBIC) upgrade head
@@ -63,3 +65,13 @@ deps-outdated:
 
 deps-audit:
 	pipx run pip-audit -r requirements.txt
+
+.PHONY: frontend-dev frontend-test frontend-build
+frontend-dev:
+	npm --prefix frontend run dev
+
+frontend-test:
+	npm --prefix frontend test
+
+frontend-build:
+	npm --prefix frontend run build

@@ -1,0 +1,26 @@
+[
+  [
+    "按平台统计营业额",
+    "SELECT platform,\n       COUNT(*) AS orders,\n       ROUND(SUM(price)::numeric, 2) AS revenue\nFROM orders\nGROUP BY platform\nORDER BY revenue DESC"
+  ],
+  [
+    "订单量最高的 10 个 SKU",
+    "SELECT sku,\n       COUNT(*) AS orders,\n       ROUND(SUM(price)::numeric, 2) AS revenue\nFROM orders\nGROUP BY sku\nORDER BY orders DESC\nLIMIT 10"
+  ],
+  [
+    "各省独立客户数",
+    "SELECT province,\n       COUNT(*) AS orders\nFROM orders\nWHERE province IS NOT NULL\nGROUP BY province\nORDER BY orders DESC\nLIMIT 10"
+  ],
+  [
+    "月度营业额趋势",
+    "SELECT DATE_TRUNC('month', order_date) AS month,\n       COUNT(*) AS orders,\n       ROUND(SUM(price)::numeric, 2) AS revenue\nFROM orders\nGROUP BY month\nORDER BY month"
+  ],
+  [
+    "各平台平均订单金额",
+    "SELECT platform,\n       COUNT(*) AS orders,\n       ROUND(AVG(price)::numeric, 2) AS average_spend\nFROM orders\nGROUP BY platform\nORDER BY orders DESC"
+  ],
+  [
+    "最近上传批次",
+    "SELECT filename, platform, inserted_orders,\n       duplicate_rows, invalid_rows, uploaded_at\nFROM upload_batches\nORDER BY uploaded_at DESC\nLIMIT 20"
+  ]
+]

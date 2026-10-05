@@ -26,7 +26,7 @@
 | `asyncpg` / `psycopg2-binary` / `sqlalchemy` | 数据库驱动/ORM | 注入、连接处理 |
 | `anthropic` / `openai` | NL2SQL 服务商 SDK | 依赖链 |
 
-其余包（altair、streamlit、pandas 等）跟随季度节奏即可。
+其余包（pandas、SQLAlchemy 等）跟随季度节奏即可。
 
 ## 升级流程
 

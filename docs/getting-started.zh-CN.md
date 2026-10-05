@@ -7,6 +7,7 @@
 ## 环境依赖
 
 - Python 3.13+
+- Node.js 22.18+ 与 npm
 - 一个后端能连接到的 PostgreSQL 服务器（13+）
 - （可选）Redis —— 仅用于分布式限流；连不上 Redis 时会自动退回到进程内限流
 
@@ -30,7 +31,11 @@ cp .env.example .env
 ```dotenv
 RAP_DATABASE_URL=postgresql+asyncpg://<用户名>:<密码>@<host>:5432/<数据库名>
 RAP_SECRET=<一段足够长的随机字符串>
-CORS_ORIGINS=http://localhost:8501
+CORS_ORIGINS=http://localhost:5173
+WECOM_CONSOLE_REDIRECT_URI=http://localhost:5173/console/
+WECOM_CORP_ID=<企业 ID>
+WECOM_AGENT_ID=<应用 ID>
+WECOM_APP_SECRET=<应用密钥>
 ```
 
 `RAP_SECRET` 用于签发登录令牌，可以这样生成一个：
@@ -78,15 +83,18 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 另开一个终端：
 
 ```bash
-streamlit run app/ui/dashboard.py
+npm --prefix frontend ci
+make ui
 ```
 
-在浏览器打开它打印出来的地址（默认端口 `:8501`）。
+打开 `http://localhost:5173/console/`。Vite 将同源 `/api/` 请求代理到 FastAPI。实际部署时需在企业微信登记回调域名。
 
 ## 7. 创建第一个用户
 
-打开 Streamlit 页面，通过注册流程创建账号。**第一个注册的用户会被自动提升为
-`admin` 角色**（见 `app/auth.py`）；之后注册的账号默认是 `viewer`，需要由管理员在用户管理页面手动提升角色。
+配置企业微信凭据和回调后扫码登录。**首个登录用户成为管理员**，后续用户按
+`WECOM_DEFAULT_ROLE` 分配角色（默认为 viewer）。无需配置凭据的界面体验可先构建前端，
+运行 `node frontend/scripts/preview-fixtures.mjs`，再打开
+`http://127.0.0.1:5180/console/`；该本地预览仅提供合成数据。
 
 ## 8. 上传第一份导出文件
 
@@ -116,9 +124,9 @@ uvicorn（纯 HTTP）前面用反向代理（nginx、Caddy 等）终止 TLS—�
 
 健康检查会同时验证数据库连接和（如果配置了 `REDIS_URL`）Redis 连通性。Redis 不可达时，应用会自动降级，但其他功能不受影响。如果是数据库检查失败，请再次核对 `RAP_DATABASE_URL` 并确认迁移已执行。
 
-**Streamlit 加载数据时提示"Connection refused"**
+**React 加载数据时提示"Connection refused"**
 
-前端默认访问 `http://localhost:8000` 上的后端。确保 FastAPI 后端正在运行，且 `.env` 中的 `CORS_ORIGINS` 包含了 Streamlit 的地址（例如 `http://localhost:8501`）。
+浏览器请求同源 `/api/`；开发环境由 Vite 代理到 `http://127.0.0.1:8000`，Compose 使用 Nginx。检查后端服务与代理目标是否可达；开发目标可用 `API_PROXY_TARGET` 调整。
 
 **上传文件时报"unrecognized column set"（无法识别列结构）**
 

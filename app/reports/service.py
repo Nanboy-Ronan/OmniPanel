@@ -32,7 +32,7 @@ def _wow_arrow(diff: int) -> str:
 def _summary_lines(context: dict) -> list[str]:
     """Short plain-text summary for the WeCom push. This is the one surface
     guaranteed to actually reach people (the HTML report itself only shows
-    up if they go log into the Streamlit 周报 page) — so unlike an early
+    up if they go log into the React 周报 page) — so unlike an early
     version of this function, it carries WoW direction and each account's
     top article, not just three bare numbers with no context."""
     bounds = context["bounds"]

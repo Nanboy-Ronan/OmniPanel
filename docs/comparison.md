@@ -59,7 +59,7 @@ real candidates for a future OmniPanel release, not just praise.
   only ingests exports the merchant already legally owns: no connector that
   breaks on the next platform redesign, no legal grey area.
 - **A real deployable product**, not a script collection or a paid API.
-  Self-hosted FastAPI + Streamlit + PostgreSQL with auth, RBAC
+  Self-hosted FastAPI + React + PostgreSQL with auth, RBAC
   (viewer/analyst/admin), Enterprise WeChat SSO, and an append-only audit
   log — none of the four ship anything like this; they're code samples, a
   workflow stitched across n8n/MySQL/Feishu, or a hosted pay-per-call API

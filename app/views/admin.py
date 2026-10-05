@@ -125,39 +125,16 @@ async def database_status(
     _user=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Return database state useful for deployment diagnostics."""
-    try:
-        result = await session.execute(select(func.count(Order.id)))
-        row_count = result.scalar() or 0
-        analysis_ready = row_count > 0
-    except Exception:
-        row_count = None
-        analysis_ready = False
+    """Inspect actual tables and columns rather than reporting a static schema."""
+    from .database_status import inspect_database, backup_inventory
 
-    return {
-        "database_path": "PostgreSQL",
-        "database_exists": True,
-        "tables": [
-            "user",
-            "customers",
-            "orders",
-            "upload_batches",
-            "youzan_orders",
-            "jd_orders",
-            "tmall_orders",
-            "upload_rejected_rows",
-            "media_accounts",
-            "media_posts",
-            "media_post_metrics_daily",
-            "media_sync_runs",
-            "operation_log",
-        ],
-        "analysis_ready": analysis_ready,
-        "missing_analysis_tables": [],
-        "missing_analysis_mappings": [],
-        "missing_analysis_columns": [],
-        "all_orders_count": row_count,
-    }
+    try:
+        result = await inspect_database(session)
+    except Exception:
+        logger.exception("Database status inspection failed")
+        raise HTTPException(status_code=503, detail="数据库状态检查失败，请稍后重试或查看服务日志。")
+    result["backups"] = await asyncio.to_thread(backup_inventory)
+    return result
 
 
 class NewUser(BaseModel):

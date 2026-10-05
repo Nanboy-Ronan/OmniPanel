@@ -1,7 +1,7 @@
 """Playwright browser/context helpers shared by every platform module.
 
 Only app/collector/* may import playwright — keeps the dependency out of the
-FastAPI backend and Streamlit UI processes entirely.
+FastAPI backend and React frontend.
 """
 from __future__ import annotations
 

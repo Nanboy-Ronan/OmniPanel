@@ -15,12 +15,12 @@
 - `app/collector/` ——一个独立的 Python 包，使用
   [Playwright](https://playwright.dev/python/)（同步 API）。**除了
   `app/collector/` 之外没有任何模块引入 Playwright**——FastAPI 后端和
-  Streamlit 前端都不会加载浏览器。
+  React 前端都不会加载浏览器。
 - 作为独立进程运行（`python -m app.collector collect`），与 Web
   应用进程互不依赖——用什么方式触发取决于你的部署方式（cron、systemd
   timer、定时 CI 任务，或手动执行都可以）。
 - 上传通过 API 完成，使用一个专用的服务账号（走
-  `app/ui/api_client.py` 的 `APIClient`）——和人在页面上点"上传"走的是完全相同的代码路径。
+  `app/api_client.py` 的 `APIClient`）——和人在页面上点"上传"走的是完全相同的代码路径。
 - 每次运行的状态直接写入 Postgres（`CollectorRun` / `collector_runs`
   表），与微信自动同步的 `MediaSyncRun` 是同一套模式。
 - `python -m app.collector verify-all` 会主动检查所有已启用目标的登录态是否有效（不下载、不上传），并对失效或缺失的登录态告警——设计为比
@@ -57,7 +57,7 @@ python -m app.collector bootstrap-login --platform jd --out jd_session.json
 # 京麦商家中心（shop.jd.com）商家登录。
 ```
 
-然后通过 Streamlit 管理页面「自动采集」（仅管理员可见）上传生成的 JSON
+然后通过 React 管理页面「自动采集」（仅管理员可见）上传生成的 JSON
 文件：选择平台（小红书/蒲公英还需要选择对应账号——如果一个手机号关联多个账号，每个账号需要单独一份
 session 文件），上传即可。文件会写到服务器端的
 `{COLLECTOR_DIR}/sessions/xhs_{account_id}.json`、
@@ -232,7 +232,7 @@ ORDER BY started_at DESC
 LIMIT 20;
 ```
 
-也可以在 Streamlit「自动采集」管理页面里查看（session 状态 + 最近运行列表）。
+也可以在 React「自动采集」管理页面里查看（session 状态 + 最近运行列表）。
 
 ## 数据管道健康巡检
 

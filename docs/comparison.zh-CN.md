@@ -47,7 +47,7 @@ OmniPanel 未来版本的真实候选项，不只是客套话。
   在和反爬机制博弈。OmniPanel 只摄入商家本就合法拥有的导出数据：不会因为平台
   改版就连接器失效，也没有法律灰色地带。
 - **一个真正可部署的产品**，不是脚本合集，也不是付费 API。自托管的
-  FastAPI + Streamlit + PostgreSQL，带鉴权、角色权限（viewer/analyst/admin）、
+  FastAPI + React + PostgreSQL，带鉴权、角色权限（viewer/analyst/admin）、
   企业微信单点登录、只追加的审计日志——四个对比项目都没有这样完整的东西：
   它们是代码示例、靠 n8n/MySQL/飞书拼起来的工作流，或者是没有自己界面的
   按调用付费托管 API。

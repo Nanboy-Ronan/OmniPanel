@@ -21,3 +21,8 @@ data
 *.sqlite3
 .env
 docs/images
+**/node_modules
+frontend/dist
+frontend/coverage
+playwright-report
+test-results

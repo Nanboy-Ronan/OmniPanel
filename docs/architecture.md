@@ -12,9 +12,9 @@ that involve an external party (WeCom SSO, NL-to-SQL providers).
 
 ```
 ┌──────────────┐     HTTP      ┌──────────────┐
-│  Streamlit   │ ◄──────────► │   FastAPI    │
+│  React   │ ◄──────────► │   FastAPI    │
 │  dashboard   │   REST API   │   backend    │
-│  :8501       │              │   :8000      │
+│  :5173       │              │   :8000      │
 └──────────────┘              └──────┬───────┘
                                       │
                                ┌──────▼───────┐
@@ -90,7 +90,7 @@ Enterprise WeChat (WeCom) SSO flow:
 └──────────────┘
 ```
 
-- **Frontend** — Streamlit (`app/ui/`). A thin client: it calls the backend
+- **Frontend** — React + TypeScript (`frontend/`). A thin client: it calls the backend
   over HTTP with a JWT bearer token and renders the JSON it gets back. No
   business logic lives here.
 - **Backend** — FastAPI (`app/`). Owns every business rule, the ETL
@@ -102,7 +102,7 @@ Enterprise WeChat (WeCom) SSO flow:
 
 ## Request flow
 
-1. The Streamlit UI sends a request with `Authorization: Bearer <token>`.
+1. The React UI sends a request with `Authorization: Bearer <token>`.
 2. FastAPI-Users (`app/auth.py`) resolves the token to a `User` row and its
    `role` (`viewer` / `analyst` / `admin`).
 3. A dependency (`current_active_user` / `current_analyst_user` /
@@ -298,7 +298,7 @@ documents the commonly-changed ones inline; the full set, with defaults:
 | `PROXY_HEADERS` | `true` | Trust `X-Forwarded-*` from a reverse proxy |
 | `FORWARDED_ALLOW_IPS` | `*` | Which proxy IPs to trust for forwarded headers |
 | `SSL_KEYFILE` / `SSL_CERTFILE` | unset | Enable HTTPS directly in uvicorn (see [Getting started](getting-started.md)) |
-| `CORS_ORIGINS` | unset (falls back to `localhost:8501`) | Comma-separated allowed origins |
+| `CORS_ORIGINS` | unset (falls back to `localhost:5173`) | Comma-separated allowed origins |
 | `APP_TIMEZONE` | `Asia/Shanghai` | Used for logging and all scheduler timing |
 | `BACKUP_DIR` / `RPA_BACKUP_DIR` | `backups` | Database dumps and upload recovery files |
 | `BACKUP_KEEP` / `RPA_BACKUP_KEEP` | `5` | Retained monthly/manual backups |

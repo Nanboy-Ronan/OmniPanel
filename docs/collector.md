@@ -26,12 +26,12 @@ click-download-upload sequence a human already does.
 
 - `app/collector/` — a standalone package. Uses [Playwright](https://playwright.dev/python/)
   (sync API). **Nothing outside `app/collector/` imports Playwright** — the
-  FastAPI backend and Streamlit UI never load a browser.
+  FastAPI backend and React UI never load a browser.
 - Runs as a separate process (`python -m app.collector collect`), independent
   of the web app process — trigger it however fits your deployment (cron,
   systemd timer, a scheduled CI job, manually).
 - Uploads go through the API using a dedicated service-account user (via
-  `app/ui/api_client.py`'s `APIClient`) — identical code path to a human
+  `app/api_client.py`'s `APIClient`) — identical code path to a human
   clicking "upload" in the UI.
 - Run status is written directly to Postgres (`CollectorRun` /
   `collector_runs`, same pattern as `MediaSyncRun` for WeChat auto-sync).
@@ -79,7 +79,7 @@ python -m app.collector bootstrap-login --platform jd --out jd_session.json
 # 京麦商家中心 (shop.jd.com) merchant login.
 ```
 
-Then upload the resulting JSON file via the Streamlit admin page ("自动采集",
+Then upload the resulting JSON file via the React admin page ("自动采集",
 only visible to admin users): select the platform (and, for XHS/PGY, the
 account it belongs to — one session file per account if the phone number has
 several) and upload. It's written server-side to
@@ -331,7 +331,7 @@ ORDER BY started_at DESC
 LIMIT 20;
 ```
 
-Also visible in the Streamlit "自动采集" admin page (session status + recent
+Also visible in the React "自动采集" admin page (session status + recent
 runs table).
 
 ## Pipeline health watchdog

@@ -59,19 +59,37 @@ Path A: Auto-sync                  Path B: Manual upload
 
 ## Screenshots
 
-> All data shown is randomly generated; not a real business.
+> Captured from the React workbench using synthetic demo data only.
 
-| Customer analytics | Cohort retention |
-|---|---|
-| ![Customer analytics overview](docs/images/screenshot_analysis.png) | ![Monthly cohort retention curves](docs/images/screenshot_cohort.png) |
+![Business overview](docs/images/screenshot_overview.png)
 
-| Cross-platform customer identity | SQL console |
+| Commerce analytics | Content analytics |
 |---|---|
-| ![Cross-platform customer identity](docs/images/screenshot_identity.png) | ![SQL console with query results](docs/images/screenshot_sql.png) |
+| ![Commerce analytics](docs/images/screenshot_analysis.png) | ![Content analytics](docs/images/screenshot_content.png) |
+
+| Pugongying campaigns | Database status |
+|---|---|
+| ![Pugongying campaigns](docs/images/screenshot_pgy.png) | ![Database status](docs/images/screenshot_database.png) |
+
+<details>
+<summary>More panels: retention, identity, and SQL</summary>
+
+![Cohort retention](docs/images/screenshot_cohort.png)
+
+![Customer identity](docs/images/screenshot_identity.png)
+
+![SQL console](docs/images/screenshot_sql.png)
+
+</details>
 
 ---
 
 ## Features
+
+- **React workbench** — 22 routes with shared filters, role-aware navigation, and a responsive layout.
+- **Interactive commerce BI** — linked revenue trends, channel contributions, product rankings, regional distribution, and period comparisons.
+- **Content and cooperation analytics** — readable long-tail distributions, linked Pugongying campaigns/bloggers, historical visibility, and source-health checks.
+- **Live operations panels** — explicit account permissions and database schema, row counts, and backup metadata derived from actual checks.
 
 ### Data ingestion
 
@@ -111,7 +129,7 @@ Path A: Auto-sync                  Path B: Manual upload
 ### Security & operations
 
 - **Three roles** — viewer (read-only) / analyst (upload + analyze) / admin (user management, DB operations)
-- **Enterprise WeChat SSO** — optional QR-code login
+- **Enterprise WeChat SSO** — QR-code sign-in for the React console
 - **Audit log** — every query and mutating action is written to an append-only operation log
 - **Background jobs** — scheduled WeChat sync, daily/monthly backups, leader failover, task restart, and recovery of interrupted uploads from persisted source files
 - **Dashboard navigation** — role-aware navigation, shareable filter URLs, saved views, session-expiry handling, and consistent chart colors
@@ -153,7 +171,7 @@ See [docs/comparison.md](docs/comparison.md) for a detailed breakdown.
 ## Architecture
 
 ```
-Browser (Streamlit, :8501) ──→ Backend API (FastAPI, :8000) ──→ PostgreSQL
+Browser (React, /console/) ──→ Backend API (FastAPI, :8000) ──→ PostgreSQL
                                         │
                                    ┌────┴────┐
                                    │  Redis    │ (optional, cache / rate limiting)
@@ -165,7 +183,7 @@ Browser (Streamlit, :8501) ──→ Backend API (FastAPI, :8000) ──→ Post
 
 | Layer | Technology | Role |
 |---|---|---|
-| Frontend | Streamlit (`app/ui/`) | Thin client — renders backend data; no business logic |
+| Frontend | React + TypeScript (`frontend/`) | Thin client — renders backend data; no business logic |
 | Backend | FastAPI (`app/`) | Auth, ETL, analytics, SQL console, background jobs |
 | Database | PostgreSQL + SQLAlchemy | Unified normalized schema; raw platform rows preserved alongside |
 | Cache | Redis (optional) | Distributed cache and login rate limiter; falls back to in-process |
@@ -178,7 +196,7 @@ See [Architecture](docs/architecture.md) for full details.
 
 ### Docker (recommended)
 
-Requires Docker + Docker Compose v2. Starts Postgres, FastAPI, and Streamlit together — no local Python or Postgres needed.
+Requires Docker + Docker Compose v2. Starts Postgres, FastAPI, and the React/Nginx frontend together — no local Python or Postgres needed.
 
 ```bash
 git clone https://github.com/Nanboy-Ronan/OmniPanel.git
@@ -189,11 +207,11 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Open http://localhost:8501, register the first user (auto-promoted to admin), and start uploading exports.
+Open http://localhost:5173/console/ and sign in with Enterprise WeChat. Configure its credentials and callback URL in `.env`; the first authenticated user becomes an admin. To explore without credentials, use the [synthetic preview](frontend/README.md#checks-and-synthetic-preview).
 
 ### Manual setup
 
-Requires Python 3.13+ and PostgreSQL 13+.
+Requires Python 3.13+, Node.js 22.18+, and PostgreSQL 13+.
 
 ```bash
 # 1. Clone and install
@@ -212,8 +230,9 @@ make db-upgrade            # or: alembic upgrade head
 # 4. Start the backend (FastAPI on :8000)
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# 5. In another terminal, start the frontend (Streamlit on :8501)
-streamlit run app/ui/dashboard.py
+# 5. In another terminal, install and start the React frontend
+npm --prefix frontend ci
+make ui  # http://localhost:5173/console/
 ```
 
 Full walkthrough: [Getting started](docs/getting-started.md).

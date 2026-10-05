@@ -1,0 +1,50 @@
+{
+  "orders": [
+    ["id", "integer", "主键"],
+    ["order_date", "date", "下单日期"],
+    ["order_id", "text", "原始平台订单号"],
+    ["customer_key", "text", "客户标识（手机号 / 地址）"],
+    ["platform", "text", "'youzan' | 'jd' | 'tmall'"],
+    ["sku", "text", "商品 SKU 名称"],
+    ["quantity", "integer", "购买数量"],
+    ["price", "numeric", "订单金额（¥）"],
+    ["receiver", "text", "收货人姓名"],
+    ["receiver_phone", "text", "收货人手机号"],
+    ["province", "text", "省份"],
+    ["area", "text", "城市 / 地区"],
+    ["full_address", "text", "完整收货地址"],
+    ["buyer_nick", "text", "买家昵称"],
+    ["coupon_name", "text", "使用的优惠券"],
+    ["distributor", "text", "分销员 / 导购"]
+  ],
+  "customers": [
+    ["customer_key", "text", "主键"],
+    ["platform", "text", "来源平台"],
+    ["first_order_date", "date", "首次下单日期"]
+  ],
+  "upload_batches": [
+    ["id", "integer", "批次 ID"],
+    ["filename", "text", "上传文件名"],
+    ["platform", "text", "检测到的平台"],
+    ["uploaded_at", "timestamp", "上传时间（UTC）"],
+    ["row_count", "integer", "文件总行数"],
+    ["inserted_orders", "integer", "新增订单数"],
+    ["duplicate_rows", "integer", "重复跳过行数"],
+    ["invalid_rows", "integer", "拒绝行数"],
+    ["status", "text", "'completed' | 'error'"]
+  ],
+  "upload_rejected_rows": [
+    ["id", "integer", "行 ID"],
+    ["batch_id", "integer", "→ upload_batches.id"],
+    ["platform", "text", "来源平台"],
+    ["source_row_number", "integer", "文件中的原始行号"],
+    ["reason", "text", "拒绝原因"]
+  ],
+  "operation_log": [
+    ["id", "integer", "日志 ID"],
+    ["user_id", "uuid", "操作用户"],
+    ["action", "text", "'upload' | 'analysis' | 'sql_query' | 'create_user' | …"],
+    ["timestamp", "timestamp", "时间戳（UTC）"],
+    ["detail", "text", "JSON — 操作详情"]
+  ]
+}

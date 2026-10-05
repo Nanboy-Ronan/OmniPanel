@@ -142,14 +142,14 @@ def _csv_youzan_with_phone(phone: str, name: str = "张三") -> str:
 def _csv_tmall_with_phone(phone: str, name: str = "李四") -> str:
     return (
         "订单编号,总金额,收货地址,订单创建时间,商品标题\n"
-        f"TM-ID-001,150,{name}，86-{phone}，江苏省 苏州市 姑苏区 某路2号,2025-08-05 09:00:00,示例商品\n"
+        f"TM-ID-001,150,{name}，86-{phone}，江苏省 苏州市 姑苏区 某路2号,2025-08-05 09:00:00,示例商品片\n"
     )
 
 
 def _csv_jd_with_masked_phone(masked_phone: str, address: str, name: str = "王五") -> str:
     return (
         "订单号,商品名称,订购数量,下单时间,订单金额,客户姓名,客户地址,联系电话,京东价\n"
-        f"JD-ID-001,示例商品,1,2025-08-10 11:00:00,90.00,{name},{address},{masked_phone},90.00\n"
+        f"JD-ID-001,示例商品片,1,2025-08-10 11:00:00,90.00,{name},{address},{masked_phone},90.00\n"
     )
 
 

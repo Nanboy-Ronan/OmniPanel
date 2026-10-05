@@ -243,22 +243,6 @@ def test_weekly_report_escapes_dynamic_html():
     assert '&lt;em data-review=&#34;marker&#34;&gt;' in html
 
 
-def test_paged_post_loader_includes_rows_beyond_first_page():
-    from app.ui._helpers import fetch_all_posts
-
-    seen_offsets = []
-
-    def fetch_page(*, limit, offset, **_filters):
-        seen_offsets.append(offset)
-        values = list(range(offset, min(offset + limit, 1001)))
-        return SimpleNamespace(status_code=200, json=lambda: values)
-
-    rows, error = fetch_all_posts(fetch_page)
-    assert error is None
-    assert len(rows) == 1001
-    assert seen_offsets == [0, 1000]
-
-
 def test_xhs_post_endpoint_pages_beyond_first_thousand(pg_async_url):
     from app.db.models import XhsAccount, XhsPost
     from app.views.media.xhs import list_xhs_posts, xhs_overview

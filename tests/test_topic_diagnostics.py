@@ -3,7 +3,7 @@
 `match_article_topics()` is a platform-agnostic pure function (already used
 by the WeChat page's equivalent tab) — these tests exercise it directly
 against XHS/Zhihu-shaped title strings, since the new tab code in
-`app/ui/pages/xhs_upload.py` / `zhihu_upload.py` just calls this same
+The media topic analysis just calls this same
 function on the `title` field already present in their posts-list response.
 """
 from __future__ import annotations

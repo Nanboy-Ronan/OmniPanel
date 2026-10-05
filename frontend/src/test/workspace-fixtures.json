@@ -1,0 +1,1484 @@
+{
+  "/analysis/latest_order_date": {
+    "latest_order_date": "2026-10-03"
+  },
+  "/orders_all/": [
+    {
+      "id": 1,
+      "order_id": "DEMO-001",
+      "order_date": "2026-10-03",
+      "customer_key": "demo-customer",
+      "platform": "jd",
+      "sku": "示例产品",
+      "price": 258,
+      "quantity": 1,
+      "receiver": "演示客户",
+      "mobile": "138****0000",
+      "orders": 3,
+      "revenue": 774,
+      "first_date": "2026-09-01",
+      "last_date": "2026-10-03"
+    }
+  ],
+  "/orders_all/1/raw": {
+    "order": {
+      "id": 1,
+      "order_id": "DEMO-001",
+      "order_date": "2026-10-03",
+      "customer_key": "demo-customer",
+      "platform": "jd",
+      "sku": "示例产品",
+      "price": 258,
+      "quantity": 1,
+      "receiver": "演示客户",
+      "mobile": "138****0000",
+      "orders": 3,
+      "revenue": 774,
+      "first_date": "2026-09-01",
+      "last_date": "2026-10-03"
+    },
+    "rows": [
+      {
+        "id": 1,
+        "order_id": "DEMO-001",
+        "order_date": "2026-10-03",
+        "customer_key": "demo-customer",
+        "platform": "jd",
+        "sku": "示例产品",
+        "price": 258,
+        "quantity": 1,
+        "receiver": "演示客户",
+        "mobile": "138****0000",
+        "orders": 3,
+        "revenue": 774,
+        "first_date": "2026-09-01",
+        "last_date": "2026-10-03"
+      }
+    ],
+    "row_count": 1
+  },
+  "/upload/batches": [
+    {
+      "id": 17,
+      "filename": "示例订单.csv",
+      "platform": "jd",
+      "uploaded_at": "2026-10-03 15:00:00",
+      "row_count": 100,
+      "inserted_orders": 80,
+      "duplicate_rows": 20,
+      "invalid_rows": 0,
+      "status": "completed",
+      "error_message": null
+    }
+  ],
+  "/upload/batches/17": {
+    "id": 17,
+    "filename": "示例订单.csv",
+    "platform": "jd",
+    "uploaded_at": "2026-10-03 15:00:00",
+    "row_count": 100,
+    "inserted_orders": 80,
+    "duplicate_rows": 20,
+    "invalid_rows": 0,
+    "status": "completed",
+    "error_message": null
+  },
+  "/analysis/overview": {
+    "orders": 120,
+    "revenue": 30960,
+    "aov": 258,
+    "unique_customers": 92,
+    "top_sku": [
+      {
+        "sku": "示例产品",
+        "orders": 120,
+        "revenue": 30960
+      }
+    ],
+    "top_province": [
+      {
+        "province": "广东",
+        "orders": 30,
+        "revenue": 7740
+      }
+    ],
+    "top_province_unique": [
+      {
+        "province": "广东",
+        "customers": 22
+      }
+    ]
+  },
+  "/analysis/": {
+    "old": {
+      "rows": [
+        {
+          "id": 1,
+          "order_id": "DEMO-001",
+          "order_date": "2026-10-03",
+          "customer_key": "demo-customer",
+          "platform": "jd",
+          "sku": "示例产品",
+          "price": 258,
+          "quantity": 1,
+          "receiver": "演示客户",
+          "mobile": "138****0000",
+          "orders": 3,
+          "revenue": 774,
+          "first_date": "2026-09-01",
+          "last_date": "2026-10-03"
+        }
+      ],
+      "count": 120,
+      "customer_count": 92,
+      "paid_sum": 30960,
+      "rows_capped": false,
+      "rows_cap": 5000
+    },
+    "new": {
+      "rows": [
+        {
+          "id": 1,
+          "order_id": "DEMO-001",
+          "order_date": "2026-10-03",
+          "customer_key": "demo-customer",
+          "platform": "jd",
+          "sku": "示例产品",
+          "price": 258,
+          "quantity": 1,
+          "receiver": "演示客户",
+          "mobile": "138****0000",
+          "orders": 3,
+          "revenue": 774,
+          "first_date": "2026-09-01",
+          "last_date": "2026-10-03"
+        }
+      ],
+      "count": 120,
+      "customer_count": 92,
+      "paid_sum": 30960,
+      "rows_capped": false,
+      "rows_cap": 5000
+    },
+    "old_daily": {
+      "2026-10-02": 11,
+      "2026-10-03": 14
+    },
+    "new_daily": {
+      "2026-10-02": 32,
+      "2026-10-03": 38
+    }
+  },
+  "/analysis/repurchase_rate": {
+    "new_customers": 92,
+    "repurchasing_customers": 15,
+    "repurchase_rate": 0.16304347826086957,
+    "avg_days_to_repurchase": 12,
+    "frequency_distribution": {
+      "1次": 77,
+      "2次": 12,
+      "3次以上": 3
+    }
+  },
+  "/analysis/customers": [
+    {
+      "id": 1,
+      "order_id": "DEMO-001",
+      "order_date": "2026-10-03",
+      "customer_key": "demo-customer",
+      "platform": "jd",
+      "sku": "示例产品",
+      "price": 258,
+      "quantity": 1,
+      "receiver": "演示客户",
+      "mobile": "138****0000",
+      "orders": 3,
+      "revenue": 774,
+      "first_date": "2026-09-01",
+      "last_date": "2026-10-03"
+    }
+  ],
+  "/analysis/customers/demo-customer": {
+    "orders": [
+      {
+        "id": 1,
+        "order_id": "DEMO-001",
+        "order_date": "2026-10-03",
+        "customer_key": "demo-customer",
+        "platform": "jd",
+        "sku": "示例产品",
+        "price": 258,
+        "quantity": 1,
+        "receiver": "演示客户",
+        "mobile": "138****0000",
+        "orders": 3,
+        "revenue": 774,
+        "first_date": "2026-09-01",
+        "last_date": "2026-10-03"
+      }
+    ],
+    "count": 3,
+    "total_spend": 774
+  },
+  "/analysis/identity/clusters": {
+    "exact": {
+      "cluster_count": 1,
+      "total_orders": 3,
+      "total_revenue": 774,
+      "clusters": [
+        {
+          "cluster_id": 1,
+          "confidence": "exact",
+          "platforms": ["jd", "youzan"],
+          "order_count": 3,
+          "revenue": 774
+        }
+      ]
+    },
+    "fuzzy": {
+      "cluster_count": 0,
+      "total_orders": 0,
+      "total_revenue": 0,
+      "clusters": [],
+      "caveat": "脱敏手机号可能误判。"
+    }
+  },
+  "/analysis/cohort_retention": {
+    "latest_data_month": "2026-10",
+    "cohorts": [
+      {
+        "cohort_month": "2026-09",
+        "cohort_size": 92,
+        "per_period": [1, 0.18, null, null, null, null, null, null, null, null, null, null, null],
+        "cumulative": [0, 0.18, null, null, null, null, null, null, null, null, null, null, null]
+      }
+    ]
+  },
+  "/analysis/field_coverage": {
+    "total_rows": 120,
+    "columns": {
+      "sku": 1,
+      "quantity": 0.95,
+      "price": 1,
+      "receiver": 0.8,
+      "receiver_phone": 1
+    }
+  },
+  "/saved-queries/": [],
+  "/analysis/nl-sql/providers": {
+    "providers": [
+      {
+        "id": "demo",
+        "label": "演示服务",
+        "models": ["demo-model"]
+      }
+    ],
+    "default_provider": "demo"
+  },
+  "/analysis/sql": {
+    "columns": ["platform", "revenue"],
+    "rows": [["jd", 30960]],
+    "row_count": 1
+  },
+  "/reports/weekly": [
+    {
+      "id": 1,
+      "week_start": "2026-09-28",
+      "week_end": "2026-10-04",
+      "status": "success",
+      "wecom_sent": false,
+      "narrative": "本周阅读与互动保持增长。此处仅为本地模拟数据。",
+      "html_content": "<html lang=\"zh-CN\"><body style=\"font-family:sans-serif;padding:36px;color:#203246\"><h1>自媒体经营周报</h1><p>2026.09.28 — 2026.10.04 · 模拟数据</p><h2>内容表现</h2><p>本周发布 12 篇内容，总阅读 28,500，互动 1,230。</p></body></html>",
+      "error_message": null
+    }
+  ],
+  "/reports/weekly/1": {
+    "id": 1,
+    "week_start": "2026-09-28",
+    "week_end": "2026-10-04",
+    "status": "success",
+    "wecom_sent": false,
+    "narrative": "本周阅读与互动保持增长。此处仅为本地模拟数据。",
+    "html_content": "<html lang=\"zh-CN\"><body style=\"font-family:sans-serif;padding:36px;color:#203246\"><h1>自媒体经营周报</h1><p>2026.09.28 — 2026.10.04 · 模拟数据</p><h2>内容表现</h2><p>本周发布 12 篇内容，总阅读 28,500，互动 1,230。</p></body></html>",
+    "error_message": null
+  },
+  "/media/accounts": [
+    {
+      "id": 1,
+      "name": "演示账号",
+      "account_type": "company",
+      "pgy_enabled": true,
+      "is_active": true
+    }
+  ],
+  "/media/posts": [
+    {
+      "id": 1,
+      "title": "秋季新品 · 内容示例",
+      "publish_date": "2026-10-03",
+      "account_id": 1,
+      "account_name": "演示账号",
+      "genre": "视频",
+      "read_user_count": 1200,
+      "read_count": 1500,
+      "share_user_count": 40,
+      "like_user": 25,
+      "comment_count": 12,
+      "collection_user": 18,
+      "views": 1200,
+      "impressions": 16000,
+      "likes": 45,
+      "comments": 12,
+      "shares": 30,
+      "collects": 35,
+      "new_followers": 16,
+      "plays": 1500,
+      "reads": 1200,
+      "recommends": 20,
+      "likes_thumb": 45,
+      "new_fans": 16,
+      "cover_click_rate": 0.075,
+      "completion_rate": 0.62,
+      "engagement_rate": 8,
+      "total_engagement": 122,
+      "wecom_link_clicks": 23,
+      "added_to_contacts": 6
+    }
+  ],
+  "/media/overview": {
+    "posts": 1,
+    "read_user_count": 1200,
+    "share_user_count": 40,
+    "like_user": 25,
+    "comment_count": 12,
+    "collection_user": 18,
+    "avg_read_user_count": 1200
+  },
+  "/media/traffic": [
+    {
+      "id": 1,
+      "title": "秋季新品 · 内容示例",
+      "publish_date": "2026-10-03",
+      "account_id": 1,
+      "account_name": "演示账号",
+      "genre": "视频",
+      "read_user_count": 1200,
+      "read_count": 1500,
+      "share_user_count": 40,
+      "like_user": 25,
+      "comment_count": 12,
+      "collection_user": 18,
+      "views": 1200,
+      "impressions": 16000,
+      "likes": 45,
+      "comments": 12,
+      "shares": 30,
+      "collects": 35,
+      "new_followers": 16,
+      "plays": 1500,
+      "reads": 1200,
+      "recommends": 20,
+      "likes_thumb": 45,
+      "new_fans": 16,
+      "cover_click_rate": 0.075,
+      "completion_rate": 0.62,
+      "engagement_rate": 8,
+      "total_engagement": 122,
+      "wecom_link_clicks": 23,
+      "added_to_contacts": 6
+    }
+  ],
+  "/media/traffic/overview": {
+    "articles": 1,
+    "reads": 1200,
+    "shares": 40
+  },
+  "/media/source-breakdown": {
+    "公众号会话": 850,
+    "朋友圈": 250,
+    "其他": 100
+  },
+  "/media/source-by-post": {
+    "1": {
+      "公众号会话": 850,
+      "朋友圈": 250,
+      "其他": 100
+    }
+  },
+  "/media/posts/1/metrics": [
+    {
+      "id": 1,
+      "title": "秋季新品 · 内容示例",
+      "publish_date": "2026-10-03",
+      "account_id": 1,
+      "account_name": "演示账号",
+      "genre": "视频",
+      "read_user_count": 1200,
+      "read_count": 1500,
+      "share_user_count": 40,
+      "like_user": 25,
+      "comment_count": 12,
+      "collection_user": 18,
+      "views": 1200,
+      "impressions": 16000,
+      "likes": 45,
+      "comments": 12,
+      "shares": 30,
+      "collects": 35,
+      "new_followers": 16,
+      "plays": 1500,
+      "reads": 1200,
+      "recommends": 20,
+      "likes_thumb": 45,
+      "new_fans": 16,
+      "cover_click_rate": 0.075,
+      "completion_rate": 0.62,
+      "engagement_rate": 8,
+      "total_engagement": 122,
+      "wecom_link_clicks": 23,
+      "added_to_contacts": 6,
+      "metric_date": "2026-10-03"
+    }
+  ],
+  "/media/content-impact": [
+    {
+      "id": 1,
+      "title": "秋季新品 · 内容示例",
+      "publish_date": "2026-10-03",
+      "account_id": 1,
+      "account_name": "演示账号",
+      "genre": "视频",
+      "read_user_count": 1200,
+      "read_count": 1500,
+      "share_user_count": 40,
+      "like_user": 25,
+      "comment_count": 12,
+      "collection_user": 18,
+      "views": 1200,
+      "impressions": 16000,
+      "likes": 45,
+      "comments": 12,
+      "shares": 30,
+      "collects": 35,
+      "new_followers": 16,
+      "plays": 1500,
+      "reads": 1200,
+      "recommends": 20,
+      "likes_thumb": 45,
+      "new_fans": 16,
+      "cover_click_rate": 0.075,
+      "completion_rate": 0.62,
+      "engagement_rate": 8,
+      "total_engagement": 122,
+      "wecom_link_clicks": 23,
+      "added_to_contacts": 6,
+      "pre_orders": 100,
+      "post_orders": 120,
+      "pre_revenue": 25800,
+      "post_revenue": 30960,
+      "order_lift_pct": 20,
+      "revenue_lift_pct": 20
+    }
+  ],
+  "/media/pgy/notes": [
+    {
+      "id": 1,
+      "title": "秋季新品 · 内容示例",
+      "publish_date": "2026-10-03",
+      "account_id": 1,
+      "account_name": "演示账号",
+      "genre": "视频",
+      "read_user_count": 1200,
+      "read_count": 1500,
+      "share_user_count": 40,
+      "like_user": 25,
+      "comment_count": 12,
+      "collection_user": 18,
+      "views": 1200,
+      "impressions": 16000,
+      "likes": 45,
+      "comments": 12,
+      "shares": 30,
+      "collects": 35,
+      "new_followers": 16,
+      "plays": 1500,
+      "reads": 1200,
+      "recommends": 20,
+      "likes_thumb": 45,
+      "new_fans": 16,
+      "cover_click_rate": 0.075,
+      "completion_rate": 0.62,
+      "engagement_rate": 8,
+      "total_engagement": 122,
+      "wecom_link_clicks": 23,
+      "added_to_contacts": 6,
+      "note_title": "秋季新品 · 内容示例",
+      "note_id": "demo-note",
+      "blogger_nickname": "演示达人",
+      "cooperation_name": "秋季新品",
+      "blogger_quote": 1000,
+      "service_fee": 100,
+      "interactions": 122,
+      "cost_per_interaction": 9.02,
+      "audience_json": "{\"年龄\":{\"25-34\":0.4}}",
+      "component_json": "{\"点击\":23}"
+    }
+  ],
+  "/media/pgy/bloggers": [
+    {
+      "blogger_nickname": "演示达人",
+      "total_cooperations": 1,
+      "total_spend": 1000,
+      "total_interactions": 122,
+      "avg_cpe": 9.02
+    }
+  ],
+  "/media/pgy/campaigns": [
+    {
+      "cooperation_name": "秋季新品",
+      "total_notes": 1,
+      "total_spend": 1100,
+      "total_impressions": 16000,
+      "total_interactions": 122,
+      "avg_cpe": 9.02
+    }
+  ],
+  "/admin/users": [
+    {
+      "id": "preview",
+      "email": "preview@example.test",
+      "role": "admin",
+      "is_active": true,
+      "wecom_linked": true,
+      "wecom_alert_enabled": false
+    }
+  ],
+  "/admin/logs": [
+    {
+      "id": 1,
+      "email": "preview@example.test",
+      "action": "upload",
+      "timestamp": "2026-10-03 15:00:00",
+      "detail": {
+        "rows": 100
+      }
+    }
+  ],
+  "/admin/db-status": {
+    "database_path": "PostgreSQL",
+    "database_exists": true,
+    "tables": ["orders", "customers", "upload_batches"],
+    "analysis_ready": true,
+    "all_orders_count": 120,
+    "missing_analysis_tables": [],
+    "missing_analysis_mappings": [],
+    "missing_analysis_columns": [],
+    "checked_at": "2026-10-05T05:00:00Z",
+    "health": "healthy",
+    "counts": {
+      "orders": 120,
+      "customers": 92,
+      "media_posts": 24,
+      "user": 1
+    },
+    "table_details": [
+      {
+        "name": "orders",
+        "present": true,
+        "rows": 120,
+        "missing_columns": []
+      },
+      {
+        "name": "customers",
+        "present": true,
+        "rows": 92,
+        "missing_columns": []
+      },
+      {
+        "name": "media_posts",
+        "present": true,
+        "rows": 24,
+        "missing_columns": []
+      },
+      {
+        "name": "user",
+        "present": true,
+        "rows": 1,
+        "missing_columns": []
+      }
+    ],
+    "backups": {
+      "status": "found",
+      "files": [
+        {
+          "name": "rpa-20261005-monthly.sql",
+          "bytes": 1048576,
+          "modified_at": "2026-10-05T00:00:00Z"
+        }
+      ]
+    }
+  },
+  "/admin/collector/sessions": [
+    {
+      "platform": "xhs",
+      "account_id": 1,
+      "account_name": "演示账号",
+      "updated_at": "2026-10-03 10:00:00",
+      "last_run_status": "success",
+      "last_verify_status": "success"
+    }
+  ],
+  "/admin/collector/runs": [
+    {
+      "id": 1,
+      "platform": "xhs",
+      "account_name": "演示账号",
+      "started_at": "2026-10-03 06:30:00",
+      "finished_at": "2026-10-03 06:31:00",
+      "status": "success",
+      "rows_upserted": 12,
+      "triggered_by": "scheduler"
+    }
+  ],
+  "/media/xhs/accounts": [
+    {
+      "id": 1,
+      "name": "演示账号",
+      "account_type": "company",
+      "pgy_enabled": true,
+      "is_active": true
+    }
+  ],
+  "/media/xhs/posts": [
+    {
+      "id": 1,
+      "title": "秋季新品 · 内容示例",
+      "publish_date": "2026-10-03",
+      "account_id": 1,
+      "account_name": "演示账号",
+      "genre": "视频",
+      "read_user_count": 1200,
+      "read_count": 1500,
+      "share_user_count": 40,
+      "like_user": 25,
+      "comment_count": 12,
+      "collection_user": 18,
+      "views": 1200,
+      "impressions": 16000,
+      "likes": 45,
+      "comments": 12,
+      "shares": 30,
+      "collects": 35,
+      "new_followers": 16,
+      "plays": 1500,
+      "reads": 1200,
+      "recommends": 20,
+      "likes_thumb": 45,
+      "new_fans": 16,
+      "cover_click_rate": 0.075,
+      "completion_rate": 0.62,
+      "engagement_rate": 8,
+      "total_engagement": 122,
+      "wecom_link_clicks": 23,
+      "added_to_contacts": 6
+    }
+  ],
+  "/media/xhs/overview": {
+    "posts": 1,
+    "views": 1200,
+    "engagement": 122
+  },
+  "/media/zhihu/accounts": [
+    {
+      "id": 1,
+      "name": "演示账号",
+      "account_type": "company",
+      "pgy_enabled": true,
+      "is_active": true
+    }
+  ],
+  "/media/zhihu/posts": [
+    {
+      "id": 1,
+      "title": "秋季新品 · 内容示例",
+      "publish_date": "2026-10-03",
+      "account_id": 1,
+      "account_name": "演示账号",
+      "genre": "视频",
+      "read_user_count": 1200,
+      "read_count": 1500,
+      "share_user_count": 40,
+      "like_user": 25,
+      "comment_count": 12,
+      "collection_user": 18,
+      "views": 1200,
+      "impressions": 16000,
+      "likes": 45,
+      "comments": 12,
+      "shares": 30,
+      "collects": 35,
+      "new_followers": 16,
+      "plays": 1500,
+      "reads": 1200,
+      "recommends": 20,
+      "likes_thumb": 45,
+      "new_fans": 16,
+      "cover_click_rate": 0.075,
+      "completion_rate": 0.62,
+      "engagement_rate": 8,
+      "total_engagement": 122,
+      "wecom_link_clicks": 23,
+      "added_to_contacts": 6
+    }
+  ],
+  "/media/zhihu/overview": {
+    "posts": 1,
+    "reads": 1200,
+    "engagement": 122
+  },
+  "/media/channels/accounts": [
+    {
+      "id": 1,
+      "name": "演示账号",
+      "account_type": "company",
+      "pgy_enabled": true,
+      "is_active": true
+    }
+  ],
+  "/media/channels/posts": [
+    {
+      "id": 1,
+      "title": "秋季新品 · 内容示例",
+      "publish_date": "2026-10-03",
+      "account_id": 1,
+      "account_name": "演示账号",
+      "genre": "视频",
+      "read_user_count": 1200,
+      "read_count": 1500,
+      "share_user_count": 40,
+      "like_user": 25,
+      "comment_count": 12,
+      "collection_user": 18,
+      "views": 1200,
+      "impressions": 16000,
+      "likes": 45,
+      "comments": 12,
+      "shares": 30,
+      "collects": 35,
+      "new_followers": 16,
+      "plays": 1500,
+      "reads": 1200,
+      "recommends": 20,
+      "likes_thumb": 45,
+      "new_fans": 16,
+      "cover_click_rate": 0.075,
+      "completion_rate": 0.62,
+      "engagement_rate": 8,
+      "total_engagement": 122,
+      "wecom_link_clicks": 23,
+      "added_to_contacts": 6
+    }
+  ],
+  "/media/channels/overview": {
+    "posts": 1,
+    "plays": 1200,
+    "engagement": 122
+  },
+  "/analysis/dashboard": {
+    "start_date": "2026-09-04",
+    "end_date": "2026-10-03",
+    "prior_start": "2026-08-05",
+    "prior_end": "2026-09-03",
+    "current": {
+      "orders": 564,
+      "priced_orders": 564,
+      "revenue": 107760,
+      "customers": 238,
+      "aov": 191.06,
+      "missing_amount": 0
+    },
+    "prior": {
+      "orders": 504,
+      "priced_orders": 504,
+      "revenue": 76817.72,
+      "customers": 201,
+      "aov": 152.42,
+      "missing_amount": 0
+    },
+    "series": [
+      {
+        "date": "2026-09-04",
+        "prior_date": "2026-08-05",
+        "orders": 10,
+        "priced_orders": 10,
+        "revenue": 1500,
+        "customers": 7,
+        "aov": 150.0,
+        "missing_amount": 0,
+        "prior_orders": 8,
+        "prior_revenue": 1425.0,
+        "prior_aov": 178.125,
+        "prior_customers": 5
+      },
+      {
+        "date": "2026-09-05",
+        "prior_date": "2026-08-06",
+        "orders": 13,
+        "priced_orders": 13,
+        "revenue": 2210,
+        "customers": 10,
+        "aov": 170.0,
+        "missing_amount": 0,
+        "prior_orders": 11,
+        "prior_revenue": 2075.45,
+        "prior_aov": 188.6772727272727,
+        "prior_customers": 8
+      },
+      {
+        "date": "2026-09-06",
+        "prior_date": "2026-08-07",
+        "orders": 16,
+        "priced_orders": 16,
+        "revenue": 3040,
+        "customers": 13,
+        "aov": 190.0,
+        "missing_amount": 0,
+        "prior_orders": 14,
+        "prior_revenue": 2757.75,
+        "prior_aov": 196.98214285714286,
+        "prior_customers": 11
+      },
+      {
+        "date": "2026-09-07",
+        "prior_date": "2026-08-08",
+        "orders": 18,
+        "priced_orders": 18,
+        "revenue": 3780,
+        "customers": 15,
+        "aov": 210.0,
+        "missing_amount": 0,
+        "prior_orders": 16,
+        "prior_revenue": 3236.02,
+        "prior_aov": 202.25125,
+        "prior_customers": 13
+      },
+      {
+        "date": "2026-09-08",
+        "prior_date": "2026-08-09",
+        "orders": 20,
+        "priced_orders": 20,
+        "revenue": 4600,
+        "customers": 17,
+        "aov": 230.0,
+        "missing_amount": 0,
+        "prior_orders": 18,
+        "prior_revenue": 3629.89,
+        "prior_aov": 201.66055555555556,
+        "prior_customers": 15
+      },
+      {
+        "date": "2026-09-09",
+        "prior_date": "2026-08-10",
+        "orders": 20,
+        "priced_orders": 20,
+        "revenue": 3000,
+        "customers": 17,
+        "aov": 150.0,
+        "missing_amount": 0,
+        "prior_orders": 18,
+        "prior_revenue": 2131.09,
+        "prior_aov": 118.3938888888889,
+        "prior_customers": 15
+      },
+      {
+        "date": "2026-09-10",
+        "prior_date": "2026-08-11",
+        "orders": 20,
+        "priced_orders": 20,
+        "revenue": 3400,
+        "customers": 17,
+        "aov": 170.0,
+        "missing_amount": 0,
+        "prior_orders": 18,
+        "prior_revenue": 2124.18,
+        "prior_aov": 118.00999999999999,
+        "prior_customers": 15
+      },
+      {
+        "date": "2026-09-11",
+        "prior_date": "2026-08-12",
+        "orders": 19,
+        "priced_orders": 19,
+        "revenue": 3610,
+        "customers": 16,
+        "aov": 190.0,
+        "missing_amount": 0,
+        "prior_orders": 17,
+        "prior_revenue": 1940.79,
+        "prior_aov": 114.16411764705882,
+        "prior_customers": 14
+      },
+      {
+        "date": "2026-09-12",
+        "prior_date": "2026-08-13",
+        "orders": 18,
+        "priced_orders": 18,
+        "revenue": 3780,
+        "customers": 15,
+        "aov": 210.0,
+        "missing_amount": 0,
+        "prior_orders": 16,
+        "prior_revenue": 1717.44,
+        "prior_aov": 107.34,
+        "prior_customers": 13
+      },
+      {
+        "date": "2026-09-13",
+        "prior_date": "2026-08-14",
+        "orders": 16,
+        "priced_orders": 16,
+        "revenue": 3680,
+        "customers": 13,
+        "aov": 230.0,
+        "missing_amount": 0,
+        "prior_orders": 14,
+        "prior_revenue": 1398.91,
+        "prior_aov": 99.92214285714286,
+        "prior_customers": 11
+      },
+      {
+        "date": "2026-09-14",
+        "prior_date": "2026-08-15",
+        "orders": 13,
+        "priced_orders": 13,
+        "revenue": 1950,
+        "customers": 10,
+        "aov": 150.0,
+        "missing_amount": 0,
+        "prior_orders": 11,
+        "prior_revenue": 623.22,
+        "prior_aov": 56.656363636363636,
+        "prior_customers": 8
+      },
+      {
+        "date": "2026-09-15",
+        "prior_date": "2026-08-16",
+        "orders": 11,
+        "priced_orders": 11,
+        "revenue": 1870,
+        "customers": 8,
+        "aov": 170.0,
+        "missing_amount": 0,
+        "prior_orders": 9,
+        "prior_revenue": 517.04,
+        "prior_aov": 57.44888888888889,
+        "prior_customers": 6
+      },
+      {
+        "date": "2026-09-16",
+        "prior_date": "2026-08-17",
+        "orders": 10,
+        "priced_orders": 10,
+        "revenue": 1900,
+        "customers": 7,
+        "aov": 190.0,
+        "missing_amount": 0,
+        "prior_orders": 8,
+        "prior_revenue": 481.65,
+        "prior_aov": 60.20625,
+        "prior_customers": 5
+      },
+      {
+        "date": "2026-09-17",
+        "prior_date": "2026-08-18",
+        "orders": 9,
+        "priced_orders": 9,
+        "revenue": 1890,
+        "customers": 6,
+        "aov": 210.0,
+        "missing_amount": 0,
+        "prior_orders": 7,
+        "prior_revenue": 476.38,
+        "prior_aov": 68.05428571428571,
+        "prior_customers": 4
+      },
+      {
+        "date": "2026-09-18",
+        "prior_date": "2026-08-19",
+        "orders": 9,
+        "priced_orders": 9,
+        "revenue": 2070,
+        "customers": 6,
+        "aov": 230.0,
+        "missing_amount": 0,
+        "prior_orders": 7,
+        "prior_revenue": 563.54,
+        "prior_aov": 80.50571428571428,
+        "prior_customers": 4
+      },
+      {
+        "date": "2026-09-19",
+        "prior_date": "2026-08-20",
+        "orders": 10,
+        "priced_orders": 10,
+        "revenue": 1500,
+        "customers": 7,
+        "aov": 150.0,
+        "missing_amount": 0,
+        "prior_orders": 8,
+        "prior_revenue": 469.21,
+        "prior_aov": 58.65125,
+        "prior_customers": 5
+      },
+      {
+        "date": "2026-09-20",
+        "prior_date": "2026-08-21",
+        "orders": 11,
+        "priced_orders": 11,
+        "revenue": 1870,
+        "customers": 8,
+        "aov": 170.0,
+        "missing_amount": 0,
+        "prior_orders": 9,
+        "prior_revenue": 694.19,
+        "prior_aov": 77.13222222222223,
+        "prior_customers": 6
+      },
+      {
+        "date": "2026-09-21",
+        "prior_date": "2026-08-22",
+        "orders": 14,
+        "priced_orders": 14,
+        "revenue": 2660,
+        "customers": 11,
+        "aov": 190.0,
+        "missing_amount": 0,
+        "prior_orders": 12,
+        "prior_revenue": 1180.69,
+        "prior_aov": 98.39083333333333,
+        "prior_customers": 9
+      },
+      {
+        "date": "2026-09-22",
+        "prior_date": "2026-08-23",
+        "orders": 17,
+        "priced_orders": 17,
+        "revenue": 3570,
+        "customers": 14,
+        "aov": 210.0,
+        "missing_amount": 0,
+        "prior_orders": 15,
+        "prior_revenue": 1878.61,
+        "prior_aov": 125.24066666666666,
+        "prior_customers": 12
+      },
+      {
+        "date": "2026-09-23",
+        "prior_date": "2026-08-24",
+        "orders": 20,
+        "priced_orders": 20,
+        "revenue": 4600,
+        "customers": 17,
+        "aov": 230.0,
+        "missing_amount": 0,
+        "prior_orders": 18,
+        "prior_revenue": 2820.54,
+        "prior_aov": 156.69666666666666,
+        "prior_customers": 15
+      },
+      {
+        "date": "2026-09-24",
+        "prior_date": "2026-08-25",
+        "orders": 23,
+        "priced_orders": 23,
+        "revenue": 3450,
+        "customers": 20,
+        "aov": 150.0,
+        "missing_amount": 0,
+        "prior_orders": 21,
+        "prior_revenue": 2412.52,
+        "prior_aov": 114.88190476190476,
+        "prior_customers": 18
+      },
+      {
+        "date": "2026-09-25",
+        "prior_date": "2026-08-26",
+        "orders": 26,
+        "priced_orders": 26,
+        "revenue": 4420,
+        "customers": 23,
+        "aov": 170.0,
+        "missing_amount": 0,
+        "prior_orders": 24,
+        "prior_revenue": 3444.2,
+        "prior_aov": 143.50833333333333,
+        "prior_customers": 21
+      },
+      {
+        "date": "2026-09-26",
+        "prior_date": "2026-08-27",
+        "orders": 28,
+        "priced_orders": 28,
+        "revenue": 5320,
+        "customers": 25,
+        "aov": 190.0,
+        "missing_amount": 0,
+        "prior_orders": 26,
+        "prior_revenue": 4511.54,
+        "prior_aov": 173.52076923076922,
+        "prior_customers": 23
+      },
+      {
+        "date": "2026-09-27",
+        "prior_date": "2026-08-28",
+        "orders": 29,
+        "priced_orders": 29,
+        "revenue": 6090,
+        "customers": 26,
+        "aov": 210.0,
+        "missing_amount": 0,
+        "prior_orders": 27,
+        "prior_revenue": 5489.63,
+        "prior_aov": 203.31962962962965,
+        "prior_customers": 24
+      },
+      {
+        "date": "2026-09-28",
+        "prior_date": "2026-08-29",
+        "orders": 30,
+        "priced_orders": 30,
+        "revenue": 6900,
+        "customers": 27,
+        "aov": 230.0,
+        "missing_amount": 0,
+        "prior_orders": 28,
+        "prior_revenue": 6458.81,
+        "prior_aov": 230.67178571428573,
+        "prior_customers": 25
+      },
+      {
+        "date": "2026-09-29",
+        "prior_date": "2026-08-30",
+        "orders": 30,
+        "priced_orders": 30,
+        "revenue": 4500,
+        "customers": 27,
+        "aov": 150.0,
+        "missing_amount": 0,
+        "prior_orders": 28,
+        "prior_revenue": 4274.13,
+        "prior_aov": 152.6475,
+        "prior_customers": 25
+      },
+      {
+        "date": "2026-09-30",
+        "prior_date": "2026-08-31",
+        "orders": 29,
+        "priced_orders": 29,
+        "revenue": 4930,
+        "customers": 26,
+        "aov": 170.0,
+        "missing_amount": 0,
+        "prior_orders": 27,
+        "prior_revenue": 4643.1,
+        "prior_aov": 171.96666666666667,
+        "prior_customers": 24
+      },
+      {
+        "date": "2026-10-01",
+        "prior_date": "2026-09-01",
+        "orders": 27,
+        "priced_orders": 27,
+        "revenue": 5130,
+        "customers": 24,
+        "aov": 190.0,
+        "missing_amount": 0,
+        "prior_orders": 25,
+        "prior_revenue": 4681.39,
+        "prior_aov": 187.25560000000002,
+        "prior_customers": 22
+      },
+      {
+        "date": "2026-10-02",
+        "prior_date": "2026-09-02",
+        "orders": 25,
+        "priced_orders": 25,
+        "revenue": 5250,
+        "customers": 22,
+        "aov": 210.0,
+        "missing_amount": 0,
+        "prior_orders": 23,
+        "prior_revenue": 4535.3,
+        "prior_aov": 197.18695652173915,
+        "prior_customers": 20
+      },
+      {
+        "date": "2026-10-03",
+        "prior_date": "2026-09-03",
+        "orders": 23,
+        "priced_orders": 23,
+        "revenue": 5290,
+        "customers": 20,
+        "aov": 230.0,
+        "missing_amount": 0,
+        "prior_orders": 21,
+        "prior_revenue": 4225.51,
+        "prior_aov": 201.21476190476193,
+        "prior_customers": 18
+      }
+    ],
+    "channels": [
+      {
+        "platform": "youzan",
+        "current": {
+          "orders": 299,
+          "priced_orders": 299,
+          "revenue": 57112.8,
+          "customers": 126,
+          "aov": 191.01,
+          "missing_amount": 0
+        },
+        "prior": {
+          "orders": 237,
+          "priced_orders": 237,
+          "revenue": 36104.33,
+          "customers": 94,
+          "aov": 152.34,
+          "missing_amount": 0
+        }
+      },
+      {
+        "platform": "jd",
+        "current": {
+          "orders": 180,
+          "priced_orders": 180,
+          "revenue": 34483.2,
+          "customers": 76,
+          "aov": 191.57,
+          "missing_amount": 0
+        },
+        "prior": {
+          "orders": 197,
+          "priced_orders": 197,
+          "revenue": 29958.91,
+          "customers": 78,
+          "aov": 152.08,
+          "missing_amount": 0
+        }
+      },
+      {
+        "platform": "tmall",
+        "current": {
+          "orders": 85,
+          "priced_orders": 85,
+          "revenue": 16164.0,
+          "customers": 36,
+          "aov": 190.16,
+          "missing_amount": 0
+        },
+        "prior": {
+          "orders": 71,
+          "priced_orders": 71,
+          "revenue": 10754.48,
+          "customers": 28,
+          "aov": 151.47,
+          "missing_amount": 0
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "合成商品 01 · 演示装",
+        "orders": 175,
+        "priced_orders": 175,
+        "revenue": 33405.6,
+        "customers": 74,
+        "aov": 190.89,
+        "missing_amount": 0
+      },
+      {
+        "name": "合成商品 02 · 演示装",
+        "orders": 124,
+        "priced_orders": 124,
+        "revenue": 23707.2,
+        "customers": 52,
+        "aov": 191.19,
+        "missing_amount": 0
+      },
+      {
+        "name": "合成商品 03 · 演示装",
+        "orders": 90,
+        "priced_orders": 90,
+        "revenue": 17241.6,
+        "customers": 38,
+        "aov": 191.57,
+        "missing_amount": 0
+      },
+      {
+        "name": "合成商品 04 · 演示装",
+        "orders": 62,
+        "priced_orders": 62,
+        "revenue": 11853.6,
+        "customers": 26,
+        "aov": 191.19,
+        "missing_amount": 0
+      },
+      {
+        "name": "合成商品 05 · 演示装",
+        "orders": 39,
+        "priced_orders": 39,
+        "revenue": 7543.2,
+        "customers": 17,
+        "aov": 193.42,
+        "missing_amount": 0
+      },
+      {
+        "name": "合成商品 06 · 演示装",
+        "orders": 28,
+        "priced_orders": 28,
+        "revenue": 5388.0,
+        "customers": 12,
+        "aov": 192.43,
+        "missing_amount": 0
+      },
+      {
+        "name": "合成商品 07 · 演示装",
+        "orders": 17,
+        "priced_orders": 17,
+        "revenue": 3232.8,
+        "customers": 7,
+        "aov": 190.16,
+        "missing_amount": 0
+      },
+      {
+        "name": "新品体验装",
+        "orders": 11,
+        "priced_orders": 11,
+        "revenue": 2155.2,
+        "customers": 5,
+        "aov": 195.93,
+        "missing_amount": 0
+      }
+    ],
+    "regions": [
+      {
+        "name": "广东",
+        "orders": 130,
+        "priced_orders": 130,
+        "revenue": 24784.8,
+        "customers": 55,
+        "aov": 190.65,
+        "missing_amount": 0
+      },
+      {
+        "name": "上海",
+        "orders": 102,
+        "priced_orders": 102,
+        "revenue": 19396.8,
+        "customers": 43,
+        "aov": 190.16,
+        "missing_amount": 0
+      },
+      {
+        "name": "北京",
+        "orders": 79,
+        "priced_orders": 79,
+        "revenue": 15086.4,
+        "customers": 33,
+        "aov": 190.97,
+        "missing_amount": 0
+      },
+      {
+        "name": "浙江",
+        "orders": 68,
+        "priced_orders": 68,
+        "revenue": 12931.2,
+        "customers": 29,
+        "aov": 190.16,
+        "missing_amount": 0
+      },
+      {
+        "name": "江苏",
+        "orders": 51,
+        "priced_orders": 51,
+        "revenue": 9698.4,
+        "customers": 21,
+        "aov": 190.16,
+        "missing_amount": 0
+      },
+      {
+        "name": "福建",
+        "orders": 39,
+        "priced_orders": 39,
+        "revenue": 7543.2,
+        "customers": 17,
+        "aov": 193.42,
+        "missing_amount": 0
+      },
+      {
+        "name": "四川",
+        "orders": 28,
+        "priced_orders": 28,
+        "revenue": 5388.0,
+        "customers": 12,
+        "aov": 192.43,
+        "missing_amount": 0
+      },
+      {
+        "name": "山东",
+        "orders": 23,
+        "priced_orders": 23,
+        "revenue": 4310.4,
+        "customers": 10,
+        "aov": 187.41,
+        "missing_amount": 0
+      },
+      {
+        "name": "湖北",
+        "orders": 17,
+        "priced_orders": 17,
+        "revenue": 3232.8,
+        "customers": 7,
+        "aov": 190.16,
+        "missing_amount": 0
+      },
+      {
+        "name": "湖南",
+        "orders": 11,
+        "priced_orders": 11,
+        "revenue": 2155.2,
+        "customers": 5,
+        "aov": 195.93,
+        "missing_amount": 0
+      },
+      {
+        "name": "天津",
+        "orders": 6,
+        "priced_orders": 6,
+        "revenue": 1077.6,
+        "customers": 2,
+        "aov": 179.6,
+        "missing_amount": 0
+      },
+      {
+        "name": "未标注地区",
+        "orders": 11,
+        "priced_orders": 11,
+        "revenue": 2155.2,
+        "customers": 5,
+        "aov": 195.93,
+        "missing_amount": 0
+      }
+    ]
+  },
+  "/data/source-status": {
+    "source": "pgy",
+    "records": 1,
+    "undated": 0,
+    "first_date": "2026-01-20",
+    "last_date": "2026-08-12",
+    "date_basis": "发布日期",
+    "updated_at": "2026-09-26T22:39:52",
+    "runs": []
+  }
+}

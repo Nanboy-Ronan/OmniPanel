@@ -1,12 +1,8 @@
-"""Weekly media report — internal JSON API.
+"""Authenticated weekly-report JSON API.
 
-These routes exist to be called by the Streamlit app (app/ui/pages/weekly_report.py),
-not to be opened directly. The FastAPI backend (port 8000) is not exposed to
-the public internet on a typical deployment — only the Streamlit frontend is,
-usually via a reverse proxy. A link straight to one of these routes would
-401 for anyone who isn't already holding a bearer token, which a browser tap
-from WeCom never has. The WeCom push (app/reports/service.py) therefore links
-to the public Streamlit URL (settings.public_base_url), not to anything here.
+React calls these routes through the same-origin /api/ proxy. Notification links
+point to the public workbench so the reader can authenticate before opening a
+report; the API itself still requires a bearer token.
 """
 from __future__ import annotations
 

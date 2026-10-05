@@ -144,9 +144,8 @@ app.add_middleware(
 async def _password_login_rate_limit(request: Request, call_next):
     """Count failed /auth/jwt/login attempts per email; block after MAX_ATTEMPTS.
 
-    Keyed by email rather than IP: all Streamlit→FastAPI calls share the same
-    loopback IP (127.0.0.1), so IP-keying would let one user's lockout block
-    the entire organisation. Starlette caches request.form() on first call, so
+    Keyed by email rather than IP: clients behind a shared proxy or NAT
+    must not let one user's lockout block the entire organisation. Starlette caches request.form() on first call, so
     downstream OAuth2PasswordRequestForm dependency can still read the body.
 
     HTTPException cannot be raised from BaseHTTPMiddleware (it bypasses

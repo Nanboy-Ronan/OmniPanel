@@ -12,7 +12,7 @@ from matplotlib.patches import FancyArrowPatch
 
 LABELS = {
     "en": dict(
-        streamlit=("Streamlit\ndashboard", ":8501"),
+        frontend=("React\ndashboard", "/console/"),
         fastapi=("FastAPI\nbackend", ":8000"),
         postgres=("PostgreSQL",),
         http="HTTP / REST\nJWT bearer token",
@@ -32,7 +32,7 @@ LABELS = {
         out="architecture.png",
     ),
     "zh": dict(
-        streamlit=("Streamlit\n前端", ":8501"),
+        frontend=("React\n前端", "/console/"),
         fastapi=("FastAPI\n后端", ":8000"),
         postgres=("PostgreSQL",),
         http="HTTP / REST\nJWT bearer token",
@@ -97,8 +97,8 @@ def generate(lang: str) -> None:
     ax.set_ylim(0, 8.2)
     ax.axis("off")
 
-    # Top tier: Streamlit -> FastAPI -> PostgreSQL
-    sx, sy, sw, sh = box(ax, 0.4, 6.6, 2.6, 1.3, "\n".join(L["streamlit"]), REQUIRED_COLOR, fontsize=11)
+    # Top tier: React -> FastAPI -> PostgreSQL
+    sx, sy, sw, sh = box(ax, 0.4, 6.6, 2.6, 1.3, "\n".join(L["frontend"]), REQUIRED_COLOR, fontsize=11)
     fx, fy, fw, fh = box(ax, 5.2, 6.6, 2.6, 1.3, "\n".join(L["fastapi"]), BACKEND_COLOR, fontsize=11)
     px, py, pw, ph = box(ax, 10.0, 6.6, 2.6, 1.3, "\n".join(L["postgres"]), REQUIRED_COLOR, fontsize=11)
 

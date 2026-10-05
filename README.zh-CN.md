@@ -59,19 +59,37 @@
 
 ## 界面截图
 
-> 以下数据均为随机生成的虚构数据集，非真实企业数据。
+> 以下截图来自新版 React 工作台，全部使用合成演示数据。
 
-| 客户分析 | 队列留存 |
-|---|---|
-| ![客户分析总览](docs/images/screenshot_analysis.png) | ![按月队列留存曲线](docs/images/screenshot_cohort.png) |
+![经营概览](docs/images/screenshot_overview.png)
 
-| 跨平台客户身份识别 | SQL 查询台 |
+| 商城分析 | 内容分析 |
 |---|---|
-| ![跨平台客户身份识别](docs/images/screenshot_identity.png) | ![SQL 查询台查询结果](docs/images/screenshot_sql.png) |
+| ![商城分析](docs/images/screenshot_analysis.png) | ![内容分析](docs/images/screenshot_content.png) |
+
+| 蒲公英合作 | 数据库状态 |
+|---|---|
+| ![蒲公英合作](docs/images/screenshot_pgy.png) | ![数据库状态](docs/images/screenshot_database.png) |
+
+<details>
+<summary>更多面板：留存、客户身份与 SQL</summary>
+
+![队列留存](docs/images/screenshot_cohort.png)
+
+![客户身份](docs/images/screenshot_identity.png)
+
+![SQL 查询台](docs/images/screenshot_sql.png)
+
+</details>
 
 ---
 
 ## 功能
+
+- **React 工作台** —— 22 个页面入口，统一筛选、角色导航与响应式布局。
+- **交互式商城 BI** —— 营业额趋势、渠道贡献、商品排行、地区分布与同期对比联动分析。
+- **内容与合作分析** —— 可读的长尾分布、蒲公英项目/博主联动、历史内容查看与数据来源健康检查。
+- **实时运维面板** —— 显式说明账号权限，实时检查数据库结构、数据量与备份元信息。
 
 ### 数据接入
 
@@ -113,7 +131,7 @@
 本次更新增加每日备份、后台任务重启与主节点接替、上传中断恢复、服务端订单筛选与完整 CSV 导出，以及可分享筛选条件的导航和已保存视图。已有部署请先阅读[升级说明](docs/upgrading.md)：本次包含 0015–0017 数据库迁移，迁移账号需要创建 PostgreSQL 角色的权限。
 
 - **三级角色** —— viewer（只读）/ analyst（可上传和分析）/ admin（用户管理、数据库操作）
-- **企业微信 SSO** —— 可选，支持扫码登录
+- **企业微信 SSO** —— React 工作台使用企业微信扫码登录
 - **审计日志** —— 每次查询和写操作都记录到不可修改的操作日志
 - **后台任务** —— 微信指标自动同步、数据库月度备份，均带 leader 选举保障多进程安全
 - **看门狗** —— 每天检查每个后台任务（微信同步、自动采集、备份）是否正常运行，任务彻底停止时通过企业微信告警，与单次运行的成功/失败通知互补
@@ -152,7 +170,7 @@ OmniPanel 只通过官方渠道拿数据 —— 有 API 的走 API（公众号�
 ## 架构
 
 ```
-浏览器 (Streamlit, :8501) ──→ 后端 API (FastAPI, :8000) ──→ PostgreSQL
+浏览器 (React, /console/) ──→ 后端 API (FastAPI, :8000) ──→ PostgreSQL
                                        │
                                   ┌─────┴─────┐
                                   │  Redis     │ (可选，缓存 / 限流)
@@ -164,7 +182,7 @@ OmniPanel 只通过官方渠道拿数据 —— 有 API 的走 API（公众号�
 
 | 层 | 技术 | 职责 |
 |---|---|---|
-| 前端 | Streamlit（`app/ui/`） | 薄客户端 —— 只负责渲染后端数据，不含业务逻辑 |
+| 前端 | React + TypeScript（`frontend/`） | 薄客户端 —— 只负责渲染后端数据，不含业务逻辑 |
 | 后端 | FastAPI（`app/`） | 鉴权、ETL、分析接口、SQL 查询台、后台任务 |
 | 数据库 | PostgreSQL + SQLAlchemy | 统一的归一化表结构，同时保留各平台原始数据 |
 | 缓存 | Redis（可选） | 分布式缓存和登录限流；不配置时退化为进程内缓存 |
@@ -177,7 +195,7 @@ OmniPanel 只通过官方渠道拿数据 —— 有 API 的走 API（公众号�
 
 ### Docker（推荐）
 
-需要 Docker + Docker Compose v2。一键启动 Postgres、FastAPI 和 Streamlit，本机不需要装 Python 或 Postgres。
+需要 Docker + Docker Compose v2。一键启动 Postgres、FastAPI 和 React/Nginx 前端，本机不需要装 Python 或 Postgres。
 
 ```bash
 git clone https://github.com/Nanboy-Ronan/OmniPanel.git
@@ -188,11 +206,11 @@ cp .env.example .env
 docker compose up --build
 ```
 
-打开 http://localhost:8501，注册第一个用户（自动成为管理员），然后上传导出文件即可。
+在 `.env` 配置企业微信凭据与回调地址后，打开 http://localhost:5173/console/ 登录；首个登录用户成为管理员。无需凭据体验界面可使用[合成数据预览](frontend/README.md#checks-and-synthetic-preview)。
 
 ### 手动安装
 
-需要 Python 3.13+ 和 PostgreSQL 13+。
+需要 Python 3.13+、Node.js 22.18+ 和 PostgreSQL 13+。
 
 ```bash
 # 1. 克隆并安装依赖
@@ -211,8 +229,9 @@ make db-upgrade            # 等价于 alembic upgrade head
 # 4. 启动后端（FastAPI，端口 8000）
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# 5. 另开终端，启动前端（Streamlit，端口 8501）
-streamlit run app/ui/dashboard.py
+# 5. 另开终端，安装并启动 React 前端
+npm --prefix frontend ci
+make ui  # http://localhost:5173/console/
 ```
 
 完整步骤见 [快速上手](docs/getting-started.zh-CN.md)。

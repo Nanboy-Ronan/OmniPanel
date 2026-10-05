@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # Comma-separated IPs/networks allowed to set X-Forwarded-For (anything else
     # is treated as the real client). Must list every hop that legitimately sits
     # in front of this process — in the current deployment that's only the
-    # Streamlit process calling over loopback. Enforced unconditionally via
+    # Python API client / collector calling over loopback. Enforced unconditionally via
     # ProxyHeadersMiddleware in app/main.py, regardless of how uvicorn is started.
     forwarded_allow_ips: str = "127.0.0.1"
     ssl_keyfile: str | None = None
@@ -132,6 +132,8 @@ class Settings(BaseSettings):
     wecom_http_timeout: float = 10.0
     wecom_default_role: str = "viewer"
     wecom_auto_create_users: bool = True
+    wecom_console_redirect_uri: str | None = None
+    # Compatibility aliases for existing deployments, not a UI dependency.
     wecom_streamlit_redirect_uri: str | None = None
     app_url: str | None = None
     streamlit_url: str | None = None
@@ -217,18 +219,18 @@ class Settings(BaseSettings):
     weekly_report_enabled: bool = False
     # Hour of the day (0-23) in app_timezone at which the daily due-check runs.
     report_hour: int = 9
-    # Publicly reachable URL recipients open from the WeCom push — the domain
-    # your deployment is served on (port 8000/FastAPI is not exposed
+    # Publicly reachable URL recipients open from the WeCom push — the nginx
+    # domain in front of the React workbench (port 8000/FastAPI is not exposed
     # externally; see app/views/reports.py docstring). Not used to build a
     # clickable report link — WeCom text messages just point here so the
     # recipient logs in and opens 周报 from the nav, same as any other page.
-    public_base_url: str = "https://example.com"
+    public_base_url: str = "https://example.com/console/"
 
     @property
     def cors_origins_list(self) -> list[str]:
         if self.cors_origins:
             return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
-        return ["http://localhost:8501", "https://localhost:8501"]
+        return ["http://localhost:5173", "https://localhost:5173"]
 
 
 settings = Settings()

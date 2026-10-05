@@ -1,13 +1,25 @@
 """Source coverage and ingestion timestamps for the dashboard."""
-from fastapi import APIRouter, Depends
+
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import current_active_user
+from ..auth import current_active_user, current_analyst_user
 from ..db import get_session
 from ..db.models import (
-    Order, UploadBatch, MediaPostMetricDaily, MediaSyncRun,
-    XhsPost, ZhihuPost, WxChannelsPost, PgyNote,
+    MediaPost,
+    MediaArticleTraffic,
+    CollectorRun,
+    Order,
+    UploadBatch,
+    MediaPostMetricDaily,
+    MediaSyncRun,
+    XhsPost,
+    ZhihuPost,
+    WxChannelsPost,
+    PgyNote,
 )
 
 router = APIRouter(prefix="/data", tags=["data"])
@@ -20,8 +32,16 @@ async def data_freshness(
 ):
     """Keep content coverage separate from the time data reached this system."""
     specs = {
-        "orders": (Order.order_date, UploadBatch.uploaded_at, UploadBatch.status == "completed"),
-        "wechat": (MediaPostMetricDaily.metric_date, MediaSyncRun.finished_at, MediaSyncRun.status == "success"),
+        "orders": (
+            Order.order_date,
+            UploadBatch.uploaded_at,
+            UploadBatch.status == "completed",
+        ),
+        "wechat": (
+            MediaPostMetricDaily.metric_date,
+            MediaSyncRun.finished_at,
+            MediaSyncRun.status == "success",
+        ),
         "xhs": (XhsPost.publish_date, XhsPost.updated_at, None),
         "zhihu": (ZhihuPost.publish_date, ZhihuPost.updated_at, None),
         "channels": (WxChannelsPost.publish_date, WxChannelsPost.updated_at, None),
@@ -39,3 +59,161 @@ async def data_freshness(
             "last_import_at": updated.isoformat() if updated else None,
         }
     return result
+
+
+# This endpoint exposes aggregate provenance only, never collector credentials or raw errors.
+
+
+@router.get("/source-status")
+async def source_status(
+    source: Literal["orders", "wechat", "traffic", "xhs", "zhihu", "channels", "pgy"],
+    account_id: int | None = Query(None, ge=1),
+    content_type: Literal["article", "qa"] | None = None,
+    _u=Depends(current_analyst_user),
+    session: AsyncSession = Depends(get_session),
+):
+    model = {
+        "orders": Order,
+        "wechat": MediaPost,
+        "traffic": MediaArticleTraffic,
+        "xhs": XhsPost,
+        "zhihu": ZhihuPost,
+        "channels": WxChannelsPost,
+        "pgy": PgyNote,
+    }[source]
+    date_col = Order.order_date if source == "orders" else model.publish_date
+    conditions = []
+    if account_id is not None and hasattr(model, "account_id"):
+        conditions.append(model.account_id == account_id)
+    if source == "zhihu" and content_type:
+        conditions.append(model.content_type == content_type)
+    counts = (
+        (
+            await session.execute(
+                select(
+                    func.count(model.id).label("records"),
+                    func.count(date_col).label("dated"),
+                    func.min(date_col).label("first"),
+                    func.max(date_col).label("last"),
+                ).where(*conditions)
+            )
+        )
+        .mappings()
+        .one()
+    )
+    first, last = counts["first"], counts["last"]
+    date_basis = "下单日期" if source == "orders" else "发布日期"
+    if source == "wechat":
+        first, last = (
+            await session.execute(
+                select(
+                    func.min(MediaPostMetricDaily.metric_date),
+                    func.max(MediaPostMetricDaily.metric_date),
+                )
+                .join(MediaPost, MediaPost.id == MediaPostMetricDaily.post_id)
+                .where(*conditions)
+            )
+        ).one()
+        date_basis = "指标日期"
+    if source == "orders":
+        updated = (
+            await session.execute(
+                select(func.max(UploadBatch.uploaded_at)).where(
+                    UploadBatch.status == "completed"
+                )
+            )
+        ).scalar()
+    elif source == "wechat":
+        updated_query = select(func.max(MediaSyncRun.finished_at)).where(
+            MediaSyncRun.status == "success", MediaSyncRun.source == "api"
+        )
+        if account_id is not None:
+            updated_query = updated_query.where(MediaSyncRun.account_id == account_id)
+        updated = (await session.execute(updated_query)).scalar()
+    else:
+        updated = (
+            await session.execute(select(func.max(model.updated_at)).where(*conditions))
+        ).scalar()
+    runs = []
+    if source in {"xhs", "zhihu", "channels", "pgy"}:
+        run_filters = [
+            CollectorRun.platform == ("pugongying" if source == "pgy" else source)
+        ]
+        if account_id is not None:
+            run_filters.append(CollectorRun.account_id == account_id)
+        if source == "zhihu" and content_type:
+            run_filters.append(CollectorRun.content_type == content_type)
+        recent = (
+            select(
+                CollectorRun.account_id,
+                CollectorRun.content_type,
+                CollectorRun.status,
+                CollectorRun.started_at,
+                CollectorRun.finished_at,
+                func.row_number()
+                .over(
+                    partition_by=(CollectorRun.account_id, CollectorRun.content_type),
+                    order_by=(CollectorRun.started_at.desc(), CollectorRun.id.desc()),
+                )
+                .label("rank"),
+            )
+            .where(*run_filters)
+            .subquery()
+        )
+        rows = (
+            (await session.execute(select(recent).where(recent.c.rank == 1)))
+            .mappings()
+            .all()
+        )
+        runs = [
+            {
+                k: r[k]
+                for k in (
+                    "account_id",
+                    "content_type",
+                    "status",
+                    "started_at",
+                    "finished_at",
+                )
+            }
+            for r in rows
+        ]
+    elif source == "wechat":
+        stmt = select(
+            MediaSyncRun.account_id,
+            MediaSyncRun.status,
+            MediaSyncRun.started_at,
+            MediaSyncRun.finished_at,
+            func.row_number()
+            .over(
+                partition_by=MediaSyncRun.account_id,
+                order_by=(MediaSyncRun.started_at.desc(), MediaSyncRun.id.desc()),
+            )
+            .label("rank"),
+        ).where(MediaSyncRun.source == "api")
+        if account_id is not None:
+            stmt = stmt.where(MediaSyncRun.account_id == account_id)
+        recent = stmt.subquery()
+        runs = [
+            dict(r)
+            for r in (
+                await session.execute(
+                    select(
+                        recent.c.account_id,
+                        recent.c.status,
+                        recent.c.started_at,
+                        recent.c.finished_at,
+                    ).where(recent.c.rank == 1)
+                )
+            ).mappings()
+        ]
+    return {
+        "source": source,
+        "records": counts["records"],
+        "undated": counts["records"] - counts["dated"],
+        "first_date": first,
+        "last_date": last,
+        "date_basis": date_basis,
+        "updated_at": updated,
+        "runs": runs,
+    }

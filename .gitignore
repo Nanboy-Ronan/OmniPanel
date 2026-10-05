@@ -33,6 +33,11 @@ data/
 .ruff_cache/
 .coverage
 htmlcov/
+node_modules/
+frontend/dist/
+frontend/coverage/
+playwright-report/
+test-results/
 
 # Editor / OS
 .DS_Store

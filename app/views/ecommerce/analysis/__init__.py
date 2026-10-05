@@ -20,7 +20,7 @@ from ._common import (
 
 # Import submodules for their side effect of attaching routes to ``router``.
 # Order here fixes the route-registration order in the generated OpenAPI schema.
-from . import segmentation, retention, customers, sql_console  # noqa: E402,F401
+from . import segmentation, retention, customers, sql_console, dashboard  # noqa: E402,F401
 from .retention import build_cohort_matrix, _month_index  # noqa: E402
 from .sql_console import SqlQueryRequest, NLSqlRequest  # noqa: E402
 

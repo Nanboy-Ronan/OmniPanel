@@ -29,7 +29,7 @@ Security-sensitive — any known vulnerability here should be tracked as soon as
 | `asyncpg` / `psycopg2-binary` / `sqlalchemy` | DB driver/ORM | Injection, connection handling |
 | `anthropic` / `openai` | NL-to-SQL provider SDKs | Dependency chain |
 
-Everything else (altair, streamlit, pandas, etc.) can follow the quarterly cadence.
+Everything else (pandas, SQLAlchemy, etc.) can follow the quarterly cadence.
 
 ## Upgrade process
 

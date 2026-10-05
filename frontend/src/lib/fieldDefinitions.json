@@ -1,0 +1,260 @@
+{
+  "orders": {
+    "id": {
+      "zh": "主键（系统自增）",
+      "type": "integer",
+      "example": "1234",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    },
+    "order_date": {
+      "zh": "下单日期",
+      "type": "date",
+      "example": "2024-03-15",
+      "youzan": "订单创建时间",
+      "jd": "下单时间",
+      "tmall": "订单创建时间",
+      "nullable": false
+    },
+    "order_id": {
+      "zh": "原始平台订单号",
+      "type": "text",
+      "example": "E20240315001",
+      "youzan": "订单号",
+      "jd": "订单号",
+      "tmall": "订单编号",
+      "nullable": false
+    },
+    "customer_key": {
+      "zh": "客户唯一标识（手机号 / 地址）",
+      "type": "text",
+      "example": "138****8888",
+      "youzan": "买家手机号",
+      "jd": "联系电话",
+      "tmall": "收货地址",
+      "nullable": false
+    },
+    "platform": {
+      "zh": "来源平台",
+      "type": "text",
+      "example": "youzan",
+      "youzan": "youzan",
+      "jd": "jd",
+      "tmall": "tmall",
+      "nullable": false
+    },
+    "sku": {
+      "zh": "商品名称 / SKU",
+      "type": "text",
+      "example": "联名款 100g",
+      "youzan": "全部商品名称",
+      "jd": "商品名称",
+      "tmall": "商品标题",
+      "nullable": true
+    },
+    "quantity": {
+      "zh": "购买数量",
+      "type": "integer",
+      "example": "2",
+      "youzan": "（从商品名称解析）",
+      "jd": "订购数量",
+      "tmall": "—",
+      "nullable": true
+    },
+    "price": {
+      "zh": "实付金额（¥）",
+      "type": "numeric",
+      "example": "199.00",
+      "youzan": "订单实付金额",
+      "jd": "商家应收",
+      "tmall": "买家应付货款",
+      "nullable": true
+    },
+    "receiver": {
+      "zh": "收货人姓名",
+      "type": "text",
+      "example": "张三",
+      "youzan": "收货人/提货人",
+      "jd": "客户姓名",
+      "tmall": "（收货地址解析）",
+      "nullable": true
+    },
+    "receiver_phone": {
+      "zh": "收货人手机号",
+      "type": "text",
+      "example": "138****8888",
+      "youzan": "收货人手机号/提货人手机号",
+      "jd": "联系电话",
+      "tmall": "—",
+      "nullable": true
+    },
+    "province": {
+      "zh": "收货省份",
+      "type": "text",
+      "example": "广东省",
+      "youzan": "收货人省份",
+      "jd": "（客户地址解析）",
+      "tmall": "（收货地址解析）",
+      "nullable": true
+    },
+    "area": {
+      "zh": "收货城市/地区",
+      "type": "text",
+      "example": "深圳市南山区",
+      "youzan": "收货人城市 + 地区",
+      "jd": "（客户地址解析）",
+      "tmall": "（收货地址解析）",
+      "nullable": true
+    },
+    "full_address": {
+      "zh": "完整收货地址",
+      "type": "text",
+      "example": "广东省深圳市南山区XX路",
+      "youzan": "详细收货地址/提货地址",
+      "jd": "客户地址",
+      "tmall": "收货地址",
+      "nullable": true
+    },
+    "buyer_nick": {
+      "zh": "买家昵称",
+      "type": "text",
+      "example": "用户_abc123",
+      "youzan": "买家昵称",
+      "jd": "下单帐号",
+      "tmall": "—",
+      "nullable": true
+    },
+    "coupon_name": {
+      "zh": "优惠券名称",
+      "type": "text",
+      "example": "满200减50",
+      "youzan": "优惠券码名称",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": true
+    },
+    "distributor": {
+      "zh": "分销员/导购",
+      "type": "text",
+      "example": "导购小王",
+      "youzan": "分销员",
+      "jd": "导购员账号",
+      "tmall": "—",
+      "nullable": true
+    }
+  },
+  "customers": {
+    "customer_key": {
+      "zh": "客户唯一标识（主键）",
+      "type": "text",
+      "example": "138****8888",
+      "youzan": "买家手机号",
+      "jd": "联系电话",
+      "tmall": "收货地址",
+      "nullable": false
+    },
+    "platform": {
+      "zh": "来源平台",
+      "type": "text",
+      "example": "youzan",
+      "youzan": "youzan",
+      "jd": "jd",
+      "tmall": "tmall",
+      "nullable": false
+    },
+    "first_order_date": {
+      "zh": "首次下单日期",
+      "type": "date",
+      "example": "2023-01-15",
+      "youzan": "订单创建时间",
+      "jd": "下单时间",
+      "tmall": "订单创建时间",
+      "nullable": false
+    }
+  },
+  "upload_batches": {
+    "id": {
+      "zh": "批次 ID（主键）",
+      "type": "integer",
+      "example": "42",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    },
+    "filename": {
+      "zh": "上传文件名",
+      "type": "text",
+      "example": "youzan_2024Q1.xlsx",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    },
+    "platform": {
+      "zh": "检测到的平台",
+      "type": "text",
+      "example": "youzan",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    },
+    "uploaded_at": {
+      "zh": "上传时间（UTC）",
+      "type": "timestamp",
+      "example": "2024-03-15 09:23:11",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    },
+    "row_count": {
+      "zh": "文件总行数",
+      "type": "integer",
+      "example": "2500",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    },
+    "inserted_orders": {
+      "zh": "新增订单数",
+      "type": "integer",
+      "example": "2100",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    },
+    "duplicate_rows": {
+      "zh": "重复跳过行数",
+      "type": "integer",
+      "example": "340",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    },
+    "invalid_rows": {
+      "zh": "拒绝行数（格式错误等）",
+      "type": "integer",
+      "example": "60",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    },
+    "status": {
+      "zh": "入库状态",
+      "type": "text",
+      "example": "completed",
+      "youzan": "—",
+      "jd": "—",
+      "tmall": "—",
+      "nullable": false
+    }
+  }
+}

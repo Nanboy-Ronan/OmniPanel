@@ -305,13 +305,14 @@ async def _find_or_create_user(
 def _allowed_redirect_origins() -> list[str]:
     """Return configured callback URLs (never interpret them as prefixes)."""
     candidates = [
+        os.getenv("WECOM_CONSOLE_REDIRECT_URI"),
         os.getenv("WECOM_STREAMLIT_REDIRECT_URI"),
         os.getenv("APP_URL"),
         os.getenv("STREAMLIT_URL"),
     ]
     origins = [c.rstrip("/") for c in candidates if c and c.strip()]
     if not origins:
-        origins = ["http://localhost:8501"]
+        origins = ["http://localhost:5173/console"]
     return origins
 
 
@@ -343,7 +344,7 @@ async def authorize_url(redirect_uri: str, response: Response) -> dict[str, Any]
         )
     corpid, agentid, _ = _required_config()
     state = _state()
-    # The API client holds this cookie in its per-Streamlit-session HTTP session.
+    # Legacy API clients keep this cookie in their HTTP session.
     # A signed state alone does not prove that this browser initiated the login.
     response.set_cookie(
         _STATE_COOKIE, state, max_age=_STATE_TTL_SECONDS,
@@ -385,7 +386,7 @@ async def start_browser_login(
     redirect_uri: str, flow: str = "qr",
     return_query: str = Query("", max_length=500),
 ) -> RedirectResponse:
-    """Start OAuth in the browser so its state cookie survives Streamlit reconnects."""
+    """Start OAuth with a browser-owned state cookie for the same-origin console."""
     if flow not in {"qr", "mobile"}:
         raise HTTPException(status_code=400, detail="Invalid login flow")
     payload = await authorize_url(redirect_uri, Response())

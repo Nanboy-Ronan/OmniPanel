@@ -8,6 +8,7 @@ services, and creating the first user.
 ## Requirements
 
 - Python 3.13+
+- Node.js 22.18+ and npm
 - A PostgreSQL server (13+) reachable from where the backend runs
 - (Optional) Redis — only used for distributed rate limiting; the app falls
   back to in-process limiting if Redis is unreachable
@@ -32,7 +33,11 @@ At minimum, edit `.env` and set:
 ```dotenv
 RAP_DATABASE_URL=postgresql+asyncpg://<user>:<pass>@<host>:5432/<dbname>
 RAP_SECRET=<a long random string>
-CORS_ORIGINS=http://localhost:8501
+CORS_ORIGINS=http://localhost:5173
+WECOM_CONSOLE_REDIRECT_URI=http://localhost:5173/console/
+WECOM_CORP_ID=<your corporation ID>
+WECOM_AGENT_ID=<your application ID>
+WECOM_APP_SECRET=<your application secret>
 ```
 
 `RAP_SECRET` signs authentication tokens — generate one with, e.g.:
@@ -83,17 +88,20 @@ On startup the app:
 In a separate shell:
 
 ```bash
-streamlit run app/ui/dashboard.py
+npm --prefix frontend ci
+make ui
 ```
 
-Point your browser at the Streamlit URL it prints (default `:8501`).
+Open `http://localhost:5173/console/`. Vite proxies `/api/` to FastAPI. Register your public callback domain with Enterprise WeChat before deploying.
 
 ## 7. Create the first user
 
-Open the Streamlit app and register an account through the sign-up flow.
-**The very first user to register is automatically promoted to the `admin`
-role** (see `app/auth.py`); every subsequent registration defaults to
-`viewer` and must be promoted by an admin from the Users screen.
+Sign in with Enterprise WeChat. **The first authenticated user becomes an
+administrator**; later users receive `WECOM_DEFAULT_ROLE` (viewer by default).
+Configure WeCom credentials and the callback before trying the real login flow.
+For a credential-free UI tour, build the frontend and run
+`node frontend/scripts/preview-fixtures.mjs`, then open
+`http://127.0.0.1:5180/console/`. This local preview only serves synthetic data.
 
 ## 8. Upload your first export
 
@@ -128,9 +136,9 @@ Check that `RAP_DATABASE_URL` in `.env` points at a running PostgreSQL instance 
 
 The health endpoint checks both the database connection and (if `REDIS_URL` is set) Redis. If Redis is unreachable, the app falls back gracefully and `/health` will still report it — but no other functionality is blocked. If the database check fails, verify `RAP_DATABASE_URL` and that migrations have been applied.
 
-**Streamlit shows "Connection refused" when loading data**
+**React shows "Connection refused" when loading data**
 
-The frontend talks to the backend at `http://localhost:8000` by default. Make sure the FastAPI backend is running and that `CORS_ORIGINS` in `.env` includes the Streamlit URL (e.g. `http://localhost:8501`).
+The browser calls same-origin `/api/`. During development Vite proxies it to `http://127.0.0.1:8000` (`API_PROXY_TARGET` overrides this); Compose uses Nginx. Check that the API is running and the proxy target is reachable.
 
 **File upload is rejected with "unrecognized column set"**
 
