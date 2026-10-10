@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -20,7 +19,15 @@ from app.db.etl.zhihu import parse_zhihu_csv, upsert_zhihu_posts
 from app.db.etl.channels import upsert_channels_posts
 from tests.test_api_endpoints import client, tokens  # noqa: F401
 
-PGY_SAMPLE = Path(__file__).resolve().parents[1] / "data" / "pgy_example.xlsx"
+
+
+def _pgy_sample() -> pd.DataFrame:
+    """Synthetic 蒲公英 export in the verified layout (see tests/test_pgy.py)."""
+    import io
+
+    from tests.test_pgy import _make_pgy_xlsx_bytes
+
+    return pd.read_excel(io.BytesIO(_make_pgy_xlsx_bytes()), header=None, dtype=str)
 
 _XHS_HEADERS = [
     "笔记标题", "首次发布时间", "体裁", "曝光", "观看量", "封面点击率",
@@ -60,7 +67,7 @@ def test_zhihu_qa_requires_play_column():
 
 
 def test_pgy_shifted_column_fails_instead_of_misaligning_metrics():
-    df = pd.read_excel(PGY_SAMPLE, header=None, dtype=str)
+    df = _pgy_sample()
     assert parse_pgy_xlsx(df)  # the verified layout still parses
     shifted = df.copy()
     shifted.iloc[2, 21] = "阅读次数"  # 阅读量 renamed by the platform
@@ -132,7 +139,7 @@ def test_zhihu_null_metric_does_not_erase_history(session):
 def test_pgy_null_metric_does_not_erase_history(session):
     from app.db.models import PgyNote
     acc = _xhs_account(session)
-    rows = parse_pgy_xlsx(pd.read_excel(PGY_SAMPLE, header=None, dtype=str))[:1]
+    rows = parse_pgy_xlsx(_pgy_sample())[:1]
     upsert_pgy_notes(rows, acc, session)
     stored = session.execute(select(PgyNote)).scalar_one()
     original_reads = stored.reads

@@ -12,6 +12,7 @@ These tests describe the target behavior for the raw-data refactor:
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 from sqlalchemy import create_engine, text
 

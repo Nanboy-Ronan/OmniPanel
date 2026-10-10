@@ -16,7 +16,13 @@ _N_COLS = 104
 
 
 def _blank_header_rows(n: int = 3) -> list[list[str]]:
-    return [[""] * _N_COLS for _ in range(n)]
+    """Two merged group rows, then the column-name row the parser validates."""
+    from app.db.etl.pgy import _EXPECTED_HEADERS
+
+    rows = [[""] * _N_COLS for _ in range(n)]
+    for idx, name in _EXPECTED_HEADERS.items():
+        rows[n - 1][idx] = name
+    return rows
 
 
 def _one_row(overrides: dict | None = None) -> list:
