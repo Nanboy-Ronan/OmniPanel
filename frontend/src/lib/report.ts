@@ -54,7 +54,34 @@ function bars(labels: string[], series: { name: string; values: (number | null)[
     )
     .join('')}<line x1="${zero}" x2="${zero}" y1="0" y2="${height - 15}" stroke="#c8d3df"/></svg>`;
 }
-export function prepareReportHtml(html: string): string {
+export type ReportSection = { id: string; label: string; count: number | null };
+const pictographs = /\p{Extended_Pictographic}|\uFE0F|\u200D/gu;
+/**
+ * Sanitise an archived report and list its platform sections. In `embedded`
+ * mode the report's own hero and sticky tab bar are hidden: the console shows
+ * them natively, and a content-height frame has no viewport for them to stick to.
+ */
+export function prepareReport(
+  html: string,
+  { embedded = false }: { embedded?: boolean } = {},
+): { html: string; sections: ReportSection[]; hasNarrative: boolean } {
+  const prepared = prepareReportHtml(html, embedded);
+  const doc = new DOMParser().parseFromString(prepared, 'text/html');
+  const sections: ReportSection[] = [];
+  for (const link of doc.querySelectorAll<HTMLAnchorElement>('a.nav-tab')) {
+    const id = link.getAttribute('href')?.match(/#(panel-[a-z]+)$/)?.[1];
+    if (!id || !doc.getElementById(id)) continue;
+    const pill = link.querySelector('.pill-count');
+    const count = pill ? Number(pill.textContent) : null;
+    pill?.remove();
+    const label = (link.textContent ?? '').replace(pictographs, '').replace(/\s+/g, ' ').trim();
+    sections.push({ id, label, count: Number.isFinite(count) ? count : null });
+  }
+  return { html: prepared, sections, hasNarrative: !!doc.querySelector('.ai-panel') };
+}
+const embeddedStyle =
+  'html,body{margin:0;background:transparent;overflow:hidden}.hero-header,.nav-bar{display:none!important}.container{max-width:none!important;padding:0!important;margin:0!important}.platform-panel{scroll-margin-top:0}footer{display:none}';
+export function prepareReportHtml(html: string, embedded = false): string {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const code = [...doc.querySelectorAll('script:not([src])')]
     .map((node) => node.textContent ?? '')
@@ -116,7 +143,7 @@ export function prepareReportHtml(html: string): string {
       const link = doc.createElement('a');
       link.className = button.className;
       link.href = panel === 'all' ? '#report-top' : `#panel-${panel}`;
-      link.textContent = button.textContent;
+      link.append(...button.childNodes);
       button.replaceWith(link);
     }
   }
@@ -142,6 +169,7 @@ export function prepareReportHtml(html: string): string {
   const style = doc.createElement('style');
   style.textContent =
     '.nav-tab{text-decoration:none;display:inline-block}.chart-container{overflow:auto}.chart-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr))}';
+  if (embedded) style.textContent += embeddedStyle;
   doc.head.append(style);
   return '<!doctype html>' + doc.documentElement.outerHTML;
 }

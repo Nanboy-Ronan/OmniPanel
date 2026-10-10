@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Database, Info } from 'lucide-react';
+import { ArrowRight, Info } from 'lucide-react';
 import { request } from '../lib/api';
 import {
   comparisonWindow,
@@ -18,14 +18,14 @@ import {
 } from '../lib/data';
 import { navigate, useLocationSearch } from '../lib/navigation';
 import { Change, DataTable, EmptyState, ErrorState, Loading, Panel } from '../components/ui';
-import { SourceStatus } from '../components/SourceStatus';
 import DataReadiness from '../components/DataReadiness';
 import { AnalysisLink } from '../components/AnalysisLink';
 import { FilterBar } from '../components/FilterBar';
+import { formatTimestamp } from '../lib/time';
 const CommerceDashboard = lazy(() => import('../components/CommerceDashboard'));
 const ComparisonChart = lazy(() => import('../components/ComparisonChart'));
 
-export default function KpiPage() {
+export default function KpiPage({ admin = false }: { admin?: boolean }) {
   const cache = useQueryClient();
   const search = useLocationSearch();
   const params = new URLSearchParams(search);
@@ -65,11 +65,23 @@ export default function KpiPage() {
     if (latestDate && !invalidAnchor) void kpi.refetch();
   };
 
+  const readiness = (
+    <DataReadiness
+      latestDate={latestDate}
+      fetchedAt={invalidAnchor ? undefined : kpi.dataUpdatedAt}
+      refreshing={!invalidAnchor && kpi.isFetching && !!kpi.data}
+      orders={{
+        data: freshness.data,
+        error: freshness.isError,
+        retry: () => void freshness.refetch(),
+      }}
+      admin={admin}
+    />
+  );
   return (
     <>
       <header className="page-heading">
         <div>
-          <div className="eyebrow">COMMERCE / OVERVIEW</div>
           <h1>经营概览</h1>
           <p>先核对数据覆盖，再识别经营变化与需要追查的渠道。</p>
         </div>
@@ -81,18 +93,22 @@ export default function KpiPage() {
           </a>
         </div>
       </header>
-      <DataReadiness />
       {latest.isPending ? (
         <Loading />
       ) : latest.isError && !latest.data ? (
-        <ErrorState error={latest.error} retry={() => void latest.refetch()} />
+        <>
+          {readiness}
+          <ErrorState error={latest.error} retry={() => void latest.refetch()} />
+        </>
       ) : !latestDate ? (
-        <EmptyState title="还没有可分析的订单">
-          请先导入订单，完成后刷新此页面。<a href={'?page=upload'}>前往数据上传</a>
-        </EmptyState>
+        <>
+          {readiness}
+          <EmptyState title="还没有可分析的订单">
+            请先导入订单，完成后刷新此页面。<a href={'?page=upload'}>前往数据上传</a>
+          </EmptyState>
+        </>
       ) : (
         <>
-          <SourceStatus source="orders" />
           <FilterBar
             key={anchor}
             anchor={invalidAnchor ? latestDate : anchor}
@@ -103,6 +119,7 @@ export default function KpiPage() {
             onPeriod={(value) => navigate({ period: value })}
             onRefresh={refresh}
           />
+          {readiness}
           {invalidAnchor ? (
             <ErrorState
               error={new Error('链接中的统计日期无效或晚于最新数据日。')}
@@ -110,18 +127,6 @@ export default function KpiPage() {
             />
           ) : (
             <>
-              <div className="data-status">
-                <span>
-                  <Database size={14} />
-                  源数据覆盖至 <strong>{latestDate}</strong>
-                </span>
-                <span>
-                  {kpi.dataUpdatedAt
-                    ? `页面取数 ${new Date(kpi.dataUpdatedAt).toLocaleTimeString('zh-CN', { hour12: false })}`
-                    : '等待统计数据'}
-                </span>
-                {kpi.isFetching && kpi.data && <span role="status">正在刷新…</span>}
-              </div>
               {latest.isError && (
                 <ErrorState
                   compact
@@ -239,10 +244,10 @@ export default function KpiPage() {
                             <div>
                               <dt>最近成功入库</dt>
                               <dd>
-                                {freshness.data?.orders.last_import_at
-                                  ?.replace('T', ' ')
-                                  .slice(0, 19) ?? '暂无记录'}
-                                <small>服务器记录时间</small>
+                                {formatTimestamp(freshness.data?.orders.last_import_at, {
+                                  seconds: true,
+                                }) ?? '暂无记录'}
+                                <small>北京时间</small>
                               </dd>
                             </div>
                             <div>
@@ -321,7 +326,7 @@ export default function KpiPage() {
                       </Panel>
                     </details>
                     <p className="footnote">
-                      订单数为已导入记录数；客单价为金额非空记录的平均值。对比期为零时不计算变化率。退款及结算调整以平台记录为准。
+                      订单数与营业额不含已关闭、已取消、未付款和京东已删除订单，有赞订单已扣除退款；京东、天猫导出没有退款金额，部分退款无法扣除。客单价为金额非空订单的平均值。对比期为零时不计算变化率。
                     </p>
                   </>
                 )

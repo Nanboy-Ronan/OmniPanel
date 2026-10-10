@@ -2,12 +2,12 @@ import { useState, type ReactNode } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Download, RefreshCw, Search } from 'lucide-react';
 import { navigate } from '../lib/navigation';
-import { display, csv, saveBlob, useResource, type Row } from '../lib/resources';
+import { display, exportCsv, useResource, type Row } from '../lib/resources';
 import { z } from 'zod';
 import { label, platformNames } from '../lib/labels';
-import { DataTable, EmptyState, ErrorState, Loading } from './ui';
+import { DataTable, EmptyState, ErrorState, Loading, type SortState } from './ui';
 import { validDate } from '../lib/data';
-import { formatField, numericField } from '../lib/presentation';
+import { formatField, numericField, statusTone } from '../lib/presentation';
 
 export function Heading({
   title,
@@ -21,7 +21,6 @@ export function Heading({
   return (
     <header className="page-heading">
       <div>
-        <div className="eyebrow">DATA WORKSPACE</div>
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
@@ -232,9 +231,9 @@ export function RecordTable({
   defaultColumns?: string[];
 }) {
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize();
   const [filter, setFilter] = useState('');
-  const [sort, setSort] = useState('');
-  const [desc, setDesc] = useState(false);
+  const [sort, setSort] = useState<SortState>(null);
   const keys = columns ?? [...new Set(rows.flatMap((row) => Object.keys(row)))];
   const [chosen, setChosen] = useState<string[] | null>(null);
   const initialKeys = defaultColumns ? keys.filter((key) => defaultColumns.includes(key)) : keys;
@@ -250,23 +249,34 @@ export function RecordTable({
   );
   const sorted = sort
     ? [...filtered].sort((a, b) => {
-        const av = a[sort],
-          bv = b[sort];
+        const av = a[sort.key],
+          bv = b[sort.key];
+        // Missing values sink to the bottom in both directions.
+        if (av == null || bv == null) return av == null ? (bv == null ? 0 : 1) : -1;
         const value =
           typeof av === 'number' && typeof bv === 'number'
             ? av - bv
             : display(av).localeCompare(display(bv), 'zh-CN');
-        return desc ? -value : value;
+        return sort.desc ? -value : value;
       })
     : filtered;
-  const current = Math.min(page, Math.max(0, Math.ceil(sorted.length / 25) - 1));
+  // Header clicks cycle ascending → descending → original order.
+  const toggleSort = (key: string) => {
+    setSort((current) =>
+      current?.key !== key ? { key, desc: false } : !current.desc ? { key, desc: true } : null,
+    );
+    setPage(0);
+  };
+  const current = Math.min(page, Math.max(0, Math.ceil(sorted.length / pageSize) - 1));
   if (!rows.length) return <EmptyState title="当前条件下暂无数据" />;
   return (
     <>
       <div className="table-toolbar">
-        <label>
+        <label className="table-search">
           <span className="sr-only">表内搜索</span>
+          <Search size={14} aria-hidden />
           <input
+            type="search"
             placeholder="搜索已加载数据"
             value={filter}
             onChange={(e) => {
@@ -275,20 +285,6 @@ export function RecordTable({
             }}
           />
         </label>
-        <label>
-          排序
-          <select aria-label="排序字段" value={sort} onChange={(e) => setSort(e.target.value)}>
-            <option value="">原始顺序</option>
-            {keys.map((key) => (
-              <option key={key} value={key}>
-                {label(key)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button disabled={!sort} onClick={() => setDesc(!desc)}>
-          {desc ? '降序' : '升序'}
-        </button>
         {keys.length > 5 && (
           <details className="column-picker">
             <summary>
@@ -319,14 +315,7 @@ export function RecordTable({
           </details>
         )}
         {exportable && (
-          <button
-            onClick={() =>
-              saveBlob(
-                new Blob([csv(sorted, keys)], { type: 'text/csv;charset=utf-8' }),
-                `${caption}.csv`,
-              )
-            }
-          >
+          <button onClick={() => exportCsv(sorted, keys, `${caption}.csv`, caption)}>
             <Download size={14} />
             导出当前结果
           </button>
@@ -335,8 +324,11 @@ export function RecordTable({
       </div>
       <DataTable
         caption={caption}
-        rows={paginate ? sorted.slice(current * 25, current * 25 + 25) : sorted}
+        rows={paginate ? sorted.slice(current * pageSize, (current + 1) * pageSize) : sorted}
         rowKey={(row) => sorted.indexOf(row)}
+        sort={sort}
+        onSort={toggleSort}
+        onRowClick={onSelect}
         columns={[
           ...(onSelect
             ? [
@@ -344,7 +336,9 @@ export function RecordTable({
                   key: '_open',
                   title: selectLabel === '查看' ? '详情' : '操作',
                   render: (row: Row) => (
-                    <button onClick={() => onSelect(row)}>{selectLabel}</button>
+                    <button className="ghost" onClick={() => onSelect(row)}>
+                      {selectLabel}
+                    </button>
                   ),
                 },
               ]
@@ -359,6 +353,10 @@ export function RecordTable({
                   <summary>查看结构化数据</summary>
                   <pre>{JSON.stringify(row[key], null, 2)}</pre>
                 </details>
+              ) : statusTone(key, row[key]) ? (
+                <span className={`badge tone-${statusTone(key, row[key])}`}>
+                  {formatField(key, row[key])}
+                </span>
               ) : (
                 <span
                   className={`cell-value ${['title', 'note_title', 'sku'].includes(key) ? 'cell-long-text' : ''}`}
@@ -373,36 +371,129 @@ export function RecordTable({
       {paginate && (
         <Pagination
           page={current}
-          hasNext={(current + 1) * 25 < filtered.length}
+          hasNext={(current + 1) * pageSize < filtered.length}
           onPage={setPage}
           total={filtered.length}
+          pageSize={pageSize}
+          onPageSize={(size) => {
+            // Keep the first visible row on screen when the page grows or shrinks.
+            setPage(Math.floor((current * pageSize) / size));
+            setPageSize(size);
+          }}
         />
       )}
     </>
   );
 }
+export const PAGE_SIZES = [25, 50, 100] as const;
+const PAGE_SIZE_KEY = 'rpa.console.pageSize';
+function readPageSize() {
+  try {
+    const value = Number(sessionStorage.getItem(PAGE_SIZE_KEY));
+    return (PAGE_SIZES as readonly number[]).includes(value) ? value : 25;
+  } catch {
+    return 25;
+  }
+}
+/** Rows per page for client-side tables, shared across tables for this browser session. */
+function usePageSize() {
+  const [size, setSize] = useState(readPageSize);
+  const update = (value: number) => {
+    setSize(value);
+    try {
+      sessionStorage.setItem(PAGE_SIZE_KEY, String(value));
+    } catch {
+      // Falls back to this table only.
+    }
+  };
+  return [size, update] as const;
+}
+/**
+ * Pager. With `pageSize` and a known `total` it shows "第 N / M 页" with a jump field; server
+ * lists that only know whether a next page exists keep plain previous / next.
+ */
 export function Pagination({
   page,
   hasNext,
   onPage,
   total,
+  pageSize,
+  onPageSize,
 }: {
   page: number;
   hasNext: boolean;
   onPage: (page: number) => void;
   total?: number | null;
+  pageSize?: number;
+  onPageSize?: (size: number) => void;
 }) {
+  const pages = pageSize && total != null ? Math.max(1, Math.ceil(total / pageSize)) : null;
+  const [draft, setDraft] = useState(String(page + 1));
+  const [shown, setShown] = useState(page);
+  if (shown !== page) {
+    setShown(page);
+    setDraft(String(page + 1));
+  }
+  const jump = () => {
+    const target = Math.round(Number(draft));
+    if (!pages || !Number.isFinite(target) || target < 1) return setDraft(String(page + 1));
+    const next = Math.min(pages, target) - 1;
+    setDraft(String(next + 1));
+    if (next !== page) onPage(next);
+  };
   return (
     <div className="pagination">
-      <span>
-        第 {page + 1} 页{total != null ? ` · 共 ${total.toLocaleString()} 条` : ''}
+      <span className="pagination-summary">
+        {pages === null && `第 ${page + 1} 页`}
+        {total != null ? `${pages === null ? ' · ' : ''}共 ${total.toLocaleString()} 条` : ''}
       </span>
-      <button disabled={page === 0} onClick={() => onPage(page - 1)}>
-        上一页
-      </button>
-      <button disabled={!hasNext} onClick={() => onPage(page + 1)}>
-        下一页
-      </button>
+      {onPageSize && pageSize && total != null && total > PAGE_SIZES[0] && (
+        <label className="pagination-size">
+          每页
+          <select
+            aria-label="每页行数"
+            value={pageSize}
+            onChange={(e) => onPageSize(Number(e.target.value))}
+          >
+            {PAGE_SIZES.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+          条
+        </label>
+      )}
+      <div className="pagination-nav">
+        <button disabled={page === 0} onClick={() => onPage(page - 1)}>
+          上一页
+        </button>
+        {pages !== null && pages > 1 && (
+          <form
+            className="pagination-jump"
+            onSubmit={(e) => {
+              e.preventDefault();
+              jump();
+            }}
+          >
+            第
+            <input
+              aria-label="跳转到页码"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={pages}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={jump}
+            />
+            / {pages.toLocaleString()} 页
+          </form>
+        )}
+        <button disabled={!hasNext} onClick={() => onPage(page + 1)}>
+          下一页
+        </button>
+      </div>
     </div>
   );
 }
@@ -420,7 +511,7 @@ export function Detail({ row }: { row: Row }) {
       {Object.entries(row).map(([key, value]) => (
         <div key={key}>
           <dt>{label(key)}</dt>
-          <dd>{display(value)}</dd>
+          <dd>{formatField(key, value)}</dd>
         </div>
       ))}
     </dl>

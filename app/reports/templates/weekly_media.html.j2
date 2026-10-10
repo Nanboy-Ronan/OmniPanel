@@ -457,7 +457,7 @@
       <span class="badge-date">{{ context.bounds.this_week_start }} ~ {{ context.bounds.this_week_end }}</span>
     </h1>
     <div class="meta-info">
-      <span>生成时间：{{ context.generated_at | fmt_date }}</span>
+      <span>生成时间：{{ context.generated_at | fmt_datetime }}</span>
       <span>|</span>
       <span>已聚合：微信公众号 · 小红书 · 视频号 · 知乎 · 蒲公英 · 商城</span>
     </div>
@@ -546,6 +546,16 @@
   {% elif last_v is not none %}
   <div class="kpi-delta">
     <span class="dim">· 上周 {{ prefix }}{{ last_v | fmt_num if is_num else last_v | fmt_int }}</span>
+  </div>
+  {% endif %}
+  {% endmacro %}
+
+  {# Cumulative totals of different post cohorts: show last week's figure
+     for reference without a ▲/▼ that would read as a week-over-week change. #}
+  {% macro render_cohort_ref(last_v) %}
+  {% if last_v is not none %}
+  <div class="kpi-delta">
+    <span class="dim">· 上周新发内容累计 {{ last_v | fmt_int }}（非同龄对比）</span>
   </div>
   {% endif %}
   {% endmacro %}
@@ -873,6 +883,9 @@
       </h2>
       <span class="badge badge-channels">视频号助手导出</span>
     </div>
+    {% if context.channels_sections and context.channels_sections[0].wow_caveat %}
+    <p class="dim" style="font-size:12px; margin: 0 0 12px;">ℹ️ {{ context.channels_sections[0].wow_caveat }}</p>
+    {% endif %}
 
     {% for section in context.channels_sections %}
     <div class="card">
@@ -889,27 +902,27 @@
         <div class="kpi-card">
           <div class="kpi-label">总播放量</div>
           <div class="kpi-value">{{ section.this_week_summary.total_plays | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_plays, section.last_week_summary.total_plays) }}
+          {{ render_cohort_ref(section.last_week_summary.total_plays) }}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">总推荐</div>
           <div class="kpi-value">{{ section.this_week_summary.total_recommends | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_recommends, section.last_week_summary.total_recommends) }}
+          {{ render_cohort_ref(section.last_week_summary.total_recommends) }}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">总评论</div>
           <div class="kpi-value">{{ section.this_week_summary.total_comments | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_comments, section.last_week_summary.total_comments) }}
+          {{ render_cohort_ref(section.last_week_summary.total_comments) }}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">总分享</div>
           <div class="kpi-value">{{ section.this_week_summary.total_shares | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_shares, section.last_week_summary.total_shares) }}
+          {{ render_cohort_ref(section.last_week_summary.total_shares) }}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">新增粉丝</div>
           <div class="kpi-value">{{ section.this_week_summary.total_new_fans | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_new_fans, section.last_week_summary.total_new_fans) }}
+          {{ render_cohort_ref(section.last_week_summary.total_new_fans) }}
         </div>
       </div>
 
@@ -972,6 +985,9 @@
       </h2>
       <span class="badge badge-zhihu">创作者后台导出</span>
     </div>
+    {% if context.zhihu_section.wow_caveat %}
+    <p class="dim" style="font-size:12px; margin: 0 0 12px;">ℹ️ {{ context.zhihu_section.wow_caveat }}</p>
+    {% endif %}
 
     <div class="card">
       <div class="kpi-grid">
@@ -983,27 +999,27 @@
         <div class="kpi-card">
           <div class="kpi-label">总阅读量</div>
           <div class="kpi-value">{{ context.zhihu_section.this_week_summary.total_reads | fmt_int }}</div>
-          {{ render_delta(context.zhihu_section.this_week_summary.total_reads, context.zhihu_section.last_week_summary.total_reads) }}
+          {{ render_cohort_ref(context.zhihu_section.last_week_summary.total_reads) }}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">总点赞</div>
           <div class="kpi-value">{{ context.zhihu_section.this_week_summary.total_likes | fmt_int }}</div>
-          {{ render_delta(context.zhihu_section.this_week_summary.total_likes, context.zhihu_section.last_week_summary.total_likes) }}
+          {{ render_cohort_ref(context.zhihu_section.last_week_summary.total_likes) }}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">总评论</div>
           <div class="kpi-value">{{ context.zhihu_section.this_week_summary.total_comments | fmt_int }}</div>
-          {{ render_delta(context.zhihu_section.this_week_summary.total_comments, context.zhihu_section.last_week_summary.total_comments) }}
+          {{ render_cohort_ref(context.zhihu_section.last_week_summary.total_comments) }}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">总收藏</div>
           <div class="kpi-value">{{ context.zhihu_section.this_week_summary.total_collects | fmt_int }}</div>
-          {{ render_delta(context.zhihu_section.this_week_summary.total_collects, context.zhihu_section.last_week_summary.total_collects) }}
+          {{ render_cohort_ref(context.zhihu_section.last_week_summary.total_collects) }}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">总分享</div>
           <div class="kpi-value">{{ context.zhihu_section.this_week_summary.total_shares | fmt_int }}</div>
-          {{ render_delta(context.zhihu_section.this_week_summary.total_shares, context.zhihu_section.last_week_summary.total_shares) }}
+          {{ render_cohort_ref(context.zhihu_section.last_week_summary.total_shares) }}
         </div>
       </div>
 
@@ -1159,23 +1175,29 @@
       <span class="badge badge-ecom">多渠道订单导出</span>
     </div>
 
+    {% set ecom_complete = context.ecommerce_section.complete is not defined or context.ecommerce_section.complete %}
     <div class="card">
+      {% if not ecom_complete %}
+      <div class="dim" style="margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: #fffbeb; color: #92400e;">
+        ⚠️ {{ context.ecommerce_section.incomplete_note }}：以下为已上传部分的数据，不做环比对比。
+      </div>
+      {% endif %}
       <!-- Total Overview KPI -->
       <div class="kpi-grid">
         <div class="kpi-card" style="background: #f0fdf4; border-color: #bbf7d0;">
           <div class="kpi-label" style="color: #166534;">本周全商城 GMV</div>
           <div class="kpi-value" style="color: #15803d;">¥{{ context.ecommerce_section.this_week_total.gmv | fmt_num }}</div>
-          {{ render_delta(context.ecommerce_section.this_week_total.gmv, context.ecommerce_section.last_week_total.gmv, true, '¥') }}
+          {% if ecom_complete %}{{ render_delta(context.ecommerce_section.this_week_total.gmv, context.ecommerce_section.last_week_total.gmv, true, '¥') }}{% endif %}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">本周总订单数</div>
           <div class="kpi-value">{{ context.ecommerce_section.this_week_total.order_count | fmt_int }}</div>
-          {{ render_delta(context.ecommerce_section.this_week_total.order_count, context.ecommerce_section.last_week_total.order_count) }}
+          {% if ecom_complete %}{{ render_delta(context.ecommerce_section.this_week_total.order_count, context.ecommerce_section.last_week_total.order_count) }}{% endif %}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">动销 SKU 种类</div>
           <div class="kpi-value">{{ context.ecommerce_section.this_week_total.sku_count | fmt_int }}</div>
-          {{ render_delta(context.ecommerce_section.this_week_total.sku_count, context.ecommerce_section.last_week_total.sku_count) }}
+          {% if ecom_complete %}{{ render_delta(context.ecommerce_section.this_week_total.sku_count, context.ecommerce_section.last_week_total.sku_count) }}{% endif %}
         </div>
       </div>
 
@@ -1186,7 +1208,7 @@
         <div class="kpi-card">
           <div class="kpi-label">{{ platform.platform }} 渠道</div>
           <div class="kpi-value">¥{{ platform.this_week.gmv | fmt_num }}</div>
-          {{ render_delta(platform.this_week.gmv, platform.last_week.gmv, true, '¥') }}
+          {% if ecom_complete %}{{ render_delta(platform.this_week.gmv, platform.last_week.gmv, true, '¥') }}{% endif %}
           <div class="dim" style="font-size:11.5px; margin-top:4px;">订单量：{{ platform.this_week.order_count | fmt_int }} 单</div>
         </div>
         {% endfor %}
@@ -1261,7 +1283,7 @@
       </div>
       {% endif %}
 
-      <div class="caveat-box">ℹ️ 商城数据汇总自有赞、京东、天猫导出的实际发生订单金额。</div>
+      <div class="caveat-box">ℹ️ 商城数据汇总自有赞、京东、天猫导出的订单。自 2026 年 10 月起，GMV 与订单数不含已关闭、已取消、未付款和京东已删除订单，有赞订单已扣除退款；此前推送的周报未重算。</div>
     </div>
   </section>
   {% endif %}

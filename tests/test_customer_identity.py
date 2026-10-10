@@ -230,12 +230,12 @@ class TestIdentityClustersEndpoint:
     def test_requires_analyst_role(self, api_client, api_tokens):
         api_client.post(
             "/admin/users",
-            json={"email": "viewer@mptest.com", "password": "pw", "role": "viewer"},
+            json={"email": "viewer@mptest.com", "password": "pw-test-passphrase", "role": "viewer"},
             headers=_auth(api_tokens["admin"]),
         )
         r_login = api_client.post(
             "/auth/jwt/login",
-            data={"username": "viewer@mptest.com", "password": "pw"},
+            data={"username": "viewer@mptest.com", "password": "pw-test-passphrase"},
         )
         viewer_token = r_login.json()["access_token"]
 

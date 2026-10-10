@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ....auth import current_analyst_user
 from ....db import get_session
 from ....db.models import Order
+from ....db.order_status import COUNTED_GROUPS, net_amount
 from ._common import router, _platform_filter, _window
 
 
@@ -17,7 +18,7 @@ def _metrics():
     return (
         func.count(Order.id).label("orders"),
         func.count(Order.price).label("priced_orders"),
-        func.coalesce(func.sum(Order.price), 0).label("revenue"),
+        func.coalesce(func.sum(net_amount()), 0).label("revenue"),
         func.count(func.distinct(Order.customer_key)).label("customers"),
     )
 
@@ -132,7 +133,7 @@ async def dashboard(
                     _window(
                         select(name, *_metrics())
                         .group_by(name)
-                        .order_by(func.coalesce(func.sum(Order.price), 0).desc(), name)
+                        .order_by(func.coalesce(func.sum(net_amount()), 0).desc(), name)
                         .limit(limit),
                         start_date,
                         end_date,
@@ -145,7 +146,30 @@ async def dashboard(
         )
         return [{"name": r["name"], **_values(r)} for r in rows]
 
+    counted_flag = Order.status_group.in_(COUNTED_GROUPS)
+    status_stmt = select(
+        func.count(case((~counted_flag, Order.id))).label("excluded_orders"),
+        func.coalesce(func.sum(case((~counted_flag, Order.price))), 0).label("excluded_amount"),
+        func.coalesce(func.sum(case((counted_flag, Order.refunded_amount))), 0).label("refunds"),
+        func.count(case((Order.status_group == "unknown", Order.id))).label("unknown_orders"),
+        func.count(case((Order.status_group == "deleted", Order.id))).label("deleted_orders"),
+        func.coalesce(
+            func.sum(case((Order.status_group == "deleted", net_amount()))), 0
+        ).label("deleted_amount"),
+    ).where(Order.order_date.between(start_date, end_date))
+    if pf is not None:
+        status_stmt = status_stmt.where(pf)
+    status = (await session.execute(status_stmt)).mappings().one()
+
     return {
+        "status": {
+            "excluded_orders": int(status["excluded_orders"]),
+            "excluded_amount": round(float(status["excluded_amount"]), 2),
+            "refunds": round(float(status["refunds"]), 2),
+            "unknown_orders": int(status["unknown_orders"]),
+            "deleted_orders": int(status["deleted_orders"]),
+            "deleted_amount": round(float(status["deleted_amount"]), 2),
+        },
         "start_date": str(start_date),
         "end_date": str(end_date),
         "prior_start": str(prior_start),

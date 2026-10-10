@@ -3,7 +3,7 @@
 from __future__ import annotations
 import datetime as dt
 
-from fastapi import Depends, HTTPException, Query, Response
+from fastapi import Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,7 +11,9 @@ from ....auth import current_analyst_user
 from ....config import settings
 from ....db import get_session
 from ....db.models import Order
+from ....db.order_status import COUNTED_GROUPS, STATUS_LABELS, counted, net_amount
 from ....utils.cache import analysis_cache
+from ....utils.logger import log_operation
 from ._common import router, _ensure_data, _platform_filter
 
 _SEARCH_COLUMNS = (
@@ -74,7 +76,7 @@ async def customers(
 
     pf = _platform_filter(platform)
 
-    base_filters = [Order.customer_key.isnot(None)]
+    base_filters = [Order.customer_key.isnot(None), counted()]
     if start_date:
         base_filters.append(Order.order_date >= start_date)
     if end_date:
@@ -91,7 +93,7 @@ async def customers(
             func.min(Order.order_date).label("first_date"),
             func.max(Order.order_date).label("last_date"),
             func.count(Order.id).label("orders"),
-            func.sum(Order.price).label("revenue"),
+            func.sum(net_amount()).label("revenue"),
             func.min(Order.receiver).label("receiver"),
             func.min(Order.province).label("province"),
             func.min(Order.area).label("area"),
@@ -151,12 +153,20 @@ async def customers(
 
 @router.get("/customers/{customer_id}", summary="Orders for a specific customer")
 async def customer_orders(
+    request: Request,
     customer_id: str,
     start_date: dt.date | None = Query(None),
     end_date: dt.date | None = Query(None),
     _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
 ):
+    # Opening one customer's history is access to personal data; audit it even on cache hits.
+    await log_operation(
+        str(_u.id),
+        "view_customer",
+        {"customer_id": customer_id, "start_date": start_date, "end_date": end_date},
+        request=request,
+    )
     cache_key = analysis_cache._make_key(
         "customer_orders",
         customer_id=customer_id,
@@ -198,11 +208,18 @@ async def customer_orders(
             "buyer_nick": o.buyer_nick,
             "coupon_name": o.coupon_name,
             "distributor": o.distributor,
+            "raw_status": o.raw_status,
+            "status_group": STATUS_LABELS.get(o.status_group, o.status_group),
+            "refunded_amount": float(o.refunded_amount) if o.refunded_amount is not None else None,
         }
         for o in orders
     ]
 
-    total_spend = sum(float(o.price or 0) for o in orders)
+    # Closed and unpaid orders stay in the history but not in the spend.
+    total_spend = sum(
+        float(o.price or 0) - float(o.refunded_amount or 0)
+        for o in orders if o.status_group in COUNTED_GROUPS
+    )
 
     result_data = {"orders": rows, "count": len(rows), "total_spend": total_spend}
     await analysis_cache.set(cache_key, result_data)
@@ -222,6 +239,7 @@ async def field_coverage(
     nullable_cols = [
         "sku", "quantity", "price", "receiver", "receiver_phone",
         "province", "area", "full_address", "buyer_nick", "coupon_name", "distributor",
+        "raw_status", "refunded_amount",
     ]
     count_exprs = [func.count(getattr(Order, c)).label(c) for c in nullable_cols]
     row = (await session.execute(select(*count_exprs))).one()

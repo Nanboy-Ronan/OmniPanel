@@ -14,6 +14,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....db.models import Order
+from ....db.order_status import counted
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -44,12 +45,13 @@ def _platform_filter(platform: str | None):
 
 
 def _window(stmt, start_date: dt.date, end_date: dt.date, pf):
-    """Apply the standard order-date window and optional platform filter.
+    """Apply the standard order-date window, optional platform filter and status rule.
 
     Centralises the ``where(order_date.between(...))`` + optional platform
-    clause that nearly every analysis query repeats.
+    clause that nearly every analysis query repeats. Cancelled and unpaid orders
+    are excluded (app/db/order_status.py).
     """
-    stmt = stmt.where(Order.order_date.between(start_date, end_date))
+    stmt = stmt.where(Order.order_date.between(start_date, end_date), counted())
     if pf is not None:
         stmt = stmt.where(pf)
     return stmt

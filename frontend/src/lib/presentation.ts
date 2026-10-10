@@ -1,5 +1,8 @@
 import { display, numeric, type Row } from './resources';
 import { platformNames } from './labels';
+import { formatTimestamp } from './time';
+
+const zonedTimestamp = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i;
 
 export const moneyFields = new Set([
   'price',
@@ -13,6 +16,9 @@ export const moneyFields = new Set([
   'gmv',
   'total_revenue',
   'total_spend',
+  'refunded_amount',
+  'refunds',
+  'excluded_amount',
   'blogger_quote',
   'service_fee',
   'cost_per_interaction',
@@ -42,6 +48,8 @@ export function formatField(key: string, value: unknown): string {
     return Number.isFinite(value)
       ? value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
       : '—';
+  if (typeof value === 'string' && zonedTimestamp.test(value))
+    return formatTimestamp(value, { seconds: true }) ?? value;
   if (key === 'platform' && typeof value === 'string') return platformNames[value] ?? value;
   if (['status', 'role'].includes(key) && typeof value === 'string')
     return statuses[value] ?? value;
@@ -61,4 +69,22 @@ export function rankedRows(rows: Row[], key: string, limit: number) {
     .filter((row) => numeric(row[key]) !== null)
     .sort((a, b) => Number(b[key]) - Number(a[key]))
     .slice(0, limit);
+}
+const tones: Record<string, string> = {
+  success: 'success',
+  completed: 'success',
+  processing: 'info',
+  running: 'info',
+  pending: 'warning',
+  partial: 'warning',
+  failed: 'danger',
+  error: 'danger',
+  cancelled: 'neutral',
+};
+/** Badge tone for status-like cells; null keeps the value as plain text. */
+export function statusTone(key: string, value: unknown): string | null {
+  if (typeof value === 'boolean') return value ? 'success' : 'neutral';
+  if (key === 'status' && typeof value === 'string') return tones[value] ?? 'neutral';
+  if (key === 'role' && typeof value === 'string') return value === 'admin' ? 'info' : 'neutral';
+  return null;
 }

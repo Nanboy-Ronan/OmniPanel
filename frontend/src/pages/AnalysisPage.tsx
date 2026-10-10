@@ -62,7 +62,7 @@ export default function AnalysisPage() {
         action={<AnalysisLink />}
       />
       <RangeFilter key={signature} values={values} />
-      <SourceStatus source="orders" />
+      <SourceStatus source="orders" platform={values.platform} />
       {!valid && <ErrorState error={new Error('日期区间无效，请重新筛选。')} />}
       <Tabs
         value={tab}
@@ -195,7 +195,7 @@ function SavedViews({
   filters: { start_date: string; end_date: string; platform: string };
 }) {
   const views = useResource('/saved-queries/', rowsSchema);
-  const action = useAction();
+  const action = useAction({ error: '筛选视图操作失败' });
   return (
     <details className="saved-views">
       <summary>保存与恢复筛选视图</summary>
@@ -205,6 +205,7 @@ function SavedViews({
           e.preventDefault();
           const form = new FormData(e.currentTarget);
           action.mutate({
+            success: '筛选视图已保存',
             path: '/saved-queries/',
             body: {
               name: String(form.get('name')).trim(),
@@ -244,7 +245,11 @@ function SavedViews({
                   title="删除视图"
                   description={`删除 ${text(row.name)}？`}
                   onConfirm={() =>
-                    action.mutate({ path: `/saved-queries/${row.id}`, method: 'DELETE' })
+                    action.mutate({
+                      path: `/saved-queries/${row.id}`,
+                      method: 'DELETE',
+                      success: `已删除视图「${text(row.name)}」`,
+                    })
                   }
                   busy={action.isPending}
                 />

@@ -20,11 +20,13 @@ EXPECTED_ORDERS_FIELDS = {
     "id", "order_date", "order_id", "customer_key", "platform",
     "sku", "quantity", "price", "receiver", "receiver_phone",
     "province", "area", "full_address", "buyer_nick", "coupon_name", "distributor",
+    "raw_status", "status_group", "refunded_amount",
 }
 
 ORDERS_NULLABLE_FIELDS = {
     "sku", "quantity", "price", "receiver", "receiver_phone",
     "province", "area", "full_address", "buyer_nick", "coupon_name", "distributor",
+    "raw_status", "refunded_amount",
 }
 
 ORDERS_NON_NULLABLE_FIELDS = EXPECTED_ORDERS_FIELDS - ORDERS_NULLABLE_FIELDS
@@ -70,18 +72,18 @@ def client(pg_async_url, monkeypatch):
 
 @pytest.fixture
 def tokens(client):
-    client.post("/auth/register", json={"email": "first@test.com", "password": "pw"})
-    r = client.post("/auth/jwt/login", data={"username": "first@test.com", "password": "pw"})
+    client.post("/auth/register", json={"email": "first@test.com", "password": "pw-test-passphrase"})
+    r = client.post("/auth/jwt/login", data={"username": "first@test.com", "password": "pw-test-passphrase"})
     admin_token = r.json()["access_token"]
 
     def _create(email, role):
         r2 = client.post(
             "/admin/users",
-            json={"email": email, "password": "pw", "role": role},
+            json={"email": email, "password": "pw-test-passphrase", "role": role},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert r2.status_code == 201, r2.text
-        r3 = client.post("/auth/jwt/login", data={"username": email, "password": "pw"})
+        r3 = client.post("/auth/jwt/login", data={"username": email, "password": "pw-test-passphrase"})
         return r3.json()["access_token"]
 
     return {role: _create(f"{role}@test.com", role) for role in ["viewer", "analyst", "admin"]}

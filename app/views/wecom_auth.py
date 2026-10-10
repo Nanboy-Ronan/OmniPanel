@@ -113,6 +113,70 @@ def _synthetic_email(userid: str) -> str:
     return f"wecom.{safe[:48]}@wecom.local"
 
 
+PENDING_DETAIL = "账号尚未开通或已停用，请联系管理员在「用户管理」中启用。"
+
+
+class SignInRefused(HTTPException):
+    """A 403 that carries who was refused and why, for the audit trail."""
+
+    def __init__(self, reason: str, detail: str, *, user_id=None, wecom_userid: str | None = None):
+        super().__init__(status_code=403, detail=detail)
+        self.reason = reason
+        self.user_id = str(user_id) if user_id else None
+        self.wecom_userid = wecom_userid
+
+
+def _failure_reason(exc: HTTPException) -> str:
+    if isinstance(exc, SignInRefused):
+        return exc.reason
+    if exc.status_code == 429:
+        return "rate_limited"
+    if exc.status_code == 502:
+        return "wecom_unavailable"
+    if exc.status_code == 400:
+        return "invalid_state"
+    if exc.status_code == 403:
+        return "not_member"
+    return f"http_{exc.status_code}"
+
+
+async def _audit_failed_sign_in(request: Request, exc: HTTPException) -> None:
+    """Record a refused WeCom sign-in; auditing must never mask the real error."""
+    import logging
+
+    refused = exc if isinstance(exc, SignInRefused) else None
+    detail = {"reason": _failure_reason(exc)}
+    if refused and refused.wecom_userid:
+        detail["wecom_userid"] = refused.wecom_userid
+    try:
+        await log_operation(
+            refused.user_id if refused else None, "wecom_login_failed", detail, request=request,
+        )
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("could not audit failed sign-in", exc_info=True)
+
+
+def _new_users_active() -> bool:
+    return os.getenv("WECOM_NEW_USERS_ACTIVE", "false").strip().lower() in ("1", "true", "yes")
+
+
+async def _notify_pending_user(name: str, email: str) -> None:
+    """Tell administrators someone is waiting; never block login on delivery."""
+    import asyncio
+    import logging
+
+    from ..utils.wecom_bot import send_wecom_alert
+
+    try:
+        await asyncio.to_thread(
+            send_wecom_alert,
+            f"[访问申请] {name}（{email}）通过企业微信登录了数据工作台，"
+            "账号待开通。请在「用户管理」中确认角色后启用。",
+        )
+    except Exception:  # noqa: BLE001 - notification is best effort
+        logging.getLogger(__name__).warning("pending-user notification failed", exc_info=True)
+
+
 def _default_role() -> str:
     role = os.getenv("WECOM_DEFAULT_ROLE", "viewer").strip().lower()
     return role if role in {"viewer", "analyst", "admin"} else "viewer"
@@ -237,7 +301,7 @@ async def _find_or_create_user(
 
     if user is not None:
         if not user.is_active:
-            raise HTTPException(status_code=403, detail="User account is inactive")
+            raise SignInRefused("inactive", PENDING_DETAIL, user_id=user.id, wecom_userid=wecom_id)
         updated = False
         if name and user.display_name != name:
             user.display_name = name
@@ -275,17 +339,23 @@ async def _find_or_create_user(
         "yes",
     )
     if not auto_create:
-        raise HTTPException(status_code=403, detail="Enterprise WeChat user is not allowed")
+        raise SignInRefused(
+            "auto_create_disabled", "Enterprise WeChat user is not allowed", wecom_userid=wecom_id,
+        )
 
     count_result = await session.execute(select(func.count(User.id)))
-    role = "admin" if count_result.scalar_one() == 0 else _default_role()
+    first_user = count_result.scalar_one() == 0
+    role = "admin" if first_user else _default_role()
+    # Any member of the enterprise can complete WeCom OAuth, so a new account
+    # waits for an administrator unless the deployment opts into open access.
+    active = first_user or _new_users_active()
     helper = _password_helper()
     random_password = secrets.token_urlsafe(32)
     user = User(
         email=email,
         hashed_password=helper.hash(random_password),
         role=role,
-        is_active=True,
+        is_active=active,
         is_superuser=role == "admin",
         is_verified=True,
         wecom_userid=wecom_id,
@@ -297,8 +367,11 @@ async def _find_or_create_user(
     await log_operation(
         str(user.id),
         "wecom_register",
-        {"email": email, "wecom_userid": wecom_id, "name": name},
+        {"email": email, "wecom_userid": wecom_id, "name": name, "active": active},
     )
+    if not active:
+        await _notify_pending_user(name or wecom_id, email)
+        raise SignInRefused("pending_approval", PENDING_DETAIL, user_id=user.id, wecom_userid=wecom_id)
     return user
 
 
@@ -417,7 +490,11 @@ async def exchange(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     ip = get_client_ip(request)
-    await login_rate_limiter.check(ip, "wecom_exchange")
+    try:
+        await login_rate_limiter.check(ip, "wecom_exchange")
+    except HTTPException as exc:
+        await _audit_failed_sign_in(request, exc)
+        raise
 
     try:
         expected_state = request.cookies.get(_STATE_COOKIE, "")
@@ -428,6 +505,7 @@ async def exchange(
         user = await _find_or_create_user(session, identity)
     except HTTPException as exc:
         await login_rate_limiter.record_failure(ip, "wecom_exchange")
+        await _audit_failed_sign_in(request, exc)
         raise
 
     await login_rate_limiter.reset(ip, "wecom_exchange")
@@ -436,7 +514,9 @@ async def exchange(
     response.delete_cookie(_STATE_COOKIE, path="/auth/wecom")
     response.delete_cookie(_STATE_COOKIE, path="/")
     token = await get_jwt_strategy().write_token(user)
-    await log_operation(str(user.id), "wecom_login", {"wecom_userid": identity["userid"]})
+    await log_operation(
+        str(user.id), "wecom_login", {"wecom_userid": identity["userid"]}, request=request,
+    )
     display = user.display_name or identity.get("name") or user.email.split("@")[0]
     return {
         "access_token": token,

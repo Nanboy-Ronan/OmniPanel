@@ -4,11 +4,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from datetime import date, datetime, time, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
 from fastapi_users import exceptions
 from fastapi_users.router.common import ErrorCode
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import (
@@ -151,6 +153,13 @@ async def create_user(
     _user=Depends(current_admin_user),
 ):
     """Create a new user account."""
+    # Accounts normally sign in via WeCom; a password account is a fallback for
+    # local tooling, so it must not be guessable.
+    if len(payload.password) < 12 or payload.password.lower() == payload.email.lower():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="密码至少 12 位，且不能与邮箱相同。",
+        )
     user_data = UserCreate(
         email=payload.email,
         password=payload.password,
@@ -331,13 +340,65 @@ async def delete_user_account(
     await log_operation(str(_user.id), "delete_user", {"target_user": user_id, "email": email}, session=session)
 
 
+# Audit categories for the log page filter. Actions not listed fall under "other".
+LOG_CATEGORIES: dict[str, tuple[str, ...]] = {
+    "auth": (
+        "login", "wecom_login", "login_failed", "wecom_login_failed", "logout",
+        "register", "wecom_register",
+    ),
+    "access": ("download", "export_client", "view_customer", "view_order_raw", "sql_query", "nl_sql_query"),
+    "data": (
+        "upload", "xhs_upload", "xhs_upload_overview", "zhihu_upload", "pgy_upload", "channels_upload",
+        "wechat_sync", "clear_db", "weekly_report_run",
+        "media_account_create", "xhs_account_create", "xhs_account_update", "xhs_account_delete",
+        "channels_account_create", "channels_account_update", "channels_account_delete",
+        "collector_session_upload", "collector_session_delete",
+        "saved_query_create", "saved_query_delete",
+    ),
+    "admin": (
+        "create_user", "update_role", "update_active", "update_password",
+        "update_wecom_alert", "delete_user",
+    ),
+}
+
+
 @router.get("/logs")
 async def get_logs(
+    response: Response,
     user_id: str | None = None,
+    category: str | None = Query(None, pattern="^(auth|access|data|admin|failed)$"),
+    start_date: date | None = None,
+    end_date: date | None = None,
+    q: str | None = Query(None, max_length=100),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     _user=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Return recent operation logs with user emails."""
+    """Operation logs, newest first. Sign-in attempts with no account are included.
+
+    The body stays a list for existing clients; the matching total is in
+    ``X-Total-Count`` for pagination.
+    """
+    conditions = []
+    if user_id:
+        conditions.append(OperationLog.user_id == user_id)
+    if category == "failed":
+        conditions.append(OperationLog.action.in_(("login_failed", "wecom_login_failed")))
+    elif category:
+        conditions.append(OperationLog.action.in_(LOG_CATEGORIES[category]))
+    if start_date:
+        conditions.append(OperationLog.timestamp >= datetime.combine(start_date, time.min))
+    if end_date:
+        conditions.append(OperationLog.timestamp < datetime.combine(end_date + timedelta(days=1), time.min))
+    if q:
+        pattern = f"%{q}%"
+        conditions.append(or_(
+            OperationLog.detail.ilike(pattern), User.email.ilike(pattern), OperationLog.action.ilike(pattern),
+        ))
+
+    base = select(OperationLog.id).outerjoin(User, OperationLog.user_id == User.id).where(*conditions)
+    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
     stmt = (
         select(
             OperationLog.id,
@@ -346,22 +407,26 @@ async def get_logs(
             OperationLog.timestamp,
             OperationLog.detail,
         )
-        .join(User, OperationLog.user_id == User.id)
-        .order_by(OperationLog.timestamp.desc())
-        .limit(100)
+        .outerjoin(User, OperationLog.user_id == User.id)
+        .where(*conditions)
+        .order_by(OperationLog.timestamp.desc(), OperationLog.id.desc())
+        .limit(limit)
+        .offset(offset)
     )
-    if user_id:
-        stmt = stmt.where(OperationLog.user_id == user_id)
-
     result = await session.execute(stmt)
-    rows = [
-        {
+    rows = []
+    for r in result.all():
+        detail = json.loads(r.detail) if r.detail else None
+        context = detail if isinstance(detail, dict) else {}
+        rows.append({
             "id": r.id,
             "email": r.email,
             "action": r.action,
             "timestamp": str(r.timestamp) if r.timestamp else None,
-            "detail": json.loads(r.detail) if r.detail else None,
-        }
-        for r in result.all()
-    ]
+            "ip": context.get("ip"),
+            "user_agent": context.get("user_agent"),
+            "detail": {k: v for k, v in context.items() if k not in ("ip", "user_agent")} or None
+            if isinstance(detail, dict) else detail,
+        })
+    response.headers["X-Total-Count"] = str(total)
     return rows

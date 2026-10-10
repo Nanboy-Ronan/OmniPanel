@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { request } from './api';
+import { ApiError, request } from './api';
+import { useToast, type Toaster } from '../components/Toast';
 import { useLocationSearch } from './navigation';
 import { validDate } from './data';
 
@@ -21,25 +22,47 @@ export function useResource<T>(path: string, schema: z.ZodType<T>, enabled = tru
     enabled,
   });
 }
-export function useAction() {
+export type ActionArgs = {
+  path: string;
+  method?: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  body?: unknown;
+  timeoutMs?: number;
+  /** Per-call success notice, overriding the hook's default. */
+  success?: string;
+};
+type Notice = string | { message: string; tone: 'success' | 'error' };
+/**
+ * Mutation with a cache refresh on success. Outcomes are also announced as toasts: failures
+ * always, successes when a message is given. An expired session is left to the login screen.
+ */
+export function useAction(
+  messages: { success?: Notice | ((data: unknown) => Notice); error?: string } = {},
+) {
   const client = useQueryClient();
+  const toast = useToast();
   return useMutation({
-    mutationFn: (args: {
-      path: string;
-      method?: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-      body?: unknown;
-      timeoutMs?: number;
-    }) =>
+    mutationFn: ({ success: _success, ...args }: ActionArgs) =>
       request(args.path, z.unknown(), {
         ...args,
         method: args.method ?? 'POST',
         timeoutMs: args.timeoutMs ?? 120000,
       }),
-    onSuccess: async () => {
+    onSuccess: async (data, args) => {
+      const notice =
+        args.success ??
+        (typeof messages.success === 'function' ? messages.success(data) : messages.success);
+      if (typeof notice === 'string') toast.success(notice);
+      else if (notice) toast[notice.tone](notice.message);
       await client.invalidateQueries();
     },
+    onError: (error) => notifyFailure(toast, error, messages.error),
     retry: false,
   });
+}
+/** Toast a failed action unless the session expired or the user cancelled it. */
+export function notifyFailure(toast: Toaster, error: Error, prefix = '操作失败') {
+  if (error.name === 'AbortError' || (error instanceof ApiError && error.status === 401)) return;
+  toast.error(`${prefix}：${error.message}`);
 }
 export function useFilters({
   commerce = false,
@@ -106,6 +129,14 @@ export function saveBlob(blob: Blob, filename: string) {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+/** Save a CSV built in the browser and record the export in the audit log. */
+export function exportCsv(rows: Row[], columns: string[], filename: string, source: string) {
+  saveBlob(new Blob([csv(rows, columns)], { type: 'text/csv;charset=utf-8' }), filename);
+  // The file is already saved; a failed audit call must not interrupt the user.
+  void request('/audit/export', z.null(), {
+    body: { source: source.slice(0, 120), rows: rows.length, columns: columns.slice(0, 200) },
+  }).catch(() => undefined);
+}
 export async function download(path: string, filename: string) {
   const blob = await request(path, z.instanceof(Blob), { format: 'blob', timeoutMs: 180000 });
   saveBlob(blob, filename);
@@ -124,7 +155,10 @@ export function csv(rows: Row[], columns: string[]) {
       .join('\r\n')
   );
 }
-export async function paged(path: string, signal: AbortSignal) {
+export async function paged(
+  path: string,
+  signal: AbortSignal,
+): Promise<{ rows: Row[]; total: number | null }> {
   let total: number | null = null;
   const rows = await request(path, rowsSchema, {
     signal,

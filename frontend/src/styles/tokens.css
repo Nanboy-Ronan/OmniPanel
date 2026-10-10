@@ -1,0 +1,65 @@
+/* Design tokens. Every colour, radius and shadow in the console resolves to one of these. */
+:root {
+  /* Surfaces */
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f0f3f8;
+
+  /* Text, strongest to faintest */
+  --text: #17283b;
+  --text-2: #3a4e65;
+  --text-3: #5f7187;
+  --text-4: #8c9aab;
+
+  /* Lines */
+  --border: #e1e7ef;
+  --border-strong: #cdd6e1;
+  --divider: #edf1f6;
+
+  /* Brand */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-text: #1d4fb8;
+  --primary-soft: #eef4ff;
+  --primary-border: #c8d8fb;
+
+  /* Status */
+  --success: #17795a;
+  --success-soft: #ebf6f1;
+  --success-border: #c9e4d7;
+  --warning: #9a5c0e;
+  --warning-soft: #fff8eb;
+  --warning-border: #eed5a5;
+  --danger: #b42d3c;
+  --danger-soft: #fdf0f1;
+  --danger-border: #efc9ce;
+
+  /* Navigation rail */
+  --nav: #0f1f31;
+  --nav-text: #a9b9cb;
+  --nav-muted: #6f849b;
+  --nav-hover: rgb(255 255 255 / 6%);
+  --nav-active: rgb(96 145 255 / 16%);
+  --nav-accent: #7fa8ff;
+  --nav-border: rgb(255 255 255 / 8%);
+
+  /* Shape and depth */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-xs: 0 1px 2px rgb(15 31 49 / 5%);
+  --shadow-sm: 0 1px 3px rgb(15 31 49 / 6%), 0 1px 2px rgb(15 31 49 / 4%);
+  --shadow-md: 0 8px 24px rgb(15 31 49 / 10%);
+  --shadow-lg: 0 24px 64px rgb(15 31 49 / 20%);
+  --ring: 0 0 0 3px rgb(37 99 235 / 22%);
+  --scrim: rgb(13 24 38 / 45%);
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --fast: 120ms;
+  --slow: 220ms;
+
+  /* Legacy aliases still referenced by analysis styles */
+  --muted: var(--text-3);
+}

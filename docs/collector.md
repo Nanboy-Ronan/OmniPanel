@@ -354,7 +354,15 @@ with the per-run success notifications above).
 
 Checked pipelines (each skipped if its own feature is disabled):
 
-- **Collector** (`COLLECTOR_ENABLED=true`): most recent `collector_runs.started_at`.
+- **Collector** (`COLLECTOR_ENABLED=true`): for every source the collector is
+  supposed to produce — each active XHS account, 数据概览 only with
+  `COLLECTOR_XHS_OVERVIEW_ENABLED`, 蒲公英 only for accounts with
+  `pgy_enabled`, 知乎 article + qa, 视频号 / 京东 only when their flags are on —
+  the latest `collector_runs` row with `status='success'` and
+  `triggered_by <> 'verify'`. Each stale source alerts separately, so a
+  verify run or one healthy platform can't mask a dead one. Rows stuck in
+  `running` for more than 30 minutes (process killed before it could record
+  an outcome) are marked `killed` and reported.
 - **WeChat auto-sync** (`WECHAT_AUTO_SYNC_ENABLED=true`): most recent
   `media_sync_runs.started_at` where `source = 'api'` — a manual xlsx upload
   writes a fresh row too but must not mask an auto-sync that has actually

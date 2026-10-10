@@ -8,7 +8,7 @@ import logging
 import os
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,7 @@ from ...db.etl.xhs_overview import (
 from ...db.models import XhsAccount, XhsPost
 from ...config import settings
 from ...utils.logger import log_operation
+from ...utils.spreadsheet import read_excel_safely
 from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/xhs", tags=["xhs"])
@@ -44,6 +45,7 @@ class XhsAccountCreate(BaseModel):
 
 @router.post("/accounts", status_code=status.HTTP_201_CREATED)
 async def create_xhs_account(
+    request: Request,
     body: XhsAccountCreate,
     _u=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
@@ -59,6 +61,7 @@ async def create_xhs_account(
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
+    await log_operation(str(_u.id), "xhs_account_create", {"account_id": acc.id, "name": acc.name}, request=request)
     return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active, "pgy_enabled": acc.pgy_enabled}
 
 
@@ -83,6 +86,7 @@ class XhsAccountUpdate(BaseModel):
 
 @router.patch("/accounts/{account_id}")
 async def update_xhs_account(
+    request: Request,
     account_id: int,
     body: XhsAccountUpdate,
     _u=Depends(current_admin_user),
@@ -102,11 +106,13 @@ async def update_xhs_account(
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
+    await log_operation(str(_u.id), "xhs_account_update", {"account_id": acc.id, "changed": sorted(body.model_dump(exclude_none=True))}, request=request)
     return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active, "pgy_enabled": acc.pgy_enabled}
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_xhs_account(
+    request: Request,
     account_id: int,
     _u=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
@@ -114,8 +120,10 @@ async def delete_xhs_account(
     acc = await session.get(XhsAccount, account_id)
     if acc is None:
         raise HTTPException(status_code=404, detail="Account not found")
+    name = acc.name
     await session.delete(acc)
     await session.commit()
+    await log_operation(str(_u.id), "xhs_account_delete", {"account_id": account_id, "name": name}, request=request)
 
 
 # ── Upload ────────────────────────────────────────────────────────────────────
@@ -147,7 +155,7 @@ async def upload_xhs(
         tmp_path = await save_upload(file, ext or ".csv")
 
         def _process(path: str) -> dict:
-            df_raw = pd.read_excel(path, header=None, dtype=str)
+            df_raw = read_excel_safely(path, header=None, dtype=str)
             rows = parse_xhs_xlsx(df_raw)
             if not rows:
                 raise ValueError("文件中未解析到有效行，请确认格式正确。")

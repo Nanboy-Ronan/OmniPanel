@@ -11,6 +11,7 @@ from ....auth import current_analyst_user
 from ....config import settings
 from ....db import get_session
 from ....db.models import Order
+from ....db.order_status import counted, net_amount
 from ....utils.logger import log_operation
 from ....utils.cache import analysis_cache
 from ._common import router, _ensure_data, _platform_filter, _window
@@ -50,7 +51,7 @@ async def analyse(
     first_subq = select(
         Order.customer_key,
         func.min(Order.order_date).label("first_date"),
-    ).where(Order.customer_key.isnot(None))
+    ).where(Order.customer_key.isnot(None), counted())
     if pf is not None:
         first_subq = first_subq.where(pf)
     first_subq = first_subq.group_by(Order.customer_key).subquery()
@@ -64,12 +65,12 @@ async def analyse(
             Order.order_date,
             Order.customer_key,
             Order.sku,
-            Order.price,
+            net_amount().label("price"),
             Order.platform,
             case((is_old, True), else_=False).label("is_old"),
         )
         .join(first_subq, Order.customer_key == first_subq.c.customer_key)
-        .where(Order.order_date.between(start_date, end_date))
+        .where(Order.order_date.between(start_date, end_date), counted())
     )
     if pf is not None:
         base = base.where(pf)
@@ -219,8 +220,8 @@ async def analyse_overview(
         _window(
             select(
                 func.count(Order.id).label("total_orders"),
-                func.sum(Order.price).label("total_revenue"),
-                func.avg(Order.price).label("avg_order_value"),
+                func.sum(net_amount()).label("total_revenue"),
+                func.avg(net_amount()).label("avg_order_value"),
                 func.count(func.distinct(Order.customer_key)).label("unique_customers"),
             ),
             start_date, end_date, pf,
@@ -237,7 +238,7 @@ async def analyse_overview(
             select(
                 Order.sku,
                 func.count(Order.id).label("orders"),
-                func.sum(Order.price).label("revenue"),
+                func.sum(net_amount()).label("revenue"),
             ).group_by(Order.sku).order_by(func.count(Order.id).desc()).limit(5),
             start_date, end_date, pf,
         )
@@ -250,7 +251,7 @@ async def analyse_overview(
             select(
                 Order.province,
                 func.count(Order.id).label("orders"),
-                func.sum(Order.price).label("revenue"),
+                func.sum(net_amount()).label("revenue"),
             )
             .where(Order.province.isnot(None))
             .group_by(Order.province)
@@ -324,29 +325,38 @@ async def kpi_periods(
     month_start = anchor.replace(day=1)
     prior_month_end = month_start - dt.timedelta(days=1)
     prior_month_start = prior_month_end.replace(day=1)
-    prior_month_same_end = min(
-        prior_month_start + (anchor - month_start), prior_month_end,
-    )
+    # Month-to-date vs. the same number of days of the prior month. When the
+    # prior month is shorter (e.g. anchor = 03-31, 31 days vs. February's
+    # 28) the old window was clamped to the month end, comparing 31 days with
+    # 28. The prior window is now the same day count ending at the prior
+    # month's end (01-29..02-28), so both sides always cover equal days.
+    month_days = (anchor - month_start).days + 1
+    prior_month_window_end = prior_month_start + dt.timedelta(days=month_days - 1)
+    if prior_month_window_end > prior_month_end:
+        prior_month_window_end = prior_month_end
+        prior_month_window_start = prior_month_end - dt.timedelta(days=month_days - 1)
+    else:
+        prior_month_window_start = prior_month_start
     windows = {
         "day": (anchor, anchor),
         "prior_day": (anchor - dt.timedelta(days=1), anchor - dt.timedelta(days=1)),
         "week": (week_start, anchor),
         "prior_week": (prior_week_start, prior_week_end),
         "month": (month_start, anchor),
-        "prior_month": (prior_month_start, prior_month_same_end),
+        "prior_month": (prior_month_window_start, prior_month_window_end),
     }
     columns = []
     for name, (start, end) in windows.items():
         in_window = Order.order_date.between(start, end)
         columns.extend((
             func.count(case((in_window, Order.id))).label(f"{name}_orders"),
-            func.coalesce(func.sum(case((in_window, Order.price), else_=0)), 0).label(f"{name}_revenue"),
-            func.avg(case((in_window, Order.price))).label(f"{name}_aov"),
+            func.coalesce(func.sum(case((in_window, net_amount()), else_=0)), 0).label(f"{name}_revenue"),
+            func.avg(case((in_window, net_amount()))).label(f"{name}_aov"),
             func.count(func.distinct(case((in_window, Order.customer_key)))).label(f"{name}_customers"),
         ))
     first_date = min(start for start, _ in windows.values())
     row = (await session.execute(
-        select(*columns).where(Order.order_date.between(first_date, anchor))
+        select(*columns).where(Order.order_date.between(first_date, anchor), counted())
     )).one()._mapping
     result = {}
     for name in windows:

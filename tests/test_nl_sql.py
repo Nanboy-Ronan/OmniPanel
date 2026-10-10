@@ -49,20 +49,20 @@ def client(pg_async_url, monkeypatch):
 
 @pytest.fixture
 def tokens(client):
-    client.post("/auth/register", json={"email": "first@test.com", "password": "pw", "role": "viewer"})
+    client.post("/auth/register", json={"email": "first@test.com", "password": "pw-test-passphrase", "role": "viewer"})
     admin_token = client.post(
-        "/auth/jwt/login", data={"username": "first@test.com", "password": "pw"}
+        "/auth/jwt/login", data={"username": "first@test.com", "password": "pw-test-passphrase"}
     ).json()["access_token"]
 
     def _create(email, role):
         r = client.post(
             "/admin/users",
-            json={"email": email, "password": "pw", "role": role},
+            json={"email": email, "password": "pw-test-passphrase", "role": role},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert r.status_code == 201, r.text
         return client.post(
-            "/auth/jwt/login", data={"username": email, "password": "pw"}
+            "/auth/jwt/login", data={"username": email, "password": "pw-test-passphrase"}
         ).json()["access_token"]
 
     return {role: _create(f"{role}@test.com", role) for role in ["viewer", "analyst", "admin"]}

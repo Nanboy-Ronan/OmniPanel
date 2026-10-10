@@ -58,6 +58,16 @@ def _fmt_date(value: Any) -> str:
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
+def _fmt_datetime(value: Any) -> str:
+    """Timestamp to the minute (no seconds/microseconds/offset); aware values
+    are shown in their own zone — the report passes APP_TIMEZONE time."""
+    if _is_invalid(value):
+        return "—"
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d %H:%M")
+    return str(value)
+
+
 def _sparkline(deltas: list[tuple[Any, int]], width: int = 160, height: int = 32) -> str:
     """Tiny inline SVG sparkline for a per-post daily-reads series — no
     charting library. Per the stat-tile spec: the trend line stays in the
@@ -93,6 +103,7 @@ _env.filters["fmt_num"] = _fmt_num
 _env.filters["fmt_int"] = _fmt_int
 _env.filters["fmt_pct"] = _fmt_pct
 _env.filters["fmt_date"] = _fmt_date
+_env.filters["fmt_datetime"] = _fmt_datetime
 _env.filters["sparkline"] = _sparkline
 
 

@@ -29,12 +29,20 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ..models import XhsPost
+from ._upsert import coalesce_update_set, require_columns
 
 # Fields refreshed on every upsert (excludes dedup key + created_at)
 _UPSERT_UPDATE_COLS = [
     "genre", "impressions", "views", "cover_click_rate",
     "likes", "comments", "collects", "new_followers",
     "shares", "avg_watch_time", "danmu",
+]
+
+# Every export column the parser reads. A missing one (XHS renamed it) fails
+# the import loudly instead of writing NULL for that metric on every row.
+REQUIRED_COLUMNS = [
+    "笔记标题", "首次发布时间", "体裁", "曝光", "观看量", "封面点击率",
+    "点赞", "评论", "收藏", "涨粉", "分享", "人均观看时长", "弹幕",
 ]
 
 # Dedup constraint name (must match model / migration)
@@ -75,7 +83,10 @@ def parse_xhs_xlsx(df_raw: pd.DataFrame) -> list[dict]:
     Row 2+ are the data rows.
     """
     # Row 1 holds the real headers; data starts at row 2
+    if len(df_raw) < 2:
+        raise ValueError("小红书导出文件缺少表头行（第 2 行应为列名）。")
     headers = [str(h).strip() for h in df_raw.iloc[1].tolist()]
+    require_columns(headers, REQUIRED_COLUMNS, "小红书")
     df = df_raw.iloc[2:].copy()
     df.columns = headers
     df = df.reset_index(drop=True)
@@ -110,7 +121,8 @@ def upsert_xhs_posts(rows: list[dict], account_id: int, session: Session) -> dic
     """Insert new posts and update existing posts; never remove posts absent from rows.
 
     Each row is matched by (account_id, title, publish_date).  On a match the
-    columns listed in _UPSERT_UPDATE_COLS are overwritten; all other columns
+    columns listed in _UPSERT_UPDATE_COLS are overwritten — except where the
+    incoming value is NULL, which keeps the stored value (COALESCE); all other columns
     (id, account_id, title, publish_date, created_at) are left as-is.
     Rows already in the DB that are not present in `rows` are not touched.
     """
@@ -121,14 +133,11 @@ def upsert_xhs_posts(rows: list[dict], account_id: int, session: Session) -> dic
 
     rows_with_account = [{**r, "account_id": account_id} for r in rows]
 
-    stmt = (
-        pg_insert(XhsPost)
-        .values(rows_with_account)
-        .on_conflict_do_update(
-            constraint=_DEDUP_CONSTRAINT,
-            set_={col: pg_insert(XhsPost).excluded[col] for col in _UPSERT_UPDATE_COLS}
-            | {"updated_at": text("NOW()")},
-        )
+    insert = pg_insert(XhsPost).values(rows_with_account)
+    stmt = insert.on_conflict_do_update(
+        constraint=_DEDUP_CONSTRAINT,
+        set_=coalesce_update_set(insert, XhsPost, _UPSERT_UPDATE_COLS)
+        | {"updated_at": text("NOW()")},
     )
     session.execute(stmt)
     session.commit()

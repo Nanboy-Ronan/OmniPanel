@@ -32,6 +32,20 @@ _logger = logging.getLogger(__name__)
 # Module-level so tests can monkeypatch it (same pattern as start_run/finish_run/
 # send_wecom_alert below) to short-circuit retry delays without real sleeping.
 _sleep = time.sleep
+# Monotonic clock for the run's time budget; monkeypatched in tests.
+_monotonic = time.monotonic
+
+# rpa-collector.service has TimeoutStartSec=900: systemd SIGTERMs the run at
+# 15 minutes. Stop starting new work (targets, retries) comfortably before
+# that so the summary alert and every CollectorRun outcome get recorded.
+DEFAULT_TIME_BUDGET_SECONDS = 780
+
+
+class CollectorInterrupted(BaseException):
+    """Raised from the SIGTERM handler (see app/collector/cli.py) so the run
+    unwinds through run_collect's bookkeeping instead of dying silently.
+    A BaseException so the per-target ``except Exception`` handlers don't
+    swallow it."""
 
 
 _ZHIHU_CONTENT_LABEL = {"article": "文章", "qa": "问答"}
@@ -211,16 +225,21 @@ def _collect_with_retry(
     *,
     retries: int,
     delay_seconds: float,
+    deadline: float | None = None,
 ) -> tuple[bytes, str]:
     """Retry _collect_one, but only for DownloadTimeoutError — a transient
     failure with a still-valid session. SessionExpiredError and anything else
-    is never retried (retrying a dead session just wastes the whole delay)."""
+    is never retried (retrying a dead session just wastes the whole delay).
+    No retry is started once *deadline* (a ``_monotonic()`` value) is near."""
     attempt = 1
     while True:
         try:
             return _collect_one(target, collect_fns, headless)
         except DownloadTimeoutError:
             if attempt >= retries:
+                raise
+            if deadline is not None and _monotonic() + delay_seconds >= deadline:
+                _logger.warning("%s: 下载超时，本次运行时间预算不足，不再重试", target.label)
                 raise
             _logger.warning(
                 "%s: 下载超时，%d/%d 次尝试失败，%ds 后重试",
@@ -324,97 +343,42 @@ def run_collect(
 
     failures: list[str] = []
     successes: list[str] = []
+    budget = getattr(settings, "collector_time_budget_seconds", DEFAULT_TIME_BUDGET_SECONDS)
+    deadline = _monotonic() + budget
+    state: dict = {"run_id": None}
 
-    for target in targets:
-        if not target.session_file.exists():
-            msg = f"{target.label}: 未找到登录态文件 {target.session_file}，请本地重跑 bootstrap-login 并到管理页上传"
-            _logger.warning(msg)
-            failures.append(msg)
-            continue
-
-        run_id = start_run(
-            target.platform,
-            account_id=target.account_id,
-            content_type=target.content_type,
-            triggered_by=triggered_by,
-        )
-        try:
-            data, filename = _collect_with_retry(
-                target, collect_fns, headless,
-                retries=settings.collector_collect_retries,
-                delay_seconds=settings.collector_retry_delay_seconds,
-            )
-
-            if dry_run:
-                finish_run(run_id, "success", rows_upserted=0, filename=filename)
-                continue
-
-            result = _upload_one(
-                api_client, target, data, filename,
-                timeout_seconds=getattr(settings, "collector_upload_timeout_seconds", 120),
-            )
-            rows = result.get("upserted", 0)
-            finish_run(
-                run_id, "success",
-                rows_upserted=rows,
-                filename=filename,
-            )
-            successes.append(f"{target.label}: {rows} 行")
-
-        except SessionExpiredError as exc:
-            finish_run(run_id, "session_expired", error_message=str(exc))
-            msg = f"{target.label}: 登录态已过期，请本地重跑 bootstrap-login 并到管理页重传。{exc}"
-            _logger.error(msg)
-            failures.append(msg)
-
-        except WrongAccountError as exc:
-            finish_run(run_id, "wrong_account", error_message=str(exc))
-            msg = (
-                f"{target.label}: 登录态有效，但账号不对（很可能选错了子账号）。"
-                f"请重新执行 bootstrap-login 并明确选择正确的账号后重传——直接重跑采集不会修复。{exc}"
-            )
-            _logger.error(msg)
-            failures.append(msg)
-
-        except DownloadTimeoutError as exc:
-            finish_run(run_id, "download_failed", error_message=str(exc))
-            msg = f"{target.label}: 导出下载超时或失败。{exc}"
-            _logger.error(msg)
-            failures.append(msg)
-
-        except EmptyExportError as exc:
-            finish_run(run_id, "empty_export", error_message=str(exc))
-            if target.platform == "jd":
-                msg = f"{target.label}: 最近六个月的订单列表为空或无法解析，请人工确认京麦订单页。{exc}"
-            else:
+    try:
+        for index, target in enumerate(targets):
+            if _monotonic() >= deadline:
+                skipped = [t.label for t in targets[index:]]
                 msg = (
-                    f"{target.label}: 导出为空（未解析到任何数据行）。"
-                    f"可能是该账号近期没有新内容，也可能登录态指向了错误的账号，请人工确认后再决定是否需要重新登录。{exc}"
+                    f"本次运行已用尽时间预算（{budget}s，systemd 900s 超时前主动停止），"
+                    f"未执行：{'、'.join(skipped)}"
                 )
-            _logger.error(msg)
-            failures.append(msg)
-
-        except UploadFailedError as exc:
-            finish_run(run_id, "upload_failed", error_message=str(exc))
-            msg = f"{target.label}: 上传失败。{exc}"
-            _logger.error(msg, exc_info=exc)
-            failures.append(msg)
-
-        except XhsApiError as exc:
-            finish_run(run_id, "api_error", error_message=str(exc))
-            msg = (
-                f"{target.label}: 登录态有效，但数据接口拒绝或未按预期返回（不是登录过期，"
-                f"重新 bootstrap-login 不一定能解决）。请查看采集调试截图/HTML 排查。{exc}"
+                _logger.error(msg)
+                failures.append(msg)
+                break
+            _run_one_target(
+                target, settings, api_client, collect_fns, headless, triggered_by,
+                dry_run, deadline, failures, successes, state,
             )
-            _logger.error(msg, exc_info=exc)
-            failures.append(msg)
+    except BaseException as exc:
+        # SIGTERM (CollectorInterrupted), KeyboardInterrupt, or a bug outside
+        # the per-target handlers: record the in-flight run and still send the
+        # summary, then re-raise so the process exits non-zero.
+        if state["run_id"] is not None:
+            try:
+                finish_run(state["run_id"], "killed", error_message=f"采集进程被中断：{type(exc).__name__} {exc}")
+            except Exception:
+                _logger.exception("could not record interrupted run %s", state["run_id"])
+        failures.append(f"采集进程被中断（{type(exc).__name__}），剩余目标未执行")
+        _send_collect_summary(failures, successes, targets, dry_run, settings)
+        raise
 
-        except Exception as exc:
-            finish_run(run_id, "error", error_message=str(exc))
-            msg = f"{target.label}: 未知错误。{exc}"
-            _logger.error(msg, exc_info=exc)
-            failures.append(msg)
+    return _send_collect_summary(failures, successes, targets, dry_run, settings)
 
+
+def _send_collect_summary(failures, successes, targets, dry_run, settings) -> int:
     if failures:
         header = f"[采集告警] 本次运行 {len(failures)}/{len(targets)} 个目标失败：\n"
         lines = [f"- {f}" for f in failures]
@@ -422,7 +386,8 @@ def run_collect(
             lines.append("")
             lines.append("成功的目标：")
             lines.extend(f"- {s}" for s in successes)
-        send_wecom_alert(header + "\n".join(lines))
+        if not send_wecom_alert(header + "\n".join(lines)):
+            _logger.error("collector failure summary was NOT delivered via WeCom")
         return 1
 
     if targets and not dry_run and settings.wecom_notify_success:
@@ -430,6 +395,103 @@ def run_collect(
         send_wecom_alert(header + "\n".join(f"- {s}" for s in successes))
 
     return 0
+
+
+def _run_one_target(
+    target, settings, api_client, collect_fns, headless, triggered_by,
+    dry_run, deadline, failures, successes, state,
+) -> None:
+    if not target.session_file.exists():
+        msg = f"{target.label}: 未找到登录态文件 {target.session_file}，请本地重跑 bootstrap-login 并到管理页上传"
+        _logger.warning(msg)
+        failures.append(msg)
+        return
+
+    run_id = start_run(
+        target.platform,
+        account_id=target.account_id,
+        content_type=target.content_type,
+        triggered_by=triggered_by,
+    )
+    state["run_id"] = run_id
+    try:
+        data, filename = _collect_with_retry(
+            target, collect_fns, headless,
+            retries=settings.collector_collect_retries,
+            delay_seconds=settings.collector_retry_delay_seconds,
+            deadline=deadline,
+        )
+
+        if dry_run:
+            finish_run(run_id, "success", rows_upserted=0, filename=filename)
+            state["run_id"] = None
+            return
+
+        result = _upload_one(
+            api_client, target, data, filename,
+            timeout_seconds=getattr(settings, "collector_upload_timeout_seconds", 120),
+        )
+        rows = result.get("upserted", 0)
+        finish_run(
+            run_id, "success",
+            rows_upserted=rows,
+            filename=filename,
+        )
+        successes.append(f"{target.label}: {rows} 行")
+    except SessionExpiredError as exc:
+        finish_run(run_id, "session_expired", error_message=str(exc))
+        msg = f"{target.label}: 登录态已过期，请本地重跑 bootstrap-login 并到管理页重传。{exc}"
+        _logger.error(msg)
+        failures.append(msg)
+
+    except WrongAccountError as exc:
+        finish_run(run_id, "wrong_account", error_message=str(exc))
+        msg = (
+            f"{target.label}: 登录态有效，但账号不对（很可能选错了子账号）。"
+            f"请重新执行 bootstrap-login 并明确选择正确的账号后重传——直接重跑采集不会修复。{exc}"
+        )
+        _logger.error(msg)
+        failures.append(msg)
+
+    except DownloadTimeoutError as exc:
+        finish_run(run_id, "download_failed", error_message=str(exc))
+        msg = f"{target.label}: 导出下载超时或失败。{exc}"
+        _logger.error(msg)
+        failures.append(msg)
+
+    except EmptyExportError as exc:
+        finish_run(run_id, "empty_export", error_message=str(exc))
+        if target.platform == "jd":
+            msg = f"{target.label}: 最近六个月的订单列表为空或无法解析，请人工确认京麦订单页。{exc}"
+        else:
+            msg = (
+                f"{target.label}: 导出为空（未解析到任何数据行）。"
+                f"可能是该账号近期没有新内容，也可能登录态指向了错误的账号，请人工确认后再决定是否需要重新登录。{exc}"
+            )
+        _logger.error(msg)
+        failures.append(msg)
+
+    except UploadFailedError as exc:
+        finish_run(run_id, "upload_failed", error_message=str(exc))
+        msg = f"{target.label}: 上传失败。{exc}"
+        _logger.error(msg, exc_info=exc)
+        failures.append(msg)
+
+    except XhsApiError as exc:
+        finish_run(run_id, "api_error", error_message=str(exc))
+        msg = (
+            f"{target.label}: 登录态有效，但数据接口拒绝或未按预期返回（不是登录过期，"
+            f"重新 bootstrap-login 不一定能解决）。请查看采集调试截图/HTML 排查。{exc}"
+        )
+        _logger.error(msg, exc_info=exc)
+        failures.append(msg)
+
+    except Exception as exc:
+        finish_run(run_id, "error", error_message=str(exc))
+        msg = f"{target.label}: 未知错误。{exc}"
+        _logger.error(msg, exc_info=exc)
+        failures.append(msg)
+    state["run_id"] = None
 
 
 def run_verify(

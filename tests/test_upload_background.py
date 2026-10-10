@@ -65,8 +65,8 @@ def client(pg_async_url, monkeypatch):
 
 @pytest.fixture
 def admin_token(client):
-    client.post("/auth/register", json={"email": "bgtest@test.com", "password": "pw"})
-    r = client.post("/auth/jwt/login", data={"username": "bgtest@test.com", "password": "pw"})
+    client.post("/auth/register", json={"email": "bgtest@test.com", "password": "pw-test-passphrase"})
+    r = client.post("/auth/jwt/login", data={"username": "bgtest@test.com", "password": "pw-test-passphrase"})
     return r.json()["access_token"]
 
 

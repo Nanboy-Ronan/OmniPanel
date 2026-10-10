@@ -111,3 +111,58 @@ def test_source_status_authorization_and_source_validation(client, tokens):
         )
         assert response.status_code == 200, response.text
         assert response.json()["records"] == 0
+
+
+def test_source_status_runs_ignore_verify_runs(client, tokens):
+    """An evening verify-all run must not replace the latest collect run."""
+    with db.SyncSessionLocal() as s:
+        acc = XhsAccount(name="Verify acc", account_type="company")
+        s.add(acc)
+        s.flush()
+        s.add_all([
+            CollectorRun(platform="xhs", account_id=acc.id, started_at=datetime(2026, 10, 1, 6, 30),
+                         finished_at=datetime(2026, 10, 1, 6, 40), status="download_failed"),
+            CollectorRun(platform="xhs", account_id=acc.id, started_at=datetime(2026, 10, 1, 21, 0),
+                         finished_at=datetime(2026, 10, 1, 21, 1), status="success", triggered_by="verify"),
+        ])
+        s.commit()
+        acc_id = acc.id
+    d = client.get("/data/source-status", params={"source": "xhs", "account_id": acc_id},
+                   headers=_auth(tokens["analyst"])).json()
+    assert [r["status"] for r in d["runs"]] == ["download_failed"]
+
+    fresh = client.get("/data/freshness", headers=_auth(tokens["analyst"])).json()
+    assert fresh["xhs"]["last_collect_at"] is None  # verify success is not a collect
+
+
+def test_freshness_reports_per_platform_order_staleness(client, tokens):
+    from app.db.models import Customer, Order, UploadBatch
+
+    with db.SyncSessionLocal() as s:
+        s.add(Customer(customer_key="k1", platform="youzan", first_order_date=date(2026, 9, 1)))
+        s.flush()
+        s.add_all([
+            Order(order_id="y1", order_date=date(2026, 10, 7), customer_key="k1", platform="youzan", price=10),
+            Order(order_id="t1", order_date=date(2026, 9, 20), customer_key="k1", platform="tmall", price=10),
+            Order(order_id="j1", order_date=date(2026, 10, 5), customer_key="k1", platform="jd", price=10),
+            UploadBatch(filename="t.xlsx", platform="tmall", file_sha256="x", status="completed"),
+        ])
+        s.add(CollectorRun(platform="zhihu", content_type="article", status="success",
+                           finished_at=datetime(2026, 10, 8, 6, 40)))
+        s.commit()
+
+    data = client.get("/data/freshness", headers=_auth(tokens["analyst"])).json()
+    orders = data["orders"]
+    # Backward compatible: the cross-platform max is still reported.
+    assert orders["coverage_through"] == "2026-10-07"
+    assert orders["platforms"]["youzan"]["stale"] is False
+    assert orders["platforms"]["jd"]["stale"] is False  # 2 days behind: within tolerance
+    assert orders["platforms"]["tmall"] == {
+        "coverage_through": "2026-09-20",
+        "last_import_at": orders["platforms"]["tmall"]["last_import_at"],
+        "stale": True,
+    }
+    assert orders["platforms"]["tmall"]["last_import_at"] is not None
+    assert orders["stale"] is True and orders["stale_platforms"] == ["tmall"]
+    assert data["zhihu"]["last_collect_at"].startswith("2026-10-08T06:40")
+    assert set(data) == {"orders", "wechat", "xhs", "zhihu", "channels", "pgy"}

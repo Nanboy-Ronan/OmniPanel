@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ..models import ZhihuPost
+from ._upsert import coalesce_update_set, require_columns
 
 _UPSERT_UPDATE_COLS = [
     "url", "reads", "plays", "likes", "favorites",
@@ -29,6 +30,12 @@ _UPSERT_UPDATE_COLS = [
 _DEDUP_CONSTRAINT = "uq_zhihu_posts_type_title_date"
 
 VALID_CONTENT_TYPES = {"article", "qa"}
+
+# Every export column the parser reads, per content type.
+REQUIRED_COLUMNS = {
+    "article": ["标题", "发布时间", "链接", "阅读", "点赞", "喜欢", "评论", "收藏", "分享"],
+    "qa": ["标题", "发布时间", "链接", "阅读", "播放", "点赞", "喜欢", "评论", "收藏", "分享"],
+}
 
 
 def _parse_zhihu_date(raw) -> Optional[date]:
@@ -57,6 +64,9 @@ def parse_zhihu_csv(df: pd.DataFrame, content_type: str) -> list[dict]:
     consumed by pd.read_csv).  Rows with empty titles or unparseable dates
     are silently skipped.
     """
+    require_columns(
+        df.columns, REQUIRED_COLUMNS.get(content_type, REQUIRED_COLUMNS["article"]), "知乎"
+    )
     rows = []
     for _, row in df.iterrows():
         title = str(row.get("标题", "") or "").strip()
@@ -89,14 +99,11 @@ def upsert_zhihu_posts(rows: list[dict], session: Session) -> dict:
 
     from sqlalchemy import text
 
-    stmt = (
-        pg_insert(ZhihuPost)
-        .values(rows)
-        .on_conflict_do_update(
-            constraint=_DEDUP_CONSTRAINT,
-            set_={col: pg_insert(ZhihuPost).excluded[col] for col in _UPSERT_UPDATE_COLS}
-            | {"updated_at": text("NOW()")},
-        )
+    insert = pg_insert(ZhihuPost).values(rows)
+    stmt = insert.on_conflict_do_update(
+        constraint=_DEDUP_CONSTRAINT,
+        set_=coalesce_update_set(insert, ZhihuPost, _UPSERT_UPDATE_COLS)
+        | {"updated_at": text("NOW()")},
     )
     session.execute(stmt)
     session.commit()

@@ -19,6 +19,7 @@ from ...db import get_session
 from ...db.etl.zhihu import parse_zhihu_csv, upsert_zhihu_posts, VALID_CONTENT_TYPES
 from ...db.models import ZhihuPost
 from ...utils.logger import log_operation
+from ...utils.spreadsheet import read_excel_safely
 from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/zhihu", tags=["zhihu"])
@@ -36,7 +37,7 @@ def _read_zhihu_file(path: str) -> pd.DataFrame:
         return pd.read_csv(path, encoding="utf-8-sig", dtype=str)
     except Exception:
         pass
-    return pd.read_excel(path, dtype=str)
+    return read_excel_safely(path, dtype=str)
 
 
 @router.post("/upload")

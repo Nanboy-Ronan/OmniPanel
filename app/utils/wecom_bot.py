@@ -19,8 +19,14 @@ skipped and nothing else in the app is affected.
 Recipients: WECOM_ALERT_TOUSER (env), if set, is an explicit ops override and
 always wins. Otherwise falls back to the admin-togglable per-user opt-in in
 the 用户管理 UI (User.wecom_alert_enabled, requires a linked wecom_userid),
-and finally to "@all" if nobody has opted in (e.g. a fresh deploy before any
-admin has visited the UI).
+and to "@all" only when that lookup *succeeds* and nobody has opted in (e.g.
+a fresh deploy before any admin has visited the UI). If the lookup itself
+fails (DB down, schema drift) the alert is skipped and logged at ERROR —
+an outage must never broadcast to the whole enterprise.
+
+Messages are truncated to WeCom's 2048-byte text limit (UTF-8 aware, never
+splitting a multi-byte character); WeCom rejects longer bodies outright,
+which used to lose exactly the long multi-failure alerts that matter most.
 """
 from __future__ import annotations
 
@@ -34,15 +40,33 @@ _logger = logging.getLogger(__name__)
 _GET_TOKEN_URL = "https://qyapi.weixin.qq.com/cgi-bin/gettoken"
 _SEND_MESSAGE_URL = "https://qyapi.weixin.qq.com/cgi-bin/message/send"
 
+# WeCom app text messages are capped at 2048 bytes of UTF-8 content.
+WECOM_TEXT_MAX_BYTES = 2048
+_TRUNCATION_SUFFIX = "\n…（内容过长已截断）"
+
+
+def truncate_utf8(text: str, max_bytes: int = WECOM_TEXT_MAX_BYTES) -> str:
+    """Return *text* trimmed so its UTF-8 encoding fits in *max_bytes*,
+    with a visible marker when anything was cut. Never splits a character."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    suffix = _TRUNCATION_SUFFIX.encode("utf-8")
+    budget = max(0, max_bytes - len(suffix))
+    head = encoded[:budget].decode("utf-8", errors="ignore")
+    return head + _TRUNCATION_SUFFIX
+
 
 def _env(name: str) -> str | None:
     value = os.getenv(name)
     return value.strip() if value and value.strip() else None
 
 
-def _resolve_touser() -> str:
+def _resolve_touser() -> str | None:
     """Who receives alerts: WECOM_ALERT_TOUSER (explicit ops override) first,
-    then the DB opt-in list (用户管理 UI), then "@all"."""
+    then the DB opt-in list (用户管理 UI), then "@all" when the lookup worked
+    but nobody opted in. Returns None (skip sending) when the DB lookup fails —
+    the env override has already been checked, so there is no safe target."""
     override = _env("WECOM_ALERT_TOUSER")
     if override:
         return override
@@ -55,10 +79,15 @@ def _resolve_touser() -> str:
                     User.wecom_alert_enabled.is_(True), User.wecom_userid.isnot(None)
                 ).all()
             ]
-        if ids:
-            return "|".join(ids)
     except Exception:
-        _logger.warning("wecom_alert_touser_db_lookup_failed", exc_info=True)
+        _logger.error(
+            "wecom_alert_touser_db_lookup_failed — alert skipped; set WECOM_ALERT_TOUSER "
+            "to keep alerting when the database is unavailable",
+            exc_info=True,
+        )
+        return None
+    if ids:
+        return "|".join(ids)
     return "@all"
 
 
@@ -78,6 +107,10 @@ def send_wecom_alert(text: str) -> bool:
     if not (corpid and agentid and secret):
         return False
     touser = _resolve_touser()
+    if not touser:
+        _logger.error("wecom_alert_skipped_no_recipient text=%r", text[:200])
+        return False
+    text = truncate_utf8(text)
 
     try:
         token_resp = httpx.get(
@@ -89,7 +122,7 @@ def send_wecom_alert(text: str) -> bool:
         token_body = token_resp.json()
         access_token = token_body.get("access_token")
         if not access_token:
-            _logger.warning("wecom_alert_no_token body=%r", token_body)
+            _logger.error("wecom_alert_no_token body=%r", token_body)
             return False
 
         send_resp = httpx.post(
@@ -104,13 +137,13 @@ def send_wecom_alert(text: str) -> bool:
             timeout=10,
         )
         if send_resp.status_code != 200:
-            _logger.warning("wecom_alert_failed status=%d body=%r", send_resp.status_code, send_resp.text)
+            _logger.error("wecom_alert_failed status=%d body=%r", send_resp.status_code, send_resp.text)
             return False
         send_body = send_resp.json()
         if send_body.get("errcode", 0) != 0:
-            _logger.warning("wecom_alert_rejected body=%r", send_body)
+            _logger.error("wecom_alert_rejected body=%r", send_body)
             return False
         return True
     except Exception as exc:
-        _logger.warning("wecom_alert_error: %s", exc)
+        _logger.error("wecom_alert_error: %s", exc)
         return False

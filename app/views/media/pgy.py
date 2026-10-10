@@ -25,6 +25,7 @@ from ...db import get_session
 from ...db.etl.pgy import parse_pgy_xlsx, upsert_pgy_notes
 from ...db.models import XhsAccount, PgyNote
 from ...utils.logger import log_operation
+from ...utils.spreadsheet import read_excel_safely
 from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/pgy", tags=["pugongying"])
@@ -56,7 +57,7 @@ async def upload_pgy(
         tmp_path = await save_upload(file, ext or ".csv")
 
         def _process(path: str) -> dict:
-            df_raw = pd.read_excel(path, header=None, dtype=str)
+            df_raw = read_excel_safely(path, header=None, dtype=str)
             rows = parse_pgy_xlsx(df_raw)
             if not rows:
                 raise ValueError("文件中未解析到有效行，请确认格式正确。")

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import deque
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -38,13 +40,18 @@ def seconds_until_next_run(hour: int, tz_name: str) -> float:
     return (target - now).total_seconds()
 
 
-async def _notify_wecom(text: str) -> None:
+async def _notify_wecom(text: str) -> bool:
     """Send a WeCom alert without blocking the event loop.
 
-    send_wecom_alert() is synchronous httpx and already swallows its own
-    errors (never raises); this just keeps that call off the asyncio loop.
+    send_wecom_alert() is synchronous httpx and never raises; it returns
+    False when the alert was not delivered (unconfigured, no recipient,
+    rejected by WeCom). That is surfaced here at ERROR with the alert text so
+    an undelivered alert still leaves a trace in the journal.
     """
-    await asyncio.to_thread(send_wecom_alert, text)
+    sent = await asyncio.to_thread(send_wecom_alert, text)
+    if not sent:
+        logger.error("WeCom alert NOT delivered: %s", text[:500])
+    return bool(sent)
 
 
 async def monthly_backup_loop(settings) -> None:  # type: ignore[type-arg]
@@ -245,25 +252,132 @@ async def wechat_auto_sync_loop(settings) -> None:  # type: ignore[type-arg]
             logger.error("WeChat auto-sync iteration failed: %s", exc, exc_info=True)
 
 
-def _table_age_seconds_sync(session_factory, model) -> float | None:
-    """Seconds since the most recent ``started_at`` row, computed by Postgres
-    itself (``now() - max(started_at)``) — None when the table has no rows.
+_ZHIHU_LABELS = {"article": "文章", "qa": "问答"}
 
-    Runs the diff inside the DB rather than comparing against a Python
-    timestamp so it's immune to any clock/timezone mismatch between the app
-    server and the database.
+# A collector run still 'running' after this long was killed (systemd's
+# TimeoutStartSec=900, OOM, reboot) before it could record its outcome.
+STALE_RUNNING_MINUTES = 30
+
+
+def _expected_collector_sources(session, settings) -> list[tuple[str, int | None, str | None, str]]:
+    """Every (platform, account_id, content_type, label) the collector is
+    *supposed* to produce, mirroring app.collector.runner.build_targets but
+    read straight from the DB (the watchdog has no API client).
+
+    Intentionally-disabled sources are skipped: 视频号 unless
+    COLLECTOR_CHANNELS_ENABLED, 蒲公英 only for accounts with pgy_enabled,
+    数据概览 only with COLLECTOR_XHS_OVERVIEW_ENABLED, 京东 only with
+    COLLECTOR_JD_ENABLED.
+    """
+    from sqlalchemy import select
+
+    from .db.models import WxChannelsAccount, XhsAccount
+
+    sources: list[tuple[str, int | None, str | None, str]] = []
+    xhs_enabled = getattr(settings, "collector_xhs_enabled", True)
+    pgy_enabled = getattr(settings, "collector_pugongying_enabled", True)
+    if xhs_enabled or pgy_enabled:
+        accounts = session.execute(
+            select(XhsAccount).where(XhsAccount.is_active.is_(True)).order_by(XhsAccount.id)
+        ).scalars().all()
+        for acc in accounts:
+            if xhs_enabled:
+                sources.append(("xhs", acc.id, None, f"小红书·{acc.name}"))
+                if getattr(settings, "collector_xhs_overview_enabled", False):
+                    sources.append(("xhs", acc.id, "overview", f"小红书数据概览·{acc.name}"))
+            if pgy_enabled and acc.pgy_enabled:
+                sources.append(("pugongying", acc.id, None, f"蒲公英·{acc.name}"))
+    if getattr(settings, "collector_zhihu_enabled", True):
+        for content_type in ("article", "qa"):
+            sources.append(("zhihu", None, content_type, f"知乎·{_ZHIHU_LABELS[content_type]}"))
+    if getattr(settings, "collector_channels_enabled", False):
+        for acc in session.execute(
+            select(WxChannelsAccount).where(WxChannelsAccount.is_active.is_(True)).order_by(WxChannelsAccount.id)
+        ).scalars().all():
+            sources.append(("channels", acc.id, None, f"视频号·{acc.name}"))
+    if getattr(settings, "collector_jd_enabled", False):
+        sources.append(("jd", None, None, "京东订单"))
+    return sources
+
+
+def _collector_source_problems_sync(session_factory, settings, max_age_hours: float) -> list[str]:
+    """Per-source staleness of the *latest successful collect* run.
+
+    Verify runs (triggered_by='verify') only check a login session, so they
+    never count as fresh data, and failed runs don't either. Previously the
+    check used max(started_at) over every row, so an evening verify masked a
+    failed 06:30 collect and one dead platform never alerted while any other
+    platform was still running. The age is computed by Postgres (now() -
+    max(started_at)) so it is immune to app/DB clock differences.
     """
     from sqlalchemy import extract, func, select
 
+    from .db.models import CollectorRun
+
     with session_factory() as session:
-        stmt = select(extract("epoch", func.now() - func.max(model.started_at)))
-        value = session.execute(stmt).scalar_one()
-        return float(value) if value is not None else None
+        expected = _expected_collector_sources(session, settings)
+        if not expected:
+            return []
+        rows = session.execute(
+            select(
+                CollectorRun.platform,
+                CollectorRun.account_id,
+                CollectorRun.content_type,
+                extract("epoch", func.now() - func.max(CollectorRun.started_at)),
+            )
+            .where(CollectorRun.status == "success", CollectorRun.triggered_by != "verify")
+            .group_by(CollectorRun.platform, CollectorRun.account_id, CollectorRun.content_type)
+        ).all()
+    ages = {(r[0], r[1], r[2]): float(r[3]) for r in rows if r[3] is not None}
+
+    problems = []
+    for platform, account_id, content_type, label in expected:
+        age = ages.get((platform, account_id, content_type))
+        if age is None:
+            problems.append(f"采集器·{label}：从未成功采集过")
+        elif age > max_age_hours * 3600:
+            problems.append(
+                f"采集器·{label}：已 {age / 3600:.1f} 小时没有成功采集"
+                f"（阈值 {max_age_hours} 小时）"
+            )
+    return problems
+
+
+def _reap_stale_collector_runs_sync(session_factory, minutes: int = STALE_RUNNING_MINUTES) -> list[str]:
+    """Mark CollectorRun rows stuck in 'running' for > *minutes* as 'killed'
+    and describe each one. A run only stays 'running' when the collector
+    process died mid-target (systemd timeout, OOM, reboot); without this
+    those rows stayed 'running' forever."""
+    from sqlalchemy import text
+
+    with session_factory() as session:
+        rows = session.execute(
+            text(
+                "UPDATE collector_runs SET status = 'killed', finished_at = now(), "
+                "error_message = COALESCE(error_message, :msg) "
+                "WHERE status = 'running' AND started_at < now() - make_interval(mins => :mins) "
+                "RETURNING id, platform, account_id, content_type, started_at"
+            ),
+            {"mins": minutes, "msg": f"进程在记录结果前退出（running 超过 {minutes} 分钟，由健康检查标记）"},
+        ).all()
+        session.commit()
+    problems = []
+    for run_id, platform, account_id, content_type, started_at in rows:
+        target = platform + (f"#{account_id}" if account_id is not None else "") + (
+            f"/{content_type}" if content_type else ""
+        )
+        problems.append(
+            f"采集器：运行记录 #{run_id}（{target}，开始于 {started_at:%Y-%m-%d %H:%M}）"
+            f"卡在 running 超过 {minutes} 分钟，进程可能被 systemd 超时杀死，已标记为 killed"
+        )
+    return problems
 
 
 async def _table_age_seconds_async(session_factory, model, *, source_filter: str | None = None) -> float | None:
-    """Async counterpart of ``_table_age_seconds_sync`` for tables written via
-    the async engine (e.g. MediaSyncRun, written from wechat_auto_sync_loop).
+    """Seconds since the most recent ``started_at`` row, computed by Postgres
+    itself (``now() - max(started_at)``) — None when the table has no rows.
+    For tables written via the async engine (e.g. MediaSyncRun, written from
+    wechat_auto_sync_loop).
     """
     from sqlalchemy import extract, func, select
 
@@ -291,18 +405,16 @@ async def run_watchdog_checks(
 
     CollectorRun is read via the sync engine (the same one app.collector.runs
     writes through) and MediaSyncRun via the async engine (the same one
-    wechat_auto_sync_loop writes through) — each check's ``now() -
-    max(started_at)`` diff is computed within the same DB session-timezone
-    context the row was written in, so it can't be thrown off by the sync and
-    async engines using different Postgres session `timezone` settings (see
-    app/db/__init__.py).
+    wechat_auto_sync_loop writes through). Both engines use the APP_TIMEZONE
+    session timezone (see app/db/__init__.py), and every age is computed by
+    Postgres as ``now() - max(started_at)``.
 
     Returns a list of human-readable problem descriptions (empty when every
     enabled pipeline is healthy). Never raises: an unreadable table is
     reported as a problem, not an exception, so one broken check doesn't hide
     the others.
     """
-    from .db.models import CollectorRun, MediaSyncRun
+    from .db.models import MediaSyncRun
 
     problems: list[str] = []
     max_age_hours = settings.watchdog_max_age_hours
@@ -311,17 +423,19 @@ async def run_watchdog_checks(
         if sync_session_factory is None:
             from .db import SyncSessionLocal as sync_session_factory  # type: ignore
         try:
-            age = await asyncio.to_thread(_table_age_seconds_sync, sync_session_factory, CollectorRun)
+            problems.extend(
+                await asyncio.to_thread(_reap_stale_collector_runs_sync, sync_session_factory)
+            )
         except Exception as exc:
-            problems.append(f"采集器（XHS/知乎）：健康检查失败 — {exc}")
-        else:
-            if age is None:
-                problems.append("采集器（XHS/知乎）：从未记录过任何运行")
-            elif age > max_age_hours * 3600:
-                problems.append(
-                    f"采集器（XHS/知乎）：已 {age / 3600:.1f} 小时没有运行记录"
-                    f"（阈值 {max_age_hours} 小时）"
+            problems.append(f"采集器：清理卡住的运行记录失败 — {exc}")
+        try:
+            problems.extend(
+                await asyncio.to_thread(
+                    _collector_source_problems_sync, sync_session_factory, settings, max_age_hours
                 )
+            )
+        except Exception as exc:
+            problems.append(f"采集器：健康检查失败 — {exc}")
 
     if settings.wechat_auto_sync_enabled:
         if async_session_factory is None:
@@ -364,6 +478,20 @@ async def run_watchdog_checks(
         else:
             if daily_age > settings.watchdog_daily_backup_max_age_days:
                 problems.append(f"每日数据库备份：已 {daily_age} 天没有成功备份")
+        # A fresh stamp only proves pg_dump exited 0; check the newest dump
+        # is non-empty and really starts with a pg_dump header.
+        from .db.backup import latest_dump, validate_dump
+
+        try:
+            dump = await asyncio.to_thread(latest_dump, settings.backup_dir)
+            dump_problem = (
+                "备份目录中没有任何备份文件" if dump is None
+                else await asyncio.to_thread(validate_dump, dump)
+            )
+        except Exception as exc:
+            dump_problem = f"检查备份文件失败 — {exc}"
+        if dump_problem:
+            problems.append(f"数据库备份文件：{dump_problem}")
 
     return problems
 
@@ -445,30 +573,144 @@ async def _run_weekly_report_once() -> None:
         logger.info("Weekly report: week=%s status=%s wecom_sent=%s", run.week_start, run.status, run.wecom_sent)
 
 
-async def weekly_report_loop(settings) -> None:  # type: ignore[type-arg]
-    """Infinite background loop: check daily and generate the weekly
-    公众号+小红书 report once the most recently completed week is due.
+async def _missed_report_weeks(this_week_start: date, *, async_session_factory=None) -> list[date]:
+    """Week starts strictly between the newest delivered report and
+    *this_week_start* that never got a delivered report.
 
-    Structured like monthly_backup_loop (daily check, idempotent action) —
-    but the gate is calendar-week + data-lag based (see _weekly_report_due)
-    rather than a day-count, so it survives restarts and clock drift without
-    double-sending or silently skipping a week.
+    The loop only ever generates the most recently completed week, so if the
+    leader was down for more than a week the weeks in between are silently
+    skipped. They are not backfilled automatically (an old week's numbers
+    would be pushed as if new) — this only lists them for an alert. Empty
+    when no report was ever delivered (fresh deploy: nothing was "missed").
+    """
+    from sqlalchemy import func, select
+
+    from .db import AsyncSessionLocal
+    from .db.models import WeeklyReportRun
+
+    session_factory = async_session_factory or AsyncSessionLocal
+    async with session_factory() as session:
+        delivered = set(
+            (
+                await session.execute(
+                    select(WeeklyReportRun.week_start).where(
+                        WeeklyReportRun.status == "success",
+                        WeeklyReportRun.wecom_sent.is_(True),
+                        WeeklyReportRun.week_start < this_week_start,
+                    )
+                )
+            ).scalars().all()
+        )
+    if not delivered:
+        return []
+    week = max(delivered) + timedelta(days=7)
+    missed = []
+    while week < this_week_start:
+        if week not in delivered:
+            missed.append(week)
+        week += timedelta(days=7)
+    return missed
+
+
+def _local_now(tz_name: str) -> datetime:
+    try:
+        return datetime.now(ZoneInfo(tz_name))
+    except ZoneInfoNotFoundError:
+        return datetime.now(ZoneInfo(_FALLBACK_TZ))
+
+
+async def _weekly_report_check(settings, today: date, alerted_missed: set[date]) -> None:
+    """One due-check: alert about skipped weeks (once each), then generate
+    the most recently completed week if it is due."""
+    from .reports.weekly_media import week_bounds
+
+    if not await _weekly_report_due(settings, today):
+        return
+    this_week_start = week_bounds(today).this_week_start
+    try:
+        missed = [w for w in await _missed_report_weeks(this_week_start) if w not in alerted_missed]
+    except Exception:
+        logger.exception("Weekly report: could not check for missed weeks")
+        missed = []
+    if missed:
+        weeks = "、".join(f"{w:%Y-%m-%d}~{w + timedelta(days=6):%m-%d}" for w in missed)
+        await _notify_wecom(
+            f"[周报告警] 以下 {len(missed)} 周的周报未生成/未推送（服务停机超过一周）：{weeks}。"
+            "系统不会自动补发旧周报，如需补发请在管理页手动生成。"
+        )
+        alerted_missed.update(missed)
+    await _run_weekly_report_once()
+
+
+async def weekly_report_loop(settings, *, now_fn=None, sleep_fn=None) -> None:  # type: ignore[type-arg]
+    """Infinite background loop: check daily at ``settings.report_hour`` and
+    generate the weekly 公众号+小红书 report once the most recently completed
+    week is due.
+
+    The due gate is calendar-week + data-lag based (see _weekly_report_due),
+    so a restart can't double-send. On startup the check only runs
+    immediately if the local hour is already >= report_hour; a restart
+    earlier in the day (e.g. a midnight deploy) sleeps until report_hour
+    instead of pushing an overdue report in the middle of the night.
+
+    ``now_fn``/``sleep_fn`` are injection points for loop-level tests.
     """
     hour = settings.report_hour
     tz_name = settings.app_timezone
+    now_fn = now_fn or (lambda: _local_now(tz_name))
+    sleep_fn = sleep_fn or asyncio.sleep
+    alerted_missed: set[date] = set()
     logger.info("Weekly report loop started — daily check at %02d:00 %s", hour, tz_name)
 
+    run_now = now_fn().hour >= hour
     while True:
-        try:
-            if await _weekly_report_due(settings, date.today()):
-                await _run_weekly_report_once()
-        except asyncio.CancelledError:
-            logger.info("Weekly report loop cancelled — shutting down")
-            raise
-        except Exception as exc:
-            logger.error("Weekly report generation failed: %s", exc, exc_info=True)
-            await _notify_wecom(f"[周报告警] 生成失败：{exc}")
+        if run_now:
+            try:
+                await _weekly_report_check(settings, now_fn().date(), alerted_missed)
+            except asyncio.CancelledError:
+                logger.info("Weekly report loop cancelled — shutting down")
+                raise
+            except Exception as exc:
+                logger.error("Weekly report generation failed: %s", exc, exc_info=True)
+                await _notify_wecom(f"[周报告警] 生成失败：{exc}")
+        run_now = True
 
         delay = seconds_until_next_run(hour, tz_name)
         logger.info("Weekly report: next check in %.0f s (%.1f h)", delay, delay / 3600)
-        await asyncio.sleep(delay)
+        await sleep_fn(delay)
+
+
+class RestartTracker:
+    """Detects a background task that keeps crashing.
+
+    ``supervise()`` in app/main.py restarts a crashed loop after 30s, which
+    used to be completely silent. ``record(name)`` returns an alert text when
+    *name* has restarted ``threshold`` times within ``window_seconds`` — at
+    most once per ``window_seconds`` per task, so a crash-looping task does
+    not page every 30 seconds.
+    """
+
+    def __init__(self, threshold: int = 3, window_seconds: float = 600, clock=None):
+        self.threshold = threshold
+        self.window = window_seconds
+        self._clock = clock or time.monotonic
+        self._restarts: dict[str, deque[float]] = {}
+        self._last_alert: dict[str, float] = {}
+
+    def record(self, name: str, error: BaseException | None = None) -> str | None:
+        now = self._clock()
+        times = self._restarts.setdefault(name, deque())
+        times.append(now)
+        while times and now - times[0] > self.window:
+            times.popleft()
+        if len(times) < self.threshold:
+            return None
+        last = self._last_alert.get(name)
+        if last is not None and now - last < self.window:
+            return None
+        self._last_alert[name] = now
+        detail = f"{type(error).__name__}: {error}" if error is not None else "未知错误"
+        return (
+            f"[后台任务告警] {name} 在 {int(self.window // 60)} 分钟内已崩溃重启 {len(times)} 次，"
+            f"最近一次错误：{detail}。请检查 rpa-backend 日志（journalctl -u rpa-backend）。"
+        )

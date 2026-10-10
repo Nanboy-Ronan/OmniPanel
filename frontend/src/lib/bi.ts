@@ -15,6 +15,16 @@ const metrics = z.object({
   missing_amount: z.number(),
 });
 export const dashboardSchema = z.object({
+  status: z
+    .object({
+      excluded_orders: z.number(),
+      excluded_amount: z.number(),
+      refunds: z.number(),
+      unknown_orders: z.number(),
+      deleted_orders: z.number().default(0),
+      deleted_amount: z.number().default(0),
+    })
+    .optional(),
   start_date: z.string(),
   end_date: z.string(),
   prior_start: z.string(),

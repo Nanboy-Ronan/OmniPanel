@@ -21,7 +21,7 @@ import psycopg2
 import psycopg2.extensions
 from psycopg2 import sql
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -33,6 +33,7 @@ os.environ.setdefault("RAP_TEST_FAST_PASSWORDS", "true")
 os.environ.setdefault("RAP_SECRET", "test-secret-do-not-use-in-production")
 
 ADMIN_DATABASE = "postgres"
+SQL_CONSOLE_TEST_PASSWORD = "rpa_sql_console_test"
 
 # ── Fast test password helper (replaces bcrypt for speed in tests) ───────────
 
@@ -117,6 +118,9 @@ def _pg_db():
     with schema_engine.begin() as connection:
         with Operations.context(MigrationContext.configure(connection)):
             runpy.run_path(str(PROJECT_ROOT / "alembic/versions/0017_reporting_role.py"))["upgrade"]()
+            runpy.run_path(str(PROJECT_ROOT / "alembic/versions/0018_sql_console_login.py"))["upgrade"]()
+            # The role is cluster-wide; a fixed test password is fine on a test cluster.
+            connection.execute(text(f"ALTER ROLE rpa_sql_console PASSWORD '{SQL_CONSOLE_TEST_PASSWORD}'"))
     schema_engine.dispose()
 
     yield test_db
@@ -226,6 +230,33 @@ def pg_sync_url(_pg_db):
 @pytest.fixture
 def pg_async_url(_pg_db):
     return _async_db_url(_pg_db)
+
+
+def _sql_console_url(db_name: str) -> str:
+    url = _async_db_url(db_name)
+    return re.sub(r"//[^@/]*@", f"//rpa_sql_console:{SQL_CONSOLE_TEST_PASSWORD}@", url, count=1)
+
+
+@pytest.fixture(autouse=True)
+def _sql_console_settings(request, monkeypatch):
+    """Point the SQL console at its login role in the test database.
+
+    Only tests that already use the database get a console URL; the console
+    engine is disposed afterwards so each test's event loop owns its pool.
+    """
+    if "_pg_db" not in request.fixturenames and "pg_async_url" not in request.fixturenames:
+        yield
+        return
+    from app.config import settings
+    from app.db import sql_console
+
+    db_name = request.getfixturevalue("_pg_db")
+    monkeypatch.setattr(settings, "sql_console_database_url", _sql_console_url(db_name))
+    sql_console._engine = None
+    sql_console._engine_url = None
+    yield
+    sql_console._engine = None
+    sql_console._engine_url = None
 
 
 # ── Shared upload helper ──────────────────────────────────────────────────────

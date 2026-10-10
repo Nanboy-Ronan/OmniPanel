@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import App from '../App';
 import { session } from '../lib/api';
-import { response, user } from './fixtures';
+import { todayInShanghai } from '../lib/time';
+import { FakeXHR, response, user } from './fixtures';
 import fixtures from './workspace-fixtures.json';
 vi.mock('../components/charts', () => ({
   SeriesChart: () => null,
@@ -236,20 +237,52 @@ describe('migrated workspace pages', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByText('原工作台')).not.toBeInTheDocument();
   });
-  it('submits multipart uploads and displays accepted batch completion', async () => {
-    const { fetch } = setup('upload');
+  it('submits multipart uploads with progress and displays accepted batch completion', async () => {
+    // Uploads go through XMLHttpRequest for progress events; fetch still serves batch polling.
+    FakeXHR.reset();
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+    setup('upload');
     await screen.findByLabelText('订单文件');
     fireEvent.change(screen.getByLabelText('订单文件'), {
       target: { files: [new File(['data'], 'orders.csv', { type: 'text/csv' })] },
     });
     fireEvent.click(screen.getByRole('button', { name: '提交导入' }));
+    await waitFor(() => expect(FakeXHR.last).not.toBeNull());
+    const xhr = FakeXHR.last!;
+    expect(xhr.method).toBe('POST');
+    expect(xhr.url.startsWith('/api/upload/?')).toBe(true);
+    expect(xhr.url).toContain('expected_platform=youzan');
+    expect(xhr.body).toBeInstanceOf(FormData);
+    expect((xhr.body as FormData).get('file')).toBeInstanceOf(File);
+    expect(xhr.headers.Authorization).toBe('Bearer fixture-token');
+    act(() => xhr.progress(2, 4));
+    expect(await screen.findByRole('progressbar', { name: '上传 orders.csv' })).toHaveAttribute(
+      'aria-valuenow',
+      '50',
+    );
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    act(() => xhr.respond({ batch_id: 17, status: 'processing' }, 202));
     await screen.findByRole('heading', { name: '导入批次 #17' });
     await screen.findByRole('button', { name: '查看导入数据' });
-    const call = fetch.mock.calls.find(
-      ([url, options]) => url.startsWith('/api/upload/?') && options?.method === 'POST',
-    );
-    expect(call?.[1]?.body).toBeInstanceOf(FormData);
-    expect(call?.[0]).toContain('expected_platform=youzan');
+    expect(
+      within(screen.getByRole('region', { name: '通知' })).getByText(/orders.csv 已提交/),
+    ).toBeInTheDocument();
+  });
+  it('cancels an upload in flight without submitting the batch', async () => {
+    FakeXHR.reset();
+    vi.stubGlobal('XMLHttpRequest', FakeXHR);
+    setup('upload');
+    fireEvent.change(await screen.findByLabelText('订单文件'), {
+      target: { files: [new File(['data'], 'orders.csv', { type: 'text/csv' })] },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '提交导入' }));
+    await waitFor(() => expect(FakeXHR.last).not.toBeNull());
+    act(() => FakeXHR.last!.progress(1, 4));
+    fireEvent.click(await screen.findByRole('button', { name: '取消上传' }));
+    expect(FakeXHR.last!.aborted).toBe(true);
+    await screen.findByText(/已取消上传，文件未提交/);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '提交导入' })).toBeEnabled();
   });
   it('advances server pagination without introducing a second table pager', async () => {
     const { fetch } = setup('orders');
@@ -324,10 +357,48 @@ describe('migrated workspace pages', () => {
   it('preserves the report sandbox and old Chinese deep links', async () => {
     setup('周报');
     await screen.findByTitle('周报内容');
-    expect(screen.getByTitle('周报内容')).toHaveAttribute(
-      'sandbox',
-      'allow-popups allow-popups-to-escape-sandbox',
-    );
+    // Same-origin is only safe while scripts stay disabled in the archived report.
+    const sandbox = screen.getByTitle('周报内容').getAttribute('sandbox') ?? '';
+    expect(sandbox.split(' ').sort()).toEqual([
+      'allow-popups',
+      'allow-popups-to-escape-sandbox',
+      'allow-same-origin',
+    ]);
+    expect(sandbox).not.toContain('allow-scripts');
+  });
+  it('flags a content source whose newest record is more than a week old', async () => {
+    setup('channels', 'admin', {
+      '/data/source-status': {
+        ...fixtures['/data/source-status'],
+        source: 'channels',
+        last_date: '2026-08-28',
+      },
+    });
+    const banner = await screen.findByText(/视频号数据最新至/);
+    expect(banner).toHaveTextContent(/2026-08-28，已 \d+ 天未更新/);
+    // A warning, not an error: the page itself still works.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+  it('does not flag a source updated today', async () => {
+    setup('xhs', 'admin', {
+      '/data/source-status': { ...fixtures['/data/source-status'], last_date: todayInShanghai() },
+    });
+    await screen.findByRole('region', { name: '小红书数据状态' });
+    expect(screen.queryByText(/数据最新至/)).not.toBeInTheDocument();
+  });
+  it('uses per-platform order coverage for the stale banner when the server provides it', async () => {
+    setup('analysis&platform=jd', 'admin', {
+      '/data/source-status': {
+        ...fixtures['/data/source-status'],
+        source: 'orders',
+        last_date: todayInShanghai(),
+      },
+      '/data/freshness': {
+        orders: { coverage_through: todayInShanghai(), last_import_at: null },
+        platforms: { jd: { coverage_through: '2026-08-01', last_import_at: null } },
+      },
+    });
+    expect(await screen.findByText(/商城订单（京东）数据最新至/)).toHaveTextContent('2026-08-01');
   });
   it('renders segmentation dictionary time series and actual order rows', async () => {
     setup('analysis');

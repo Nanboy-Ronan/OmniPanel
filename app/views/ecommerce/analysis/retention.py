@@ -4,13 +4,14 @@ from __future__ import annotations
 import datetime as dt
 
 from fastapi import Depends, Query
-from sqlalchemy import select, func, case, cast, extract, Integer, Date
+from sqlalchemy import select, func, case, cast, extract, false, Integer, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from ....auth import current_analyst_user
 from ....db import get_session
 from ....db.models import Order
+from ....db.order_status import counted
 from ....utils.cache import analysis_cache
 from ._common import router, _ensure_data, _platform_filter
 
@@ -113,7 +114,7 @@ async def repurchase_rate(
         Order.customer_key,
         func.min(Order.order_date).label("first_date"),
         func.count(Order.id).label("order_count"),
-    ).where(Order.customer_key.isnot(None))
+    ).where(Order.customer_key.isnot(None), counted())
     if pf is not None:
         first_subq = first_subq.where(pf)
     first_subq = first_subq.group_by(Order.customer_key).subquery()
@@ -123,6 +124,7 @@ async def repurchase_rate(
     second_join_cond = (
         (Order2.customer_key == first_subq.c.customer_key)
         & (Order2.order_date > first_subq.c.first_date)
+        & counted(Order2)
     )
     if platform:
         second_join_cond = second_join_cond & (Order2.platform == platform)
@@ -152,19 +154,40 @@ async def repurchase_rate(
     )
 
     # ── Repurchase condition (window-aware or all-time) ──────────────────────
+    # With a window, a customer acquired less than window_days before the
+    # latest order on file hasn't had the full window to come back yet;
+    # counting them in the denominator biases the rate down. Only customers
+    # whose first order is on/before the cohort cutoff are counted.
+    cohort_cutoff = None
     if window_days is not None:
+        latest_q = select(func.max(Order.order_date))
+        if pf is not None:
+            latest_q = latest_q.where(pf)
+        latest_order = (await session.execute(latest_q)).scalar()
+        if latest_order is not None:
+            cohort_cutoff = latest_order - dt.timedelta(days=window_days)
         repurchase_cond = (
             new_customers_subq.c.second_date.isnot(None)
             & ((new_customers_subq.c.second_date - new_customers_subq.c.first_date) <= window_days)
         )
+        eligible = (
+            new_customers_subq.c.first_date <= cohort_cutoff
+            if cohort_cutoff is not None
+            else false()  # no orders on file: nobody has an observable window
+        )
+        repurchase_cond = repurchase_cond & eligible
     else:
         repurchase_cond = new_customers_subq.c.second_date.isnot(None)
+        eligible = None
 
     # ── Main aggregation ─────────────────────────────────────────────────────
     main_row = (
         await session.execute(
             select(
-                func.count().label("new_customers"),
+                func.count().label("acquired_customers"),
+                (
+                    func.sum(case((eligible, 1), else_=0)) if eligible is not None else func.count()
+                ).label("new_customers"),
                 func.sum(case((repurchase_cond, 1), else_=0)).label("repurchasing_customers"),
                 func.avg(
                     case(
@@ -192,6 +215,7 @@ async def repurchase_rate(
     frequency_distribution = {r.bucket: r.customers for r in freq_rows}
 
     new_customers = int(main_row.new_customers or 0)
+    acquired_customers = int(main_row.acquired_customers or 0)
     repurchasing_customers = int(main_row.repurchasing_customers or 0)
     rate = repurchasing_customers / new_customers if new_customers else 0.0
     avg_days = (
@@ -207,6 +231,12 @@ async def repurchase_rate(
         "avg_days_to_repurchase": avg_days,
         "frequency_distribution": frequency_distribution,
         "window_days": window_days,
+        # new_customers is the rate's denominator: customers acquired in the
+        # range whose full window is observable (first order <= cohort_cutoff
+        # = latest order date - window_days). acquired_customers counts all.
+        "acquired_customers": acquired_customers,
+        "excluded_incomplete_window": acquired_customers - new_customers,
+        "cohort_cutoff": cohort_cutoff.isoformat() if cohort_cutoff else None,
     }
     await analysis_cache.set(cache_key, result_data)
     return result_data
@@ -241,7 +271,7 @@ async def cohort_retention(
 
     # ── cohort_subq: each customer's acquisition month ───────────────────────
     cohort_month_col = func.date_trunc("month", func.min(Order.order_date)).label("cohort_month")
-    cohort_q = select(Order.customer_key, cohort_month_col).where(Order.customer_key.isnot(None))
+    cohort_q = select(Order.customer_key, cohort_month_col).where(Order.customer_key.isnot(None), counted())
     if pf is not None:
         cohort_q = cohort_q.where(pf)
     cohort_q = cohort_q.group_by(Order.customer_key)
@@ -294,6 +324,7 @@ async def cohort_retention(
         select(cohort_subq.c.cohort_month, Order.customer_key, month_offset)
         .select_from(Order)
         .join(cohort_subq, Order.customer_key == cohort_subq.c.customer_key)
+        .where(counted())
     )
     if pf is not None:
         activity_q = activity_q.where(pf)

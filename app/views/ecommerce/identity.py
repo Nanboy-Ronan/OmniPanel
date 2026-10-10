@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import current_analyst_user
 from ...db import get_session
 from ...db.models import Order
+from ...db.order_status import counted, net_amount
 from ...utils.cache import analysis_cache
 from ...utils.phone import (
     fuzzy_fingerprint,
@@ -167,10 +168,10 @@ async def _fetch_customer_phone_rows(
         Order.platform,
         func.max(Order.receiver_phone).label("phone"),
         func.count(Order.id).label("orders"),
-        func.sum(Order.price).label("revenue"),
+        func.sum(net_amount()).label("revenue"),
         func.min(Order.order_date).label("first_date"),
         func.max(Order.order_date).label("last_date"),
-    ).group_by(Order.customer_key, Order.platform)
+    ).where(counted()).group_by(Order.customer_key, Order.platform)
 
     if start_date:
         stmt = stmt.where(Order.order_date >= start_date)

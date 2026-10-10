@@ -65,6 +65,21 @@ export default function DecisionBrief({
           营业额来自已知金额；客单价仅使用 {data.current.priced_orders}{' '}
           条金额非空记录。客户数按区间去重。
         </p>
+        {data.status && (
+          <p>
+            {data.status.excluded_orders
+              ? `已排除 ${data.status.excluded_orders} 笔已关闭、未付款或京东已删除订单（¥${formatField('price', data.status.excluded_amount)}）`
+              : '本期没有被排除的订单'}
+            {data.status.deleted_orders ? `，其中京东已删除 ${data.status.deleted_orders} 笔` : ''}
+            {data.status.refunds
+              ? `；已扣除退款 ¥${formatField('price', data.status.refunds)}`
+              : ''}
+            {data.status.unknown_orders
+              ? `；${data.status.unknown_orders} 笔订单状态未知，仍计入`
+              : ''}
+            。
+          </p>
+        )}
         <small>变化描述已导入记录，不代表实时交易或变化原因。</small>
       </article>
     </section>

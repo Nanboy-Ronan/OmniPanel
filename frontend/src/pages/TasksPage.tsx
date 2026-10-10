@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { batchPollInterval, getBatches, type Batch } from '../lib/data';
 import { navigate } from '../lib/navigation';
+import { formatTimestamp } from '../lib/time';
 import { DataTable, EmptyState, ErrorState, Loading, Panel } from '../components/ui';
 
 const statusLabels = {
@@ -28,7 +29,6 @@ export default function TasksPage({
       {!embedded && (
         <header className="page-heading">
           <div>
-            <div className="eyebrow">OPERATIONS / IMPORTS</div>
             <h1>导入任务</h1>
             <p>查看最近 10 次订单导入的执行结果。</p>
           </div>
@@ -124,7 +124,7 @@ export default function TasksPage({
                 {
                   key: 'time',
                   title: '提交时间（服务器）',
-                  render: (row) => row.uploaded_at?.replace('T', ' ').slice(0, 19) ?? '—',
+                  render: (row) => formatTimestamp(row.uploaded_at, { seconds: true }) ?? '—',
                 },
               ]}
             />

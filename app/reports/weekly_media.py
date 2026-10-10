@@ -31,10 +31,12 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import settings as app_settings
 from ..connectors.wechat_official import WeChatOfficialClient
 from ..db.models import (
     CollectorRun,
@@ -52,6 +54,7 @@ from ..db.models import (
     XhsPost,
     ZhihuPost,
 )
+from ..db.order_status import counted, net_amount
 
 logger = logging.getLogger(__name__)
 
@@ -465,6 +468,15 @@ async def build_xhs_section(session: AsyncSession, account: XhsAccount, bounds: 
     }
 
 
+# Zhihu / 视频号 posts only carry the platform's current cumulative totals
+# (overwritten on every upload, no per-day history), so last week's posts
+# have had ~7 more days to accumulate than this week's. An equal-age
+# comparison (e.g. first 7 days) is impossible without history; the least
+# invasive correct option is to keep both numbers but stop presenting the
+# cumulative ones as a week-over-week change. Post count stays comparable.
+CUMULATIVE_COHORT_CAVEAT = "本周与上周均为「当周新发布内容」截至今天的累计数据；上周内容多积累了约 7 天，累计指标不可直接比较涨跌（平台导出只有累计快照，无法按同等发布天数对齐），仅发布篇数可直接对比。"
+
+
 # ── 视频号 (WeChat Channels) ────────────────────────────────────────────────
 
 def _summarize_channels_posts(posts: list[WxChannelsPost]) -> dict[str, Any]:
@@ -526,6 +538,7 @@ async def build_channels_section(
         "this_week_posts": posts_detail,
         "this_week_summary": _summarize_channels_posts(this_week_posts),
         "last_week_summary": _summarize_channels_posts(last_week_posts),
+        "wow_caveat": CUMULATIVE_COHORT_CAVEAT,
     }
 
 
@@ -585,6 +598,7 @@ async def build_zhihu_section(
         "this_week_posts": posts_detail,
         "this_week_summary": _summarize_zhihu_posts(this_week_posts),
         "last_week_summary": _summarize_zhihu_posts(last_week_posts),
+        "wow_caveat": CUMULATIVE_COHORT_CAVEAT,
     }
 
 
@@ -668,10 +682,10 @@ async def _aggregate_orders(
             select(
                 Order.platform,
                 func.count(Order.id).label("order_count"),
-                func.coalesce(func.sum(Order.price), 0).label("gmv"),
+                func.coalesce(func.sum(net_amount()), 0).label("gmv"),
                 func.count(func.distinct(Order.sku)).label("sku_count"),
             )
-            .where(Order.order_date.between(start, end))
+            .where(Order.order_date.between(start, end), counted())
             .group_by(Order.platform)
         )
     ).all()
@@ -700,6 +714,13 @@ async def build_ecommerce_section(
     if total_count == 0:
         return None
 
+    # Orders arrive by manual/batch upload. If the newest order on file is
+    # older than the report week's last day, the week isn't fully uploaded
+    # yet and a "GMV ¥0 ▼" would be an artefact of missing data, not a sales
+    # drop — the report then says how far the data goes instead.
+    orders_through = (await session.execute(select(func.max(Order.order_date)))).scalar_one()
+    complete = orders_through is not None and orders_through >= bounds.this_week_end
+
     this_agg = await _aggregate_orders(session, bounds.this_week_start, bounds.this_week_end)
     last_agg = await _aggregate_orders(session, bounds.last_week_start, bounds.last_week_end)
 
@@ -722,11 +743,11 @@ async def build_ecommerce_section(
             select(
                 Order.sku,
                 func.sum(Order.quantity).label("quantity"),
-                func.sum(Order.price).label("gmv"),
+                func.sum(net_amount()).label("gmv"),
             )
-            .where(Order.order_date.between(bounds.this_week_start, bounds.this_week_end))
+            .where(Order.order_date.between(bounds.this_week_start, bounds.this_week_end), counted())
             .group_by(Order.sku)
-            .order_by(func.sum(Order.price).desc())
+            .order_by(func.sum(net_amount()).desc())
             .limit(10)
         )
     ).all()
@@ -741,9 +762,10 @@ async def build_ecommerce_section(
             select(
                 Order.province,
                 func.count(Order.id).label("order_count"),
-                func.sum(Order.price).label("gmv"),
+                func.sum(net_amount()).label("gmv"),
             )
             .where(
+                counted(),
                 Order.order_date.between(bounds.this_week_start, bounds.this_week_end),
                 Order.province.isnot(None),
                 Order.province != "",
@@ -759,12 +781,26 @@ async def build_ecommerce_section(
     ]
 
     return {
+        "complete": complete,
+        "orders_through": orders_through,
+        "incomplete_note": (
+            None if complete
+            else f"订单数据截至 {orders_through.isoformat() if orders_through else '—'}，未覆盖完整周"
+        ),
         "this_week_total": this_agg["total"],
         "last_week_total": last_agg["total"],
         "platforms": platforms_merged,
         "top_skus": top_skus,
         "top_provinces": top_provinces,
     }
+
+
+def _now_local() -> datetime:
+    """Report generation time in APP_TIMEZONE (rendered to the minute)."""
+    try:
+        return datetime.now(ZoneInfo(app_settings.app_timezone))
+    except ZoneInfoNotFoundError:
+        return datetime.now(timezone.utc)
 
 
 async def _latest_success_time(session: AsyncSession, model, **filters) -> datetime | None:
@@ -833,7 +869,7 @@ async def build_report_context(session: AsyncSession, reference_date: date | Non
 
     return {
         "bounds": bounds,
-        "generated_at": datetime.now(timezone.utc),
+        "generated_at": _now_local(),
         "wechat_sections": wechat_sections,
         "xhs_sections": xhs_sections,
         "xhs_last_collector_run": xhs_last_run,

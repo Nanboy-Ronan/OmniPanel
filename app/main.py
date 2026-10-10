@@ -27,12 +27,17 @@ if settings.app_timezone in ("Asia/Shanghai", "Asia/Beijing", "PRC", "CST"):
     except AttributeError:
         pass  # Windows — TZ env-var has no effect via tzset
 
+# Root handler for app.* loggers (uvicorn only configures its own loggers).
+from .utils.logging_setup import configure_logging
+configure_logging()
+
 from .db import Base, engine, sync_engine
 from . import db as db_module
 from .db.maintenance import recover_uploads
 import app.db.models  # noqa: F401 — register models with Base.metadata
 from .auth import fastapi_users, auth_backend, UserRead, UserCreate
 from .scheduler import daily_backup_loop, monthly_backup_loop, wechat_auto_sync_loop, watchdog_loop, weekly_report_loop
+from .scheduler import RestartTracker, _notify_wecom as notify_wecom
 from .utils.leader import try_become_leader, release as release_leader
 from .utils.rate_limiter import login_rate_limiter, get_client_ip
 
@@ -53,6 +58,7 @@ from .views.wecom_auth    import router as wecom_auth_router     # Enterprise We
 from .views.saved_queries import router as saved_queries_router  # GET/POST/DELETE /saved-queries/
 from .views.data_freshness import router as data_freshness_router
 from .views.reports import router as reports_router, admin_router as reports_admin_router  # /reports/weekly, /admin/reports/weekly/run
+from .views.audit import router as audit_router  # /auth/logout, /audit/export
 
 # ─── Lifespan ───────────────────────────────────────────────────────────────
 
@@ -67,6 +73,8 @@ async def lifespan(app: FastAPI):
                 await _run_ingestion(path, filename, user_id, digest, batch_id)
             await asyncio.sleep(60)
 
+    restart_tracker = RestartTracker()  # alert on >= 3 restarts in 10 min
+
     async def supervise(name, factory):
         while True:
             try:
@@ -75,9 +83,12 @@ async def lifespan(app: FastAPI):
                 raise RuntimeError(f"{name} loop returned unexpectedly")
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 app.state.background_status[name] = "restarting"
                 logging.exception("Background loop %s failed; retrying", name)
+                alert = restart_tracker.record(name, exc)
+                if alert:
+                    await notify_wecom(alert)
                 await asyncio.sleep(30)
 
     async def run_leader_tasks():
@@ -116,7 +127,11 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(sync_engine.dispose)
 
 # ─── FastAPI instance ───────────────────────────────────────────────────────
-app = FastAPI(title="OmniPanel API", lifespan=lifespan)
+# Interactive docs and the schema are not served: the API is internal and its
+# route map should not be readable without signing in.
+app = FastAPI(
+    title="OmniPanel API", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None,
+)
 
 
 @app.exception_handler(HTTPException)
@@ -138,6 +153,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+async def _audit_password_failure(request: Request, identifier: str, reason: str) -> None:
+    """Failed password sign-ins have no account to attribute; record the name tried."""
+    from .utils.logger import log_operation
+
+    try:
+        await log_operation(
+            None, "login_failed", {"reason": reason, "username": identifier[:120]}, request=request,
+        )
+    except Exception:  # noqa: BLE001 - auditing must not change the login response
+        logging.getLogger(__name__).warning("could not audit failed password login", exc_info=True)
+
 
 # ─── Middleware: rate-limit password login failures ─────────────────────────
 @app.middleware("http")
@@ -174,6 +201,7 @@ async def _password_login_rate_limit(request: Request, call_next):
     try:
         await login_rate_limiter.check(identifier, "password_login")
     except HTTPException as exc:
+        await _audit_password_failure(request, identifier, "rate_limited")
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
@@ -184,6 +212,7 @@ async def _password_login_rate_limit(request: Request, call_next):
 
     if response.status_code in (400, 401):
         await login_rate_limiter.record_failure(identifier, "password_login")
+        await _audit_password_failure(request, identifier, "bad_credentials")
     elif response.status_code == 200:
         await login_rate_limiter.reset(identifier, "password_login")
 
@@ -226,6 +255,7 @@ app.include_router(channels_router)       # /media/channels/*
 app.include_router(saved_queries_router)  # /saved-queries/
 app.include_router(reports_router)        # /reports/weekly
 app.include_router(reports_admin_router)  # /admin/reports/weekly/run
+app.include_router(audit_router)          # /auth/logout, /audit/export
 
 # ─── Health check ───────────────────────────────────────────────────────────
 
@@ -262,8 +292,10 @@ async def health():
     try:
         await _check_db()
         db_status = "ok"
-    except Exception as exc:
-        db_status = f"error: {exc}"
+    except Exception:
+        # Unauthenticated endpoint: keep driver messages (hosts, users) in the log only.
+        logging.getLogger(__name__).exception("health: database check failed")
+        db_status = "error"
 
     redis_status = await _check_redis()
 

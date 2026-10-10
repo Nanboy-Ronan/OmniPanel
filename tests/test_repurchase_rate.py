@@ -172,6 +172,9 @@ class TestRepurchaseRateWindowed:
             _row(3, "2025-07-01", "13800000002"),
             _row(4, "2025-09-29", "13800000002"),  # 90 days after first
             _row(5, "2025-07-01", "13800000003"),  # never repurchases
+            # Another customer's late order puts the data horizon past every
+            # window tested here, so all three July customers are observable.
+            _row(6, "2026-12-31", "13800000099"),
         ])
 
     def test_no_window_counts_both_repurchasers(self, client, tokens, scenario):
@@ -458,3 +461,34 @@ class TestRepurchaseRateValidation:
             headers=_auth(tokens["analyst"]),
         )
         assert r.status_code == 422
+
+
+class TestRepurchaseIncompleteWindow:
+    """Customers whose repurchase window extends past the latest order on
+    file can't have repurchased "yet" — they must not dilute the rate."""
+
+    def test_customers_without_full_window_are_excluded_and_cutoff_exposed(self, client, tokens):
+        _upload(client, tokens["admin"], [
+            _row(1, "2025-07-01", "13800000001"),
+            _row(2, "2025-07-20", "13800000001"),   # repurchased in 19 days
+            _row(3, "2025-07-02", "13800000002"),   # no repurchase, full window observed
+            _row(4, "2025-09-15", "13800000003"),   # acquired 15 days before data end
+            _row(5, "2025-09-30", "13800000004"),   # data horizon = 2025-09-30
+        ])
+        p = _get_rate(client, tokens["analyst"], "2025-07-01", "2025-09-30", window_days=60)
+        assert p["cohort_cutoff"] == "2025-08-01"   # 2025-09-30 - 60 days
+        assert p["acquired_customers"] == 4
+        assert p["new_customers"] == 2              # only 0001 and 0002 are observable
+        assert p["excluded_incomplete_window"] == 2
+        assert p["repurchasing_customers"] == 1
+        assert pytest.approx(p["repurchase_rate"], rel=1e-6) == 0.5
+
+    def test_all_time_has_no_cutoff(self, client, tokens):
+        _upload(client, tokens["admin"], [
+            _row(1, "2025-07-01", "13800000001"),
+            _row(2, "2025-09-30", "13800000002"),
+        ])
+        p = _get_rate(client, tokens["analyst"], "2025-07-01", "2025-09-30")
+        assert p["cohort_cutoff"] is None
+        assert p["new_customers"] == p["acquired_customers"] == 2
+        assert p["excluded_incomplete_window"] == 0

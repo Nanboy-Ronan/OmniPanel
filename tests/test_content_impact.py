@@ -215,6 +215,7 @@ def test_content_impact_returns_impact_for_each_post(client, tokens, monkeypatch
         ("9004", "2026-05-16", "13800000004", "示例商品", 1, 299),
         ("9005", "2026-05-17", "13800000005", "示例商品", 1, 299),
         ("9006", "2026-05-18", "13800000006", "示例商品", 1, 299),
+        ("9007", "2026-06-30", "13800000007", "示例商品", 1, 299),  # data horizon past the window
     ])
 
     r = client.get(
@@ -267,6 +268,7 @@ def test_content_impact_window_days_affects_results(client, tokens, monkeypatch)
         ("w001", "2026-05-05", "13800000001", "item", 1, 100),  # 10 days before — outside window=7
         ("w002", "2026-05-14", "13800000002", "item", 1, 100),  # 1 day before — inside window=7
         ("w003", "2026-05-15", "13800000003", "item", 1, 100),  # publish day
+        ("w004", "2026-06-30", "13800000004", "item", 1, 100),  # data horizon past both windows
     ])
 
     r7 = client.get(
@@ -358,6 +360,7 @@ class TestContentImpactXhsSource:
             ("xhs-9001", "2026-06-08", "13800001001", "示例商品", 1, 199),
             ("xhs-9002", "2026-06-15", "13800001002", "示例商品", 1, 199),
             ("xhs-9003", "2026-06-16", "13800001003", "示例商品", 1, 199),
+            ("xhs-9004", "2026-07-31", "13800001004", "示例商品", 1, 199),  # data horizon
         ])
 
         r = client.get(
@@ -380,6 +383,7 @@ class TestContentImpactZhihuSource:
             ("zh-9001", "2026-06-08", "13800002001", "示例商品", 1, 199),
             ("zh-9002", "2026-06-15", "13800002002", "示例商品", 1, 199),
             ("zh-9003", "2026-06-16", "13800002003", "示例商品", 1, 199),
+            ("zh-9004", "2026-07-31", "13800002004", "示例商品", 1, 199),  # data horizon
         ])
 
         r = client.get(
@@ -423,3 +427,88 @@ class TestContentImpactSourceDefaultIsWechatRegression:
         assert r_omitted.status_code == 200
         assert r_explicit.status_code == 200
         assert r_omitted.json() == r_explicit.json()
+
+
+def test_content_impact_revenue_is_paid_total_not_price_times_quantity(client, tokens, monkeypatch):
+    """Order.price is already the paid order total (订单实付金额) and quantity
+    is 商品种类数 — revenue must be sum(price), never price * quantity."""
+    _sync_posts(client, tokens, monkeypatch, [
+        {
+            "external_id": "ci-rev", "title": "Revenue basis article", "publish_date": date(2026, 5, 15),
+            "metric_date": date(2026, 5, 15), "url": None, "read_user_count": 10,
+            "share_user_count": 0, "like_user": 0, "comment_count": 0, "collection_user": 0,
+            "read_avg_time": None, "read_user_source": None, "read_finish_rate": None, "raw_payload": {},
+        }
+    ])
+    _upload_orders(client, tokens, [
+        ("r001", "2026-05-14", "13800000011", "item", 3, 100),
+        ("r002", "2026-05-15", "13800000012", "item", 3, 250),
+        ("r003", "2026-05-30", "13800000013", "item", 1, 10),  # data horizon past the window
+    ])
+    r = client.get(
+        "/media/content-impact",
+        params={"start_date": "2026-05-15", "end_date": "2026-05-15", "window_days": 7},
+        headers=_auth(tokens["analyst"]),
+    )
+    assert r.status_code == 200
+    row = next(x for x in r.json() if x["title"] == "Revenue basis article")
+    assert row["pre_revenue"] == pytest.approx(100.0)
+    assert row["post_revenue"] == pytest.approx(250.0)
+
+
+class TestContentImpactClipping:
+    """A post window running past the last uploaded order day used to count
+    the not-yet-uploaded days as zero sales — a fake drop for recent posts."""
+
+    def test_window_past_latest_order_date_is_clipped_and_flagged(self):
+        posts = [{"id": 1, "title": "Recent", "publish_date": "2026-05-15",
+                  "read_user_count": 1, "share_user_count": 0}]
+        daily = {
+            "2026-05-08": _daily(5), "2026-05-12": _daily(1), "2026-05-14": _daily(2),
+            "2026-05-15": _daily(1), "2026-05-16": _daily(2),
+        }
+        r = compute_content_impact(posts, daily, window_days=7, latest_order_date=date(2026, 5, 16))[0]
+        assert r["partial_window"] is True and r["window_days_used"] == 2
+        assert r["post_orders"] == 3           # 5/15–5/16 only
+        assert r["pre_orders"] == 2            # equal span: 5/13–5/14
+        assert r["order_lift_pct"] == pytest.approx(50.0)
+
+    def test_complete_window_is_unchanged(self):
+        posts = [{"id": 1, "title": "Old", "publish_date": "2026-05-15",
+                  "read_user_count": 1, "share_user_count": 0}]
+        daily = {"2026-05-08": _daily(2), "2026-05-21": _daily(4)}
+        r = compute_content_impact(posts, daily, window_days=7, latest_order_date=date(2026, 6, 1))[0]
+        assert r["partial_window"] is False and r["window_days_used"] == 7
+        assert (r["pre_orders"], r["post_orders"]) == (2, 4)
+
+    def test_post_published_after_latest_order_has_no_lift(self):
+        posts = [{"id": 1, "title": "Future", "publish_date": "2026-05-20",
+                  "read_user_count": 1, "share_user_count": 0}]
+        daily = {"2026-05-15": _daily(9)}
+        r = compute_content_impact(posts, daily, window_days=7, latest_order_date=date(2026, 5, 16))[0]
+        assert r["partial_window"] is True and r["window_days_used"] == 0
+        assert r["order_lift_pct"] is None and r["revenue_lift_pct"] is None
+        assert (r["pre_orders"], r["post_orders"]) == (0, 0)
+
+
+def test_content_impact_api_clips_to_latest_order_date(client, tokens, monkeypatch):
+    _sync_posts(client, tokens, monkeypatch, [
+        {
+            "external_id": "ci-clip", "title": "Clip article", "publish_date": date(2026, 5, 15),
+            "metric_date": date(2026, 5, 15), "url": None, "read_user_count": 10,
+            "share_user_count": 0, "like_user": 0, "comment_count": 0, "collection_user": 0,
+            "read_avg_time": None, "read_user_source": None, "read_finish_rate": None, "raw_payload": {},
+        }
+    ])
+    _upload_orders(client, tokens, [
+        ("c001", "2026-05-09", "13800000021", "item", 1, 100),
+        ("c002", "2026-05-14", "13800000022", "item", 1, 100),
+        ("c003", "2026-05-15", "13800000023", "item", 1, 100),
+    ])
+    r = client.get("/media/content-impact",
+                   params={"start_date": "2026-05-15", "end_date": "2026-05-15", "window_days": 7},
+                   headers=_auth(tokens["analyst"]))
+    row = next(x for x in r.json() if x["title"] == "Clip article")
+    assert row["partial_window"] is True and row["window_days_used"] == 1
+    assert (row["pre_orders"], row["post_orders"]) == (1, 1)
+    assert row["order_lift_pct"] == pytest.approx(0.0)

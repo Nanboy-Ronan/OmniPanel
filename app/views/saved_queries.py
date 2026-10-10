@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..auth import current_analyst_user
 from ..db import get_session
 from ..db.models import SavedQuery
+from ..utils.logger import log_operation
 
 router = APIRouter(prefix="/saved-queries", tags=["saved-queries"])
 
@@ -20,6 +21,7 @@ class SavedQueryCreate(BaseModel):
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_saved_query(
+    request: Request,
     body: SavedQueryCreate,
     _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
@@ -33,6 +35,7 @@ async def create_saved_query(
     session.add(q)
     await session.commit()
     await session.refresh(q)
+    await log_operation(str(_u.id), "saved_query_create", {"query_id": str(q.id), "name": q.name, "shared": q.is_shared}, request=request)
     return _serialize(q)
 
 
@@ -51,6 +54,7 @@ async def list_saved_queries(
 
 @router.delete("/{query_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_saved_query(
+    request: Request,
     query_id: str,
     _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
@@ -61,8 +65,10 @@ async def delete_saved_query(
         raise HTTPException(status_code=404, detail="Saved query not found")
     if str(q.user_id) != str(_u.id) and _u.role != "admin":
         raise HTTPException(status_code=403, detail="Not allowed to delete this saved query")
+    name = q.name
     await session.delete(q)
     await session.commit()
+    await log_operation(str(_u.id), "saved_query_delete", {"query_id": query_id, "name": name}, request=request)
 
 
 def _serialize(q: SavedQuery) -> dict:

@@ -153,9 +153,25 @@ def _cmd_verify_session(args: argparse.Namespace) -> int:
     return 0
 
 
+def _install_sigterm_handler() -> None:
+    """systemd's TimeoutStartSec SIGTERMs the oneshot; Python's default
+    handler would exit immediately, leaving the in-flight CollectorRun
+    'running' and the summary alert unsent. Raise CollectorInterrupted
+    instead so run_collect records the run as killed and alerts first."""
+    import signal
+
+    from .runner import CollectorInterrupted
+
+    def _handler(signum, frame):
+        raise CollectorInterrupted(f"received signal {signum}")
+
+    signal.signal(signal.SIGTERM, _handler)
+
+
 def _cmd_collect(args: argparse.Namespace) -> int:
     from .runner import run_collect
 
+    _install_sigterm_handler()
     return run_collect(
         triggered_by="manual" if (args.platform or args.account_id or args.content_type) else "schedule",
         only_platform=args.platform,
@@ -206,6 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from ..utils.logging_setup import configure_logging
+
+    configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
     sys.exit(args.func(args))

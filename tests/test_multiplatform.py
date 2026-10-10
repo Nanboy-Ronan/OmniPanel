@@ -719,13 +719,13 @@ def api_tokens(api_client):
     # First registration → auto-admin
     r_reg = api_client.post(
         "/auth/register",
-        json={"email": "admin@mptest.com", "password": "pw", "role": "viewer"},
+        json={"email": "admin@mptest.com", "password": "pw-test-passphrase", "role": "viewer"},
     )
     assert r_reg.status_code == 201, f"Registration failed: {r_reg.text}"
 
     r_login = api_client.post(
         "/auth/jwt/login",
-        data={"username": "admin@mptest.com", "password": "pw"},
+        data={"username": "admin@mptest.com", "password": "pw-test-passphrase"},
     )
     assert r_login.status_code == 200, f"Admin login failed: {r_login.text}"
     admin_token = r_login.json()["access_token"]
@@ -733,14 +733,14 @@ def api_tokens(api_client):
     # Create an analyst via admin
     r_create = api_client.post(
         "/admin/users",
-        json={"email": "analyst@mptest.com", "password": "pw", "role": "analyst"},
+        json={"email": "analyst@mptest.com", "password": "pw-test-passphrase", "role": "analyst"},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert r_create.status_code == 201, f"Analyst creation failed: {r_create.text}"
 
     r_analyst = api_client.post(
         "/auth/jwt/login",
-        data={"username": "analyst@mptest.com", "password": "pw"},
+        data={"username": "analyst@mptest.com", "password": "pw-test-passphrase"},
     )
     assert r_analyst.status_code == 200, f"Analyst login failed: {r_analyst.text}"
     analyst_token = r_analyst.json()["access_token"]
@@ -1261,7 +1261,7 @@ class TestRealYouzanFileTabStripping:
 
     def test_customer_key_looks_like_phone(self):
         """For Youzan, customer_key (phone number) should be all digits,
-        allowing a small tolerance for edge cases (e.g. Hong Kong numbers)."""
+        allowing a small tolerance for edge cases (e.g. 示例买家11 Kong numbers)."""
         from app.db.etl import normalize_dataframe
         df = pd.read_csv(YOUZAN_FILE, dtype=str)
         result, _ = normalize_dataframe(df)

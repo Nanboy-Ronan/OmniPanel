@@ -123,3 +123,69 @@ class TestBackupStructuredLogging:
         err = next((r for r in caplog.records if r.levelno == logging.ERROR), None)
         assert err is not None
         assert err.exc_info is not None
+
+
+class TestRootLoggingSetup:
+    """app.* INFO logs used to vanish under uvicorn: nothing configured the
+    root logger. Run in subprocesses so the root logger starts pristine."""
+
+    def _run(self, code: str, **env):
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        full_env = {**os.environ, **env}
+        full_env.pop("LOG_LEVEL", None) if "LOG_LEVEL" not in env else None
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=Path(__file__).resolve().parents[1],
+            env=full_env, capture_output=True, text=True, timeout=60,
+        )
+
+    def test_app_main_import_makes_app_info_logs_visible(self):
+        proc = self._run(
+            "import logging, app.main\n"
+            "logging.getLogger('app.scheduler').info('visible-info-line')\n"
+            "assert len(logging.getLogger().handlers) == 1\n"
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "visible-info-line" in proc.stderr
+        assert "INFO app.scheduler" in proc.stderr
+
+    def test_log_level_env_is_respected_and_setup_is_idempotent(self):
+        proc = self._run(
+            "import logging\n"
+            "from app.utils.logging_setup import configure_logging\n"
+            "configure_logging(); configure_logging()\n"
+            "assert len(logging.getLogger().handlers) == 1\n"
+            "logging.getLogger('app.x').info('hidden-info')\n"
+            "logging.getLogger('app.x').warning('shown-warning')\n",
+            LOG_LEVEL="warning",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "shown-warning" in proc.stderr
+        assert "hidden-info" not in proc.stderr
+
+    def test_existing_root_handler_is_not_duplicated(self):
+        proc = self._run(
+            "import logging\n"
+            "logging.basicConfig()\n"
+            "from app.utils.logging_setup import configure_logging\n"
+            "configure_logging()\n"
+            "assert len(logging.getLogger().handlers) == 1\n"
+            "assert logging.getLogger().level == logging.INFO\n"
+        )
+        assert proc.returncode == 0, proc.stderr
+
+    def test_collector_cli_configures_logging(self):
+        proc = self._run(
+            "import logging\n"
+            "from app.collector import cli\n"
+            "try:\n"
+            "    cli.main(['--help'])\n"
+            "except SystemExit:\n"
+            "    pass\n"
+            "assert len(logging.getLogger().handlers) == 1\n"
+        )
+        assert proc.returncode == 0, proc.stderr

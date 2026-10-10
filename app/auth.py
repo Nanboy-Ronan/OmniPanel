@@ -63,7 +63,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     async def on_after_login(
         self, user: User, request: Request | None = None, response=None
     ) -> None:
-        await log_operation(str(user.id), "login")
+        await log_operation(str(user.id), "login", request=request)
 
 async def get_user_manager(user_db=Depends(get_user_db)):
     yield UserManager(user_db, _password_helper())         # FastAPI-Users will await its methods

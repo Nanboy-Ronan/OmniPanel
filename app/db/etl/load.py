@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..models import Customer, Order, UploadBatch, UploadRejectedRow
+from ..order_status import classify
 from .detect import detect_platform
 from .normalize import (
     _file_hash,
@@ -71,7 +72,41 @@ def _new_order_from_parsed(r: dict) -> Order:
         buyer_nick=r["buyer_nick"],
         coupon_name=r["coupon_name"],
         distributor=r["distributor"],
+        **_status_fields(r),
     )
+
+
+def _status_fields(r: dict) -> dict:
+    raw_status = (r.get("raw_status") or None) and r["raw_status"][:64]
+    return {
+        "raw_status": raw_status,
+        "status_group": classify(r.get("platform"), raw_status),
+        "refunded_amount": r.get("refunded_amount"),
+    }
+
+
+def _refresh_statuses(session: Session, platform: str, rows: list[dict]) -> int:
+    """Apply newer statuses/refunds from a re-uploaded file to orders already stored.
+
+    Only the status fields change; amounts, dates and customers keep their first
+    upload's values. A file without a status column never blanks a stored status.
+    """
+    incoming = {r["order_id"]: r for r in rows if r.get("order_id") and r.get("raw_status")}
+    if not incoming:
+        return 0
+    updated = 0
+    existing = session.execute(
+        select(Order).where(Order.platform == platform, Order.order_id.in_(incoming))
+    ).scalars().all()
+    for order in existing:
+        fields = _status_fields({**incoming[order.order_id], "platform": platform})
+        if fields["refunded_amount"] is None:
+            fields.pop("refunded_amount")
+        if any(getattr(order, k) != v for k, v in fields.items()):
+            for k, v in fields.items():
+                setattr(order, k, v)
+            updated += 1
+    return updated
 
 
 def _add_rejected_row(
@@ -119,14 +154,34 @@ def _add_platform_row(
     session.add(model(**values))
 
 
-def _existing_order_ids(session: Session, order_ids: set[str]) -> set[str]:
+def _existing_order_ids(session: Session, platform: str, order_ids: set[str]) -> set[str]:
+    """Order ids already stored for *platform*.
+
+    Order numbers are only unique within one platform: a 有赞 and a 天猫
+    order can share the same number, and treating that as a duplicate would
+    silently drop a real order. Dedup is therefore on (platform, order_id).
+    """
     if not order_ids:
         return set()
     return set(
         session.execute(
-            select(Order.order_id).where(Order.order_id.in_(order_ids))
+            select(Order.order_id).where(
+                Order.platform == platform, Order.order_id.in_(order_ids)
+            )
         ).scalars().all()
     )
+
+
+def _existing_platform_order_ids(session: Session, order_ids: set[str]) -> set[tuple[str, str]]:
+    """(platform, order_id) pairs already stored, for mixed-platform input."""
+    if not order_ids:
+        return set()
+    return {
+        (row.platform, row.order_id)
+        for row in session.execute(
+            select(Order.platform, Order.order_id).where(Order.order_id.in_(order_ids))
+        ).all()
+    }
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -174,6 +229,7 @@ def ingest_upload(
     raw_rows_inserted = 0
     duplicate_rows = 0
     invalid_rows = 0
+    resubmitted: list[dict] = []
 
     if platform == "jd":
         by_order_id: dict[str | None, dict] = {}
@@ -185,7 +241,7 @@ def ingest_upload(
             raw_groups.setdefault(_raw_order_id(platform, raw_row), []).append((idx + 1, raw_row))
 
         incoming_order_ids = {oid for oid in raw_groups if oid}
-        existing_ids = _existing_order_ids(session, incoming_order_ids)
+        existing_ids = _existing_order_ids(session, platform, incoming_order_ids)
         in_batch_order_ids: set[str] = set()
 
         valid_to_insert: list[dict] = []
@@ -210,6 +266,8 @@ def ingest_upload(
                 continue
             if oid and (oid in existing_ids or oid in in_batch_order_ids):
                 duplicate_rows += len(rows)
+                if oid in existing_ids:
+                    resubmitted.append(parsed_row)
                 continue
             valid_to_insert.append(parsed_row)
             if oid:
@@ -229,7 +287,7 @@ def ingest_upload(
                 raw_rows_inserted += 1
     else:
         incoming_order_ids = {r["order_id"] for r in parsed if r["order_id"]}
-        existing_ids = _existing_order_ids(session, incoming_order_ids)
+        existing_ids = _existing_order_ids(session, platform, incoming_order_ids)
         in_batch_order_ids = set()
 
         valid_items: list[tuple[int, pd.Series, dict]] = []
@@ -245,6 +303,8 @@ def ingest_upload(
             oid = parsed_row["order_id"]
             if oid and (oid in existing_ids or oid in in_batch_order_ids):
                 duplicate_rows += 1
+                if oid in existing_ids:
+                    resubmitted.append(parsed_row)
                 continue
             valid_items.append((idx, raw_series, parsed_row))
             if oid:
@@ -262,6 +322,8 @@ def ingest_upload(
             )
             raw_rows_inserted += 1
 
+    updated_orders = _refresh_statuses(session, platform, resubmitted)
+
     batch.inserted_orders = inserted_orders
     batch.raw_rows_inserted = raw_rows_inserted
     batch.duplicate_rows = duplicate_rows
@@ -278,6 +340,7 @@ def ingest_upload(
         "inserted_rows": inserted_orders,
         "raw_rows_inserted": raw_rows_inserted,
         "duplicate_rows": duplicate_rows,
+        "updated_orders": updated_orders,
         "invalid_rows": invalid_rows,
     }
 
@@ -334,12 +397,13 @@ def ingest(df: pd.DataFrame, session: Session) -> int:
     _ensure_customers_for_orders(parsed, session)
 
     incoming_order_ids = {r["order_id"] for r in parsed if r["order_id"]}
-    existing_order_ids = _existing_order_ids(session, incoming_order_ids)
+    existing_keys = _existing_platform_order_ids(session, incoming_order_ids)
 
     inserted = 0
     for r in parsed:
         oid = r["order_id"]
-        if oid is not None and oid in existing_order_ids:
+        key = (r["platform"], oid)
+        if oid is not None and key in existing_keys:
             continue
         session.add(Order(
             order_id=oid,
@@ -359,7 +423,7 @@ def ingest(df: pd.DataFrame, session: Session) -> int:
             distributor=r["distributor"],
         ))
         if oid is not None:
-            existing_order_ids.add(oid)
+            existing_keys.add(key)
         inserted += 1
 
     session.commit()

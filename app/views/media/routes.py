@@ -4,7 +4,8 @@ import logging
 from datetime import date, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,11 +21,13 @@ from ...db.models import (
     XhsPost,
     ZhihuPost,
 )
+from ...db.order_status import counted, net_amount
 from ...services.wechat import (
     WECHAT_PLATFORM, _wechat_env_accounts, _ensure_env_wechat_accounts,
     _wechat_secret_for_account, _sync_one_wechat_account, _record_failed_wechat_sync,
 )
 from .analysis import aggregate_read_sources, compute_content_impact
+from ...utils.logger import log_operation
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +83,7 @@ async def list_media_accounts(
 @router.post("/wechat/sync")
 async def sync_wechat_official(
     payload: WeChatSyncRequest,
+    request: Request,
     _u=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -118,6 +122,17 @@ async def sync_wechat_official(
                 await session.rollback()
                 logger.exception("Could not record failed WeChat sync for account=%s", account_id)
 
+    await log_operation(
+        str(_u.id),
+        "wechat_sync",
+        {
+            "start_date": payload.start_date,
+            "end_date": payload.end_date,
+            "accounts": account_ids,
+            "failed_accounts": [f["account_id"] for f in failures],
+        },
+        request=request,
+    )
     if failures and not results:
         raise HTTPException(status_code=502, detail={"accounts_failed": failures})
 
@@ -553,14 +568,22 @@ async def content_impact(
         select(
             Order.order_date,
             func.count(Order.id).label("orders"),
-            func.sum(Order.price * Order.quantity).label("revenue"),
+            # Order.price is the order's paid total (订单实付金额); quantity is
+            # 商品种类数 (distinct SKUs), so price * quantity over-counts.
+            func.sum(net_amount()).label("revenue"),
         )
+        .where(counted())
         .where(Order.order_date >= order_start)
         .where(Order.order_date <= order_end)
         .group_by(Order.order_date)
     )
     if platform:
         order_stmt = order_stmt.where(Order.platform == platform)
+
+    latest_stmt = select(func.max(Order.order_date))
+    if platform:
+        latest_stmt = latest_stmt.where(Order.platform == platform)
+    latest_order_date = (await session.execute(latest_stmt)).scalar()
 
     order_rows = (await session.execute(order_stmt)).all()
     daily_totals = {
@@ -569,7 +592,8 @@ async def content_impact(
     }
 
     # ── Step 4: compute per-post impact ─────────────────────────────────────
-    return compute_content_impact(posts_data, daily_totals, window_days)
+    # Clip windows at the last uploaded order day (see compute_content_impact).
+    return compute_content_impact(posts_data, daily_totals, window_days, latest_order_date)
 
 
 @router.get("/posts/{post_id}/metrics")

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Drawer } from '../components/Drawer';
 import { z } from 'zod';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -30,6 +31,8 @@ const fields = [
   'buyer_nick',
   'coupon_name',
   'distributor',
+  'raw_status',
+  'refunded_amount',
   'customer_key',
 ];
 type Filter = { field: string; value?: string; min?: string; max?: string };
@@ -104,7 +107,7 @@ export default function OrdersPage() {
         }
       />
       <form
-        className="filter-bar"
+        className="filter-bar range-filter"
         onSubmit={(e) => {
           e.preventDefault();
           const data = new FormData(e.currentTarget);
@@ -234,6 +237,7 @@ export default function OrdersPage() {
                 page={Math.floor(offset / 25)}
                 hasNext={data.total !== null ? offset + 25 < data.total : data.rows.length === 25}
                 total={data.total}
+                pageSize={25}
                 onPage={(page) => {
                   navigate({ offset: String(page * 25) });
                   setSelected(null);
@@ -250,15 +254,19 @@ export default function OrdersPage() {
 function OrderDetail({ id, onClose }: { id: number; onClose: () => void }) {
   const query = useResource(`/orders_all/${id}/raw`, recordSchema);
   return (
-    <Panel title={`原始平台记录 #${id}`} action={<button onClick={onClose}>关闭详情</button>}>
+    <Drawer title={`订单 #${id}`} subtitle="统一订单字段与平台导出的原始记录" onClose={onClose}>
       <QueryView query={query}>
         {(row) => (
           <>
-            <Detail row={asRecord(row.order)} />
-            <RecordTable rows={asRows(row.rows)} caption="平台原始字段" />
+            <Panel title="统一订单">
+              <Detail row={asRecord(row.order)} />
+            </Panel>
+            <Panel title="平台原始字段">
+              <RecordTable rows={asRows(row.rows)} caption="平台原始字段" />
+            </Panel>
           </>
         )}
       </QueryView>
-    </Panel>
+    </Drawer>
   );
 }

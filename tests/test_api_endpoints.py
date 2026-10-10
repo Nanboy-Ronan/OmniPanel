@@ -54,24 +54,24 @@ def tokens(client):
     # First registration → user becomes admin
     client.post(
         "/auth/register",
-        json={"email": "first@test.com", "password": "pw", "role": "viewer"},
+        json={"email": "first@test.com", "password": "pw-test-passphrase", "role": "viewer"},
     )
     r_login = client.post(
         "/auth/jwt/login",
-        data={"username": "first@test.com", "password": "pw"},
+        data={"username": "first@test.com", "password": "pw-test-passphrase"},
     )
     admin_token = r_login.json()["access_token"]
 
     def create_via_admin(email, role):
         r = client.post(
             "/admin/users",
-            json={"email": email, "password": "pw", "role": role},
+            json={"email": email, "password": "pw-test-passphrase", "role": role},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert r.status_code == 201
         r_login = client.post(
             "/auth/jwt/login",
-            data={"username": email, "password": "pw"},
+            data={"username": email, "password": "pw-test-passphrase"},
         )
         return r_login.json()["access_token"]
 
@@ -101,7 +101,7 @@ def sample_data(client):
 def test_first_registration_becomes_admin(client):
     client.post(
         "/auth/register",
-        json={"email": "first@example.com", "password": "pw", "role": "viewer"},
+        json={"email": "first@example.com", "password": "pw-test-passphrase", "role": "viewer"},
     )
 
     import asyncio
@@ -122,13 +122,13 @@ def test_first_registration_becomes_admin(client):
 def test_register_blocked_after_first_user(client):
     r1 = client.post(
         "/auth/register",
-        json={"email": "first@example.com", "password": "pw"},
+        json={"email": "first@example.com", "password": "pw-test-passphrase"},
     )
     assert r1.status_code == 201
 
     r = client.post(
         "/auth/register",
-        json={"email": "second@example.com", "password": "pw"},
+        json={"email": "second@example.com", "password": "pw-test-passphrase"},
     )
     assert r.status_code == 403
     assert r.json()["detail"] == "Registration closed"
@@ -170,6 +170,7 @@ def test_wecom_exchange_creates_user_and_returns_jwt(client, monkeypatch):
     monkeypatch.setenv("WECOM_AGENT_ID", "1000002")
     monkeypatch.setenv("WECOM_APP_SECRET", "secret")
     monkeypatch.setenv("WECOM_DEFAULT_ROLE", "analyst")
+    monkeypatch.setenv("WECOM_NEW_USERS_ACTIVE", "true")
     # Override the production redirect URI so http://localhost:8501 is accepted
     monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "http://localhost:8501")
 
@@ -196,6 +197,46 @@ def test_wecom_exchange_creates_user_and_returns_jwt(client, monkeypatch):
     assert body["access_token"]
     assert body["user"]["email"] == "zhangsan@example.com"
     assert body["user"]["role"] == "admin"
+
+
+def test_wecom_new_member_waits_for_admin_approval(client, monkeypatch):
+    """Any enterprise member can finish OAuth; that alone must not grant data access."""
+    monkeypatch.setenv("WECOM_CORP_ID", "wwcorp")
+    monkeypatch.setenv("WECOM_AGENT_ID", "1000002")
+    monkeypatch.setenv("WECOM_APP_SECRET", "secret")
+    monkeypatch.delenv("WECOM_NEW_USERS_ACTIVE", raising=False)
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "http://localhost:8501")
+
+    import app.views.wecom_auth as wecom_auth
+
+    identities = iter([
+        {"userid": "owner", "email": "owner@example.com", "name": "负责人"},
+        {"userid": "lisi", "email": "lisi@example.com", "name": "李四"},
+        {"userid": "lisi", "email": "lisi@example.com", "name": "李四"},
+    ])
+
+    async def fake_identity(code):
+        return next(identities)
+
+    alerts: list[str] = []
+    monkeypatch.setattr(wecom_auth, "_fetch_wecom_identity", fake_identity)
+    monkeypatch.setattr("app.utils.wecom_bot.send_wecom_alert", lambda text: alerts.append(text) or True)
+
+    def exchange():
+        state = client.get(
+            "/auth/wecom/authorize-url", params={"redirect_uri": "http://localhost:8501"},
+        ).json()["authorize_url"].split("state=", 1)[1].split("&", 1)[0]
+        return client.post("/auth/wecom/exchange", json={"code": "c", "state": state})
+
+    owner = exchange()
+    assert owner.status_code == 200  # first account bootstraps as an active admin
+    pending = exchange()
+    assert pending.status_code == 403
+    assert "管理员" in pending.json()["detail"]
+    assert len(alerts) == 1 and "李四" in alerts[0]
+    again = exchange()
+    assert again.status_code == 403
+    assert len(alerts) == 1  # existing pending account does not re-notify
 
 
 def _auth(token):
@@ -714,7 +755,7 @@ def test_admin_create_user(client, tokens):
     """Admin can create additional user accounts."""
     r = client.post(
         "/admin/users",
-        json={"email": "new@test.com", "password": "pw", "role": "viewer"},
+        json={"email": "new@test.com", "password": "pw-test-passphrase", "role": "viewer"},
         headers=_auth(tokens["admin"]),
     )
     assert r.status_code == 201
@@ -725,7 +766,7 @@ def test_admin_create_user(client, tokens):
     # endpoint forbidden for non-admin users
     r_bad = client.post(
         "/admin/users",
-        json={"email": "bad@test.com", "password": "pw"},
+        json={"email": "bad@test.com", "password": "pw-test-passphrase"},
         headers=_auth(tokens["viewer"]),
     )
     assert r_bad.status_code == 403
@@ -844,3 +885,128 @@ def test_operation_logs(client, tokens):
         assert detail is not None
         assert "start_date" in detail
         assert "end_date" in detail
+
+
+def test_upload_rejects_decompression_bomb(client, tokens):
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("xl/worksheets/sheet1.xml", b"0" * (20 * 1024 * 1024))
+    r = client.post(
+        "/upload/",
+        files={"file": ("orders.xlsx", buffer.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=_auth(tokens["admin"]),
+    )
+    assert r.status_code == 400
+    assert "解压" in r.json()["detail"]
+
+
+def test_admin_created_password_accounts_need_strong_passwords(client, tokens):
+    weak = client.post(
+        "/admin/users",
+        json={"email": "tool@example.com", "password": "short", "role": "viewer"},
+        headers=_auth(tokens["admin"]),
+    )
+    assert weak.status_code == 400
+    strong = client.post(
+        "/admin/users",
+        json={"email": "tool@example.com", "password": "a-long-enough-passphrase", "role": "viewer"},
+        headers=_auth(tokens["admin"]),
+    )
+    assert strong.status_code == 201
+
+
+# ── Audit trail ─────────────────────────────────────────────────────────────
+
+def _logs(client, token, **params):
+    r = client.get("/admin/logs", params=params, headers=_auth(token))
+    assert r.status_code == 200, r.text
+    return r
+
+
+def test_refused_wecom_sign_ins_are_audited_with_reason(client, tokens, monkeypatch):
+    monkeypatch.setenv("WECOM_CORP_ID", "wwcorp")
+    monkeypatch.setenv("WECOM_AGENT_ID", "1000002")
+    monkeypatch.setenv("WECOM_APP_SECRET", "secret")
+    monkeypatch.delenv("WECOM_NEW_USERS_ACTIVE", raising=False)
+    monkeypatch.setenv("WECOM_STREAMLIT_REDIRECT_URI", "http://localhost:8501")
+    import app.views.wecom_auth as wecom_auth
+
+    async def fake_identity(code):
+        return {"userid": "wangwu", "email": "wangwu@example.com", "name": "王五"}
+
+    monkeypatch.setattr(wecom_auth, "_fetch_wecom_identity", fake_identity)
+    monkeypatch.setattr("app.utils.wecom_bot.send_wecom_alert", lambda text: True)
+
+    # Wrong OAuth state: no account to attribute.
+    bad = client.post("/auth/wecom/exchange", json={"code": "c", "state": "forged"},
+                      headers={"User-Agent": "audit-test-agent"})
+    assert bad.status_code == 400
+    state = client.get(
+        "/auth/wecom/authorize-url", params={"redirect_uri": "http://localhost:8501"},
+    ).json()["authorize_url"].split("state=", 1)[1].split("&", 1)[0]
+    pending = client.post("/auth/wecom/exchange", json={"code": "c", "state": state})
+    assert pending.status_code == 403
+
+    r = _logs(client, tokens["admin"], category="failed")
+    rows = r.json()
+    reasons = {row["detail"]["reason"]: row for row in rows}
+    assert "invalid_state" in reasons and "pending_approval" in reasons
+    assert reasons["invalid_state"]["email"] is None
+    assert reasons["invalid_state"]["user_agent"] == "audit-test-agent"
+    assert reasons["invalid_state"]["ip"]
+    assert reasons["pending_approval"]["email"] == "wangwu@example.com"
+    assert int(r.headers["X-Total-Count"]) == len(rows)
+
+
+def test_password_login_failures_and_successes_carry_client_context(client, tokens):
+    bad = client.post("/auth/jwt/login", data={"username": "admin@test.com", "password": "wrong-password"})
+    assert bad.status_code == 400
+    rows = _logs(client, tokens["admin"], category="auth").json()
+    failed = [r for r in rows if r["action"] == "login_failed"]
+    assert failed and failed[0]["detail"]["username"] == "admin@test.com"
+    assert failed[0]["detail"]["reason"] == "bad_credentials"
+    logins = [r for r in rows if r["action"] == "login"]
+    assert logins and logins[0]["ip"]
+
+
+def test_logout_and_browser_exports_are_recorded(client, tokens):
+    assert client.post("/auth/logout", headers=_auth(tokens["viewer"])).status_code == 204
+    exported = client.post(
+        "/audit/export",
+        json={"source": "客户列表", "rows": 42, "columns": ["mobile", "receiver"]},
+        headers=_auth(tokens["viewer"]),
+    )
+    assert exported.status_code == 204
+    rows = _logs(client, tokens["admin"], q="客户列表").json()
+    assert rows[0]["action"] == "export_client"
+    assert rows[0]["detail"] == {"source": "客户列表", "rows": 42, "columns": ["mobile", "receiver"]}
+    assert any(r["action"] == "logout" for r in _logs(client, tokens["admin"], category="auth").json())
+    assert client.post("/auth/logout").status_code == 401
+
+
+def test_account_changes_are_audited_without_secrets(client, tokens):
+    h = _auth(tokens["admin"])
+    created = client.post("/media/xhs/accounts", json={"name": "审计测试号", "account_type": "company"}, headers=h)
+    assert created.status_code in (200, 201), created.text
+    account_id = created.json()["id"]
+    assert client.patch(f"/media/xhs/accounts/{account_id}", json={"name": "审计测试号2"}, headers=h).status_code == 200
+    assert client.delete(f"/media/xhs/accounts/{account_id}", headers=h).status_code in (200, 204)
+    actions = [r["action"] for r in _logs(client, tokens["admin"], category="data").json()]
+    for action in ("xhs_account_create", "xhs_account_update", "xhs_account_delete"):
+        assert action in actions
+    update = next(r for r in _logs(client, tokens["admin"], q="xhs_account_update").json())
+    assert update["detail"]["changed"] == ["name"]
+
+
+def test_log_filters_by_date_and_paginate(client, tokens):
+    today = _logs(client, tokens["admin"], start_date="2000-01-01", limit=1)
+    assert len(today.json()) == 1
+    assert int(today.headers["X-Total-Count"]) >= 1
+    future = _logs(client, tokens["admin"], start_date="2999-01-01")
+    assert future.json() == [] and future.headers["X-Total-Count"] == "0"
+    assert client.get("/admin/logs", params={"category": "bogus"}, headers=_auth(tokens["admin"])).status_code == 422

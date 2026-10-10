@@ -52,7 +52,7 @@ const catalogs: Record<string, [string, string]> = {
 const timestamp = (value: string) => new Date(value).toLocaleString('zh-CN', { hour12: false });
 export default function DatabasePage() {
   const query = useResource('/admin/db-status', schema);
-  const action = useAction();
+  const action = useAction({ success: '商城数据已清空', error: '清空商城数据失败' });
   const [group, setGroup] = useState('all');
   return (
     <>

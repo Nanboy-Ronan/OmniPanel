@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import App from '../App';
 import workspace from './workspace-fixtures.json';
@@ -44,6 +44,35 @@ describe('working console', () => {
     expect(window.location.search).toContain('period=week');
     expect(fetch.mock.calls.length).toBe(before);
     expect(screen.getByRole('table', { name: '经营指标同期对比' })).toBeInTheDocument();
+  });
+  it('summarises every source in one status strip with details on demand', async () => {
+    setup(
+      {
+        '/data/freshness': {
+          orders: { coverage_through: '2026-10-03', last_import_at: '2026-10-04T01:30:00+00:00' },
+          platforms: { jd: { coverage_through: '2026-10-02', last_import_at: null } },
+        },
+      },
+      'admin',
+    );
+    await screen.findByText('30,960.00', { selector: '.metric-value' });
+    const strip = screen.getByRole('region', { name: '数据来源状态' });
+    for (const name of ['商城订单', '公众号 API', '小红书', '视频号', '知乎', '蒲公英合作'])
+      expect(within(strip).getByRole('button', { name: new RegExp(`^${name}：`) })).toBeVisible();
+    expect(within(strip).getByText(/源数据覆盖至/)).toHaveTextContent('源数据覆盖至 2026-10-03');
+    expect(within(strip).getByText(/页面取数 \d{2}:\d{2}:\d{2}/)).toBeInTheDocument();
+    // Details stay out of the way until a chip is opened.
+    expect(
+      screen.queryByRole('button', { name: '查看最近有数据的 30 天' }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(within(strip).getByRole('button', { name: /^商城订单：/ }));
+    const drawer = await screen.findByRole('dialog', { name: '商城订单数据状态' });
+    expect(within(drawer).getByText('2026-10-04 09:30:00')).toBeInTheDocument();
+    expect(within(drawer).getByRole('list', { name: '各平台覆盖' })).toHaveTextContent('京东');
+    fireEvent.click(within(drawer).getByRole('button', { name: '查看最近有数据的 30 天' }));
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get('page')).toBe('analysis');
+    expect(params.get('end')).toBe('2026-08-12');
   });
   it('does not send KPI requests for an invalid shared date', async () => {
     window.history.replaceState(null, '', '/console/?anchor=2026-02-30');

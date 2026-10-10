@@ -27,6 +27,12 @@ class Settings(BaseSettings):
 
     # ── Database ──────────────────────────────────────────────────────────────
     rap_database_url: str = "postgresql+asyncpg://rpa:rpa@127.0.0.1:5432/rpa"
+    # Dedicated login role for the ad hoc SQL console (alembic 0018). Unset means
+    # the console is disabled — it never falls back to the application role.
+    sql_console_database_url: str | None = Field(
+        None,
+        validation_alias=AliasChoices("RAP_SQL_CONSOLE_DATABASE_URL", "SQL_CONSOLE_DATABASE_URL"),
+    )
     db_echo: bool = False
     db_pool_size: int = 10
     db_max_overflow: int = 20
@@ -68,6 +74,11 @@ class Settings(BaseSettings):
     backup_keep: int = Field(5, validation_alias=AliasChoices("BACKUP_KEEP", "RPA_BACKUP_KEEP"))
     daily_backup_keep: int = Field(7, validation_alias=AliasChoices("DAILY_BACKUP_KEEP", "RPA_DAILY_BACKUP_KEEP"))
     rap_disable_monthly_backup: bool = False
+    # Optional off-site copy: run after every successful dump as
+    # `<command> <dump path>` (e.g. a script wrapping rclone/ossutil). Unset =
+    # local backups only. Failures are alerted, never fatal to the backup.
+    backup_offsite_command: str | None = None
+    backup_offsite_timeout_seconds: int = 900
     # Hour of the day (0-23) in app_timezone at which the daily backup check runs.
     # The actual dump only fires when >= 30 days have elapsed since the last one.
     backup_hour: int = 2
@@ -132,6 +143,8 @@ class Settings(BaseSettings):
     wecom_http_timeout: float = 10.0
     wecom_default_role: str = "viewer"
     wecom_auto_create_users: bool = True
+    # New WeCom accounts wait for an administrator unless this is enabled.
+    wecom_new_users_active: bool = False
     wecom_console_redirect_uri: str | None = None
     # Compatibility aliases for existing deployments, not a UI dependency.
     wecom_streamlit_redirect_uri: str | None = None
@@ -210,6 +223,10 @@ class Settings(BaseSettings):
     # 1 = no retry.
     collector_collect_retries: int = 2
     collector_retry_delay_seconds: int = 60
+    # Wall-clock budget for one `collect` run. rpa-collector.service kills the
+    # run at TimeoutStartSec=900; no new target or retry starts after this
+    # many seconds, so the summary alert and run outcomes are always recorded.
+    collector_time_budget_seconds: int = 780
     # Max number of failure screenshot+HTML pairs kept under collector_dir/debug.
     collector_debug_keep: int = 20
 

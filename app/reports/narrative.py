@@ -57,14 +57,20 @@ def _summarize_for_prompt(context: dict[str, Any]) -> str:
         lines.append(f"\n【视频号】{account.name}")
         s = section["this_week_summary"]
         ls = section["last_week_summary"]
-        lines.append(f"本周新发布 {s['count']} 条视频，总播放量 {s['total_plays']}（上周 {ls['total_plays']}），新增粉丝 {s['total_new_fans']}")
+        lines.append(
+            f"本周新发布 {s['count']} 条视频（上周 {ls['count']} 条），截至目前累计播放 {s['total_plays']}，新增粉丝 {s['total_new_fans']}。"
+            "注意：上周内容的累计播放多积累了约 7 天，不可与本周累计数直接比较涨跌。"
+        )
 
     zhihu = context.get("zhihu_section")
     if zhihu:
         lines.append("\n【知乎】")
         s = zhihu["this_week_summary"]
         ls = zhihu["last_week_summary"]
-        lines.append(f"本周新发布 {s['count']} 篇，总阅读量 {s['total_reads']}（上周 {ls['total_reads']}）")
+        lines.append(
+            f"本周新发布 {s['count']} 篇（上周 {ls['count']} 篇），截至目前累计阅读 {s['total_reads']}。"
+            "注意：上周内容的累计阅读多积累了约 7 天，不可与本周累计数直接比较涨跌。"
+        )
 
     for section in context.get("pgy_sections", []):
         if section["this_week_summary"]["count"] > 0:
@@ -76,9 +82,13 @@ def _summarize_for_prompt(context: dict[str, Any]) -> str:
     if ecom:
         tw = ecom["this_week_total"]
         lw = ecom["last_week_total"]
-        if tw["order_count"] > 0 or lw["order_count"] > 0:
+        if ecom.get("complete") is False:
+            lines.append("\n【商城】")
+            lines.append(f"{ecom['incomplete_note']}：本周订单尚未上传完整，请勿据此判断 GMV 涨跌。")
+        elif tw["order_count"] > 0 or lw["order_count"] > 0:
             lines.append("\n【商城】")
             lines.append(f"本周总 GMV ¥{tw['gmv']:,.0f}（上周 ¥{lw['gmv']:,.0f}），订单 {tw['order_count']} 笔（上周 {lw['order_count']}）")
+            lines.append("口径：GMV 与订单数不含已关闭、已取消、未付款和京东已删除订单，有赞订单已扣除退款；上周数字按同一口径计算。")
 
     return "\n".join(lines)
 

@@ -421,3 +421,121 @@ class TestXhsSection:
         assert section["this_week_posts"] == []
         assert section["this_week_summary"]["count"] == 0
         assert "完播率" in section["not_collected"]
+
+
+# ── 商城: order-data completeness + generation time ─────────────────────────
+
+async def _seed_orders(session_factory, rows: list[tuple[str, date, float, str]]) -> None:
+    from app.db.models import Customer, Order
+
+    async with session_factory() as session:
+        session.add(Customer(customer_key="ck-weekly", platform="youzan", first_order_date=date(2026, 8, 1)))
+        await session.flush()
+        for order_id, day, price, platform in rows:
+            session.add(Order(order_id=order_id, order_date=day, customer_key="ck-weekly",
+                              platform=platform, price=price, sku="示例账号"))
+        await session.commit()
+
+
+class TestEcommerceCompleteness:
+    def _build(self, async_session_factory):
+        from app.reports.weekly_media import build_ecommerce_section
+
+        async def _run():
+            async with async_session_factory() as session:
+                return await build_ecommerce_section(session, BOUNDS)
+
+        return asyncio.run(_run())
+
+    def test_week_not_fully_uploaded_is_marked_incomplete(self, async_session_factory):
+        asyncio.run(_seed_orders(async_session_factory, [
+            ("lw1", date(2026, 9, 2), 500.0, "youzan"),
+            ("tw1", date(2026, 9, 8), 100.0, "youzan"),
+            ("tw2", date(2026, 9, 10), 100.0, "tmall"),
+        ]))
+        section = self._build(async_session_factory)
+        assert section["complete"] is False
+        assert section["orders_through"] == date(2026, 9, 10)
+        assert section["incomplete_note"] == "订单数据截至 2026-09-10，未覆盖完整周"
+
+    def test_fully_uploaded_week_is_complete(self, async_session_factory):
+        asyncio.run(_seed_orders(async_session_factory, [
+            ("tw1", date(2026, 9, 8), 100.0, "youzan"),
+            ("nx1", date(2026, 9, 14), 100.0, "youzan"),
+        ]))
+        section = self._build(async_session_factory)
+        assert section["complete"] is True and section["incomplete_note"] is None
+
+    def test_incomplete_week_renders_note_instead_of_decline(self, async_session_factory):
+        from app.reports.service import _summary_lines
+
+        asyncio.run(_seed_orders(async_session_factory, [
+            ("lw1", date(2026, 9, 2), 500.0, "youzan"),
+            ("tw1", date(2026, 9, 8), 100.0, "youzan"),
+        ]))
+
+        async def _run():
+            async with async_session_factory() as session:
+                return await build_report_context(session, reference_date=date(2026, 9, 15))
+
+        context = asyncio.run(_run())
+        html = render_html(context, narrative=None)
+        assert "订单数据截至 2026-09-08，未覆盖完整周" in html
+        assert "▼ ¥" not in html
+        lines = _summary_lines(context)
+        ecom_line = next(line for line in lines if line.startswith("【商城】"))
+        assert "未覆盖完整周" in ecom_line and "▼" not in ecom_line and "¥" not in ecom_line
+
+    def test_generated_at_is_app_timezone_to_the_minute(self, async_session_factory):
+        import re
+
+        async def _run():
+            async with async_session_factory() as session:
+                return await build_report_context(session, reference_date=date(2026, 9, 15))
+
+        context = asyncio.run(_run())
+        assert context["generated_at"].utcoffset() == timedelta(hours=8)
+        html = render_html(context, narrative=None)
+        match = re.search(r"生成时间：([^<]+)<", html)
+        assert match and re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", match.group(1).strip())
+
+
+class TestCumulativeCohortComparison:
+    """知乎/视频号 store only cumulative totals, so last week's posts had ~7
+    more days to accumulate: their totals must not be shown as a ▲/▼ change."""
+
+    def test_zhihu_and_channels_totals_are_not_presented_as_wow_change(self, async_session_factory):
+        from app.db.models import WxChannelsAccount, WxChannelsPost, ZhihuPost
+        from app.reports.service import _summary_lines
+
+        async def _seed():
+            async with async_session_factory() as session:
+                acc = WxChannelsAccount(name="视频号A")
+                session.add(acc)
+                await session.flush()
+                session.add_all([
+                    WxChannelsPost(account_id=acc.id, video_id="new", title="本周视频",
+                                   publish_date=date(2026, 9, 10), plays=100),
+                    WxChannelsPost(account_id=acc.id, video_id="old", title="上周视频",
+                                   publish_date=date(2026, 9, 3), plays=900),
+                    ZhihuPost(content_type="article", title="本周文章", publish_date=date(2026, 9, 10), reads=50),
+                    ZhihuPost(content_type="article", title="上周文章", publish_date=date(2026, 9, 3), reads=700),
+                ])
+                await session.commit()
+
+        asyncio.run(_seed())
+
+        async def _run():
+            async with async_session_factory() as session:
+                return await build_report_context(session, reference_date=date(2026, 9, 15))
+
+        context = asyncio.run(_run())
+        assert "不可直接比较" in context["zhihu_section"]["wow_caveat"]
+        html = render_html(context, narrative=None)
+        assert "上周新发内容累计 900（非同龄对比）" in html
+        assert "上周新发内容累计 700（非同龄对比）" in html
+        assert "▼ 800" not in html and "▼ 650" not in html
+        lines = _summary_lines(context)
+        for line in lines:
+            if line.startswith("【知乎】") or "(视频号)" in line:
+                assert "▼" not in line and "▲" not in line

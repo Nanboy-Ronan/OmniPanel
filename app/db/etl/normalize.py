@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 import pandas as pd
 
 from ..raw_headers import YOUZAN_RAW_HEADERS, JD_RAW_HEADERS, TMALL_RAW_HEADERS
+from ..order_status import parse_refund
 from .detect import detect_platform
 
 # ── Unified column name constants ──────────────────────────────────────────────
@@ -29,6 +30,8 @@ COL_ADDRESS     = "详细收货地址/提货地址"
 COL_NICK        = "买家昵称"
 COL_COUPON      = "优惠券码名称"
 COL_DISTRIB     = "分销员"
+COL_STATUS      = "订单状态"
+COL_REFUND      = "订单已退款金额"  # 有赞 only
 
 # ── Platform → raw-headers map (populated after models are imported) ──────────
 # Populated lazily to avoid a circular import at module load time.
@@ -307,6 +310,8 @@ def _parse_normalized_rows(df: pd.DataFrame) -> list[dict]:
             buyer_nick=_str_or_none(row.get(COL_NICK)),
             coupon_name=_str_or_none(row.get(COL_COUPON)),
             distributor=_str_or_none(row.get(COL_DISTRIB)),
+            raw_status=_str_or_none(row.get(COL_STATUS)),
+            refunded_amount=parse_refund(row.get(COL_REFUND)),
         ))
     return parsed
 

@@ -3,7 +3,7 @@ import csv
 import io
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,9 +50,10 @@ _EXPORT_COLUMNS = (
     "id", "order_id", "order_date", "customer_key", "platform", "sku",
     "quantity", "price", "receiver", "receiver_phone", "province", "area",
     "full_address", "buyer_nick", "coupon_name", "distributor",
+    "raw_status", "refunded_amount",
 )
 _FILTER_COLUMNS = {name: getattr(Order, name) for name in _EXPORT_COLUMNS if name != "id"}
-_NUMERIC_COLUMNS = {"quantity", "price"}
+_NUMERIC_COLUMNS = {"quantity", "price", "refunded_amount"}
 _DATE_COLUMNS = {"order_date"}
 
 
@@ -206,6 +207,7 @@ async def export_orders(
 
 @router.get("/{order_pk}/raw", summary="Return raw platform row(s) for one order")
 async def get_order_raw_rows(
+    request: Request,
     order_pk: int,
     _u=Depends(current_active_user),
     session: AsyncSession = Depends(get_session),
@@ -215,6 +217,11 @@ async def get_order_raw_rows(
         order = order_result.scalar_one_or_none()
         if order is None:
             raise HTTPException(status_code=404, detail="Order not found")
+        await log_operation(
+            str(_u.id), "view_order_raw",
+            {"order_pk": order_pk, "order_id": order.order_id, "platform": order.platform},
+            request=request,
+        )
 
         model = RAW_MODEL_BY_PLATFORM.get(order.platform)
         if model is None:

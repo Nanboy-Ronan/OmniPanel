@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +23,7 @@ from ...db import get_session
 from ...db.etl.channels import parse_channels_api_json, parse_channels_xlsx, upsert_channels_posts
 from ...db.models import WxChannelsAccount, WxChannelsPost
 from ...utils.logger import log_operation
+from ...utils.spreadsheet import read_excel_safely
 from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/channels", tags=["channels"])
@@ -38,6 +39,7 @@ class ChannelsAccountCreate(BaseModel):
 
 @router.post("/accounts", status_code=status.HTTP_201_CREATED)
 async def create_channels_account(
+    request: Request,
     body: ChannelsAccountCreate,
     _u=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
@@ -51,6 +53,7 @@ async def create_channels_account(
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
+    await log_operation(str(_u.id), "channels_account_create", {"account_id": acc.id, "name": acc.name}, request=request)
     return {"id": acc.id, "name": acc.name, "is_active": acc.is_active}
 
 
@@ -72,6 +75,7 @@ class ChannelsAccountUpdate(BaseModel):
 
 @router.patch("/accounts/{account_id}")
 async def update_channels_account(
+    request: Request,
     account_id: int,
     body: ChannelsAccountUpdate,
     _u=Depends(current_admin_user),
@@ -91,11 +95,13 @@ async def update_channels_account(
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
+    await log_operation(str(_u.id), "channels_account_update", {"account_id": acc.id, "changed": sorted(body.model_dump(exclude_none=True))}, request=request)
     return {"id": acc.id, "name": acc.name, "is_active": acc.is_active}
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_channels_account(
+    request: Request,
     account_id: int,
     _u=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
@@ -103,8 +109,10 @@ async def delete_channels_account(
     acc = await session.get(WxChannelsAccount, account_id)
     if acc is None:
         raise HTTPException(status_code=404, detail="Account not found")
+    name = acc.name
     await session.delete(acc)
     await session.commit()
+    await log_operation(str(_u.id), "channels_account_delete", {"account_id": account_id, "name": name}, request=request)
 
 
 # ── Upload ────────────────────────────────────────────────────────────────────
@@ -149,7 +157,7 @@ async def upload_channels(
                 if ext == ".csv":
                     df_raw = pd.read_csv(path, header=None, dtype=str)
                 else:
-                    df_raw = pd.read_excel(path, header=None, dtype=str)
+                    df_raw = read_excel_safely(path, header=None, dtype=str)
                 rows = parse_channels_xlsx(df_raw, account_id)
             if not rows:
                 raise ValueError("文件中未解析到有效行，请确认格式正确（列名可能与预期不符，见 app/db/etl/channels.py）。")

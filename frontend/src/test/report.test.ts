@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { prepareReportHtml } from '../lib/report';
+import { prepareReport, prepareReportHtml } from '../lib/report';
 import renderedReport from './report-fixture.html?raw';
 describe('historical report migration', () => {
   it('renders collected metrics when archived reports contain empty array slots', () => {
@@ -78,5 +78,18 @@ describe('historical report migration', () => {
     expect(new DOMParser().parseFromString(html, 'text/html').querySelectorAll('svg')).toHaveLength(
       1,
     );
+  });
+  it('lists platform sections for the console nav and hides the report chrome when embedded', () => {
+    const { html, sections, hasNarrative } = prepareReport(renderedReport, { embedded: true });
+    expect(sections).toEqual([
+      { id: 'panel-ecommerce', label: '商城 (有赞/京东/天猫)', count: null },
+    ]);
+    expect(hasNarrative).toBe(true);
+    expect(html).toContain('.nav-bar{display:none!important}');
+    expect(prepareReportHtml(renderedReport)).not.toContain('.nav-bar{display:none');
+    const counted = prepareReport(
+      `<a class="nav-tab" onclick="x"></a><button class="nav-tab" onclick="switchPanel('xhs', this)">📕 小红书 <span class="pill-count">2</span></button><section id="panel-xhs"></section><button class="nav-tab" onclick="switchPanel('pgy', this)">缺失分区</button>`,
+    );
+    expect(counted.sections).toEqual([{ id: 'panel-xhs', label: '小红书', count: 2 }]);
   });
 });

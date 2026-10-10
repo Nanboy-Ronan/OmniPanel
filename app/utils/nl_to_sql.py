@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 
 from ..config import settings
+from ..db.order_status import counted_sql
 
 
 class NLToSQLNotConfigured(RuntimeError):
@@ -128,6 +129,10 @@ SCHEMA_DOC = """\
   area              text  城市 / 地区
   coupon_name       text  使用的优惠券
   distributor       text  分销员 / 导购
+  raw_status        text  平台原始订单状态，例如 '交易完成'、'交易关闭'、'(删除)等待出库'
+  status_group      text  'completed'(已成交) | 'closed'(已关闭/取消) | 'unpaid'(未付款)
+                          | 'deleted'(京东已删除，不计入) | 'unknown'(状态未知)
+  refunded_amount   numeric 已退款金额（仅有赞），未退款为 NULL
 
 表 upload_batches（每次上传一行）:
   id, filename, platform, uploaded_at(timestamp), row_count,
@@ -140,11 +145,13 @@ SCHEMA_DOC = """\
 只能查询 reporting 模式提供的脱敏业务视图。用户、密钥、客户标识和审计日志不可查询。
 
 口径要点:
-- 营业额 = SUM(price)；订单均价 = AVG(price)。
+- 营业额、订单数、客单价、客户数只统计有效订单：WHERE {counted}。
+- 营业额 = SUM(price - COALESCE(refunded_amount, 0))；订单均价 = AVG(price - COALESCE(refunded_amount, 0))。
+- 只有用户明确问"含取消/关闭订单"或"退款前"时，才去掉状态过滤或不扣退款。
 - 平台过滤用 platform IN ('youzan','jd','tmall')，不要凭空构造其它平台值。
-- 涉及金额时用 ROUND(SUM(price)::numeric, 2) 保留两位。
+- 涉及金额时用 ROUND(SUM(price - COALESCE(refunded_amount, 0))::numeric, 2) 保留两位。
 - "最近 N 天" 用 order_date >= CURRENT_DATE - INTERVAL 'N days'。
-"""
+""".replace("{counted}", counted_sql())
 
 SYSTEM_PROMPT = f"""你是一个把中文业务问题转换为 PostgreSQL 查询的助手。
 

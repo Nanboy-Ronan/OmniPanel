@@ -1,8 +1,19 @@
-import { useState } from 'react';
-import { useAction, rowsSchema, useResource, text, type Row } from '../lib/resources';
+import { useEffect, useRef, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { z } from 'zod';
+import { upload, type UploadProgress } from '../lib/api';
+import {
+  notifyFailure,
+  useAction,
+  rowsSchema,
+  useResource,
+  text,
+  type Row,
+} from '../lib/resources';
+import { useToast } from './Toast';
 import { ConfirmAction, QueryView } from './workspace';
 import { Detail } from './workspace';
-import { ErrorState, Panel } from './ui';
+import { ErrorState, isAbort, Panel, UploadMeter } from './ui';
 export function AccountManager({
   path,
   admin,
@@ -13,7 +24,7 @@ export function AccountManager({
   xhs?: boolean;
 }) {
   const query = useResource(path, rowsSchema);
-  const action = useAction();
+  const action = useAction({ success: '已添加账号', error: '添加账号失败' });
   if (!admin) return null;
   if (path === '/media/accounts')
     return <p className="footnote">公众号账号从服务端配置同步，凭据由管理员在服务器维护。</p>;
@@ -63,7 +74,7 @@ export function AccountManager({
   );
 }
 function AccountEditor({ row, path, xhs }: { row: Row; path: string; xhs: boolean }) {
-  const action = useAction();
+  const action = useAction({ success: '账号已更新', error: '账号更新失败' });
   const [name, setName] = useState(text(row.name));
   const editable = path !== '/media/accounts';
   return (
@@ -110,7 +121,13 @@ function AccountEditor({ row, path, xhs }: { row: Row; path: string; xhs: boolea
             title="删除账号"
             danger
             description={`删除「${text(row.name)}」及关联内容数据，此操作无法在界面恢复。`}
-            onConfirm={() => action.mutate({ path: `${path}/${row.id}`, method: 'DELETE' })}
+            onConfirm={() =>
+              action.mutate({
+                path: `${path}/${row.id}`,
+                method: 'DELETE',
+                success: `已删除账号「${text(row.name)}」`,
+              })
+            }
             busy={action.isPending}
           />
         </>
@@ -136,7 +153,33 @@ export function FileImport({
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState('');
-  const action = useAction();
+  const [progress, setProgress] = useState<UploadProgress | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  const client = useQueryClient();
+  const toast = useToast();
+  const action = useMutation({
+    mutationFn: (body: FormData) => {
+      controller.current = new AbortController();
+      setProgress({ loaded: 0, total: file?.size ?? null, percent: 0 });
+      return upload(path, z.unknown(), {
+        body,
+        timeoutMs: 120000,
+        signal: controller.current.signal,
+        onProgress: setProgress,
+      });
+    },
+    onSuccess: async () => {
+      toast.success(`${file?.name ?? '文件'} 已导入`);
+      await client.invalidateQueries();
+    },
+    onError: (error) => notifyFailure(toast, error, '文件导入失败'),
+    onSettled: () => {
+      controller.current = null;
+    },
+    retry: false,
+  });
+  const cancelled = action.isError && isAbort(action.error);
   return (
     <details className="file-import">
       <summary>{title}</summary>
@@ -153,7 +196,7 @@ export function FileImport({
           const body = new FormData();
           body.set('file', file);
           for (const [key, value] of Object.entries(fields)) if (value) body.set(key, value);
-          action.mutate({ path, body });
+          action.mutate(body);
         }}
       >
         <input
@@ -169,7 +212,19 @@ export function FileImport({
         {disabled && <small>请先选择具体账号。</small>}
         {error && <p role="alert">{error}</p>}
       </form>
-      {action.isError && (
+      {action.isPending && file && progress && (
+        <UploadMeter
+          name={file.name}
+          progress={progress}
+          onCancel={() => controller.current?.abort()}
+        />
+      )}
+      {cancelled && (
+        <p role="status" className="footnote">
+          已取消上传，文件未提交。
+        </p>
+      )}
+      {action.isError && !cancelled && (
         <>
           <ErrorState error={action.error} />
           <p className="footnote">提交结果未知时，请先刷新核对数据，再决定是否重试。</p>

@@ -133,8 +133,124 @@ payloads['/api/upload/batches'].push({
   status: 'failed',
   error_message: '示例：文件中缺少订单日期列。',
 });
-payloads['/api/reports/weekly/' + payloads['/api/reports/weekly'][0].id].html_content =
-  await readFile(new URL('../src/test/report-fixture.html', import.meta.url), 'utf8');
+{
+  const html = await readFile(new URL('../src/test/report-fixture.html', import.meta.url), 'utf8');
+  const weeks = [
+    ['2026-09-28', 'success', true, null],
+    ['2026-09-21', 'success', true, null],
+    ['2026-09-14', 'partial', false, '示例：小红书数据概览未采集。'],
+    ['2026-09-07', 'error', false, '示例：公众号接口超时，报告未生成。'],
+    ['2026-08-31', 'success', true, null],
+  ];
+  payloads['/api/reports/weekly'] = weeks.map(([start, status, sent], i) => {
+    const end = new Date(Date.parse(start) + 6 * 86400000).toISOString().slice(0, 10);
+    return {
+      id: i + 1,
+      week_start: start,
+      week_end: end,
+      generated_at: `${new Date(Date.parse(start) + 8 * 86400000).toISOString().slice(0, 10)}T09:00:00`,
+      status,
+      wecom_sent: sent,
+    };
+  });
+  payloads['/api/reports/weekly'].forEach((row, i) => {
+    payloads['/api/reports/weekly/' + row.id] = {
+      ...row,
+      narrative: null,
+      html_content: row.status === 'error' ? null : html,
+      error_message: weeks[i][3],
+    };
+  });
+}
+{
+  const ua =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36 wxwork/4.1';
+  const at = (h, m) => `2026-10-10 ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+  payloads['/api/admin/logs'] = [
+    {
+      id: 9,
+      email: null,
+      action: 'wecom_login_failed',
+      timestamp: at(9, 41),
+      ip: '203.0.113.24',
+      user_agent: ua,
+      detail: { reason: 'invalid_state' },
+    },
+    {
+      id: 8,
+      email: 'newstaff@example.test',
+      action: 'wecom_login_failed',
+      timestamp: at(9, 38),
+      ip: '198.51.100.7',
+      user_agent: ua,
+      detail: { reason: 'pending_approval', wecom_userid: 'newstaff' },
+    },
+    {
+      id: 7,
+      email: 'preview@example.test',
+      action: 'export_client',
+      timestamp: at(9, 30),
+      ip: '198.51.100.2',
+      user_agent: ua,
+      detail: { source: '客户列表', rows: 92, columns: ['mobile', 'receiver'] },
+    },
+    {
+      id: 6,
+      email: 'preview@example.test',
+      action: 'view_customer',
+      timestamp: at(9, 29),
+      ip: '198.51.100.2',
+      user_agent: ua,
+      detail: { customer_id: '13800000001' },
+    },
+    {
+      id: 5,
+      email: 'preview@example.test',
+      action: 'xhs_account_update',
+      timestamp: at(9, 20),
+      ip: '198.51.100.2',
+      user_agent: ua,
+      detail: { account_id: 2, changed: ['pgy_enabled'] },
+    },
+    {
+      id: 4,
+      email: 'preview@example.test',
+      action: 'upload',
+      timestamp: at(9, 12),
+      ip: '198.51.100.2',
+      user_agent: ua,
+      detail: { filename: '示例订单.csv', batch_id: 17 },
+    },
+    {
+      id: 3,
+      email: 'preview@example.test',
+      action: 'sql_query',
+      timestamp: at(9, 5),
+      ip: '198.51.100.2',
+      user_agent: ua,
+      detail: { sql: 'SELECT platform, count(*) FROM orders GROUP BY platform', row_count: 3 },
+    },
+    {
+      id: 2,
+      email: 'preview@example.test',
+      action: 'wecom_login',
+      timestamp: at(9, 0),
+      ip: '198.51.100.2',
+      user_agent: ua,
+      detail: { wecom_userid: 'preview' },
+    },
+    {
+      id: 1,
+      email: 'preview@example.test',
+      action: 'logout',
+      timestamp: at(8, 55),
+      ip: '198.51.100.2',
+      user_agent:
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+      detail: null,
+    },
+  ];
+}
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',
@@ -154,6 +270,8 @@ http
       res.setHeader('Content-Type', 'application/json');
       if (url.pathname === '/api/orders_all/' || url.pathname === '/api/analysis/customers')
         res.setHeader('X-Total-Count', '1');
+      if (url.pathname === '/api/admin/logs')
+        res.setHeader('X-Total-Count', String(payloads[url.pathname].length));
       let payload = payloads[url.pathname];
       if (url.pathname === '/api/data/source-status') {
         const source = url.searchParams.get('source');

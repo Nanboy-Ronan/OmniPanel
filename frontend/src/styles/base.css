@@ -1,0 +1,515 @@
+/* Elements and shared primitives: type, controls, disclosure, badges and states. */
+:root {
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+}
+h1,
+h2,
+p {
+  margin: 0;
+}
+h1 {
+  flex: 1;
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -0.5px;
+  line-height: 1.35;
+  color: var(--text);
+}
+h2 {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text);
+}
+small {
+  display: block;
+  color: var(--text-3);
+  font-size: 12px;
+  margin-top: 5px;
+}
+svg {
+  flex-shrink: 0;
+}
+strong {
+  font-weight: 600;
+}
+a {
+  color: var(--primary);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.skip-link {
+  position: fixed;
+  top: -60px;
+  left: 20px;
+  background: var(--surface);
+  padding: 12px;
+  z-index: 100;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+.skip-link:focus {
+  top: 10px;
+}
+
+/* Buttons: default (outlined), .primary, .ghost, .danger, .text-button */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  touch-action: manipulation;
+}
+button,
+.button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text-2);
+  padding: 7px 13px;
+  cursor: pointer;
+  text-decoration: none;
+  font-weight: 500;
+  box-shadow: var(--shadow-xs);
+  transition:
+    background var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
+}
+button:hover,
+.button:hover {
+  background: var(--surface-2);
+  border-color: #b7c3d1;
+  color: var(--text);
+}
+button:active:not(:disabled) {
+  background: var(--surface-3);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.primary,
+.button.primary {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
+  box-shadow: 0 1px 2px rgb(37 99 235 / 25%);
+}
+.primary:hover,
+.button.primary:hover {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  color: white;
+}
+.ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--primary-text);
+}
+.ghost:hover {
+  background: var(--primary-soft);
+  border-color: transparent;
+  color: var(--primary-text);
+}
+.danger {
+  color: var(--danger);
+  border-color: var(--danger-border);
+}
+.danger:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+.text-button {
+  border-color: transparent;
+  color: var(--primary);
+  font-size: 12px;
+  background: transparent;
+  box-shadow: none;
+}
+.text-button:hover {
+  background: var(--primary-soft);
+  border-color: transparent;
+}
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Form controls */
+input:not([type='checkbox']):not([type='file']),
+select,
+textarea {
+  min-height: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 13px;
+  max-width: 100%;
+  transition:
+    border-color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
+}
+input:not([type='checkbox']):not([type='file']):hover,
+select:hover,
+textarea:hover {
+  border-color: #b7c3d1;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--ring);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-4);
+}
+select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235f7187' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px;
+  cursor: pointer;
+}
+input[type='date'] {
+  font-variant-numeric: tabular-nums;
+}
+textarea {
+  resize: vertical;
+  width: 100%;
+}
+input[type='checkbox'] {
+  accent-color: var(--primary);
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+}
+input[type='file'] {
+  max-width: 100%;
+  font-size: 13px;
+}
+input[type='file']::file-selector-button {
+  font: inherit;
+  margin-right: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+label {
+  font-size: 12px;
+  color: var(--text-3);
+}
+label > input:not([type='checkbox']),
+label > select,
+label > textarea {
+  display: block;
+  margin-top: 6px;
+}
+.field-error {
+  width: 100%;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+/* Disclosure: one rotating chevron for every <details>, inline so custom summaries keep their flow. */
+details {
+  font-size: 11px;
+  margin-top: 8px;
+}
+summary {
+  cursor: pointer;
+  padding: 14px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  list-style: none;
+  user-select: none;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 10px 2px 1px;
+  border-right: 1.6px solid currentColor;
+  border-bottom: 1.6px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--fast) var(--ease);
+  opacity: 0.7;
+}
+details[open] > summary::before {
+  transform: rotate(45deg);
+  margin-bottom: 4px;
+}
+summary:hover {
+  color: var(--text);
+}
+
+/* Badges: status pills. Legacy status classes map onto tones. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.7;
+  white-space: nowrap;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+.badge.tone-success,
+.badge.completed {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.badge.tone-info,
+.badge.processing,
+.badge.running {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+.badge.tone-warning,
+.badge.pending,
+.badge.partial {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.badge.tone-danger,
+.badge.failed,
+.badge.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.badge.tone-neutral,
+.badge.cancelled {
+  background: var(--surface-3);
+  color: var(--text-3);
+}
+
+/* Change indicators */
+.delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.positive {
+  color: var(--success);
+}
+.negative {
+  color: var(--danger);
+}
+.neutral {
+  color: var(--text-3);
+}
+.number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Loading, empty, error and notice states */
+.state {
+  padding: 50px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  background: var(--surface);
+  border-radius: var(--radius);
+  min-height: 180px;
+  color: var(--text-3);
+}
+.state strong {
+  font-size: 15px;
+  color: var(--text-2);
+}
+.state p {
+  font-size: 13px;
+  line-height: 1.8;
+}
+.state a,
+.state button {
+  margin: 10px;
+}
+.state .spin {
+  color: var(--primary);
+}
+.state-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-4);
+}
+.error-state {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
+  color: var(--danger);
+  padding: 18px 20px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.error-state p {
+  font-size: 12px;
+  margin-top: 7px;
+}
+.error-state button {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.error-state.compact {
+  font-size: 12px;
+  padding: 14px;
+  margin: 12px;
+}
+.stale-notice {
+  background: var(--warning-soft);
+  border: 1px solid var(--warning-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  color: var(--warning);
+  padding: 12px 16px;
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.success-notice {
+  padding: 12px 14px;
+  color: var(--success);
+  background: var(--success-soft);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius-sm);
+}
+
+/* Skeleton placeholders while a page's first payload loads */
+.skeleton {
+  display: grid;
+  gap: 16px;
+}
+.skeleton-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.skeleton-block {
+  height: 104px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(
+    90deg,
+    var(--surface-3) 0%,
+    var(--surface-2) 50%,
+    var(--surface-3) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+.skeleton-block.tall {
+  height: 280px;
+}
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 780px) {
+  .skeleton-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

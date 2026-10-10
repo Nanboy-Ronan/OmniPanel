@@ -124,7 +124,7 @@ class TestAdminUserManagementEdges:
     def test_create_user_duplicate_email_rejected(self, client, tokens):
         r = client.post(
             "/admin/users",
-            json={"email": "viewer@test.com", "password": "pw", "role": "viewer"},
+            json={"email": "viewer@test.com", "password": "pw-test-passphrase", "role": "viewer"},
             headers=_auth(tokens["admin"]),
         )
         assert r.status_code == 400
@@ -146,7 +146,7 @@ class TestRegisterOpenEndpoint:
         # First registration auto-promotes to admin and closes registration.
         r_reg = client.post(
             "/auth/register",
-            json={"email": "only@test.com", "password": "pw"},
+            json={"email": "only@test.com", "password": "pw-test-passphrase"},
         )
         assert r_reg.status_code == 201
 

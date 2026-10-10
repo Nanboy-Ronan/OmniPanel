@@ -20,6 +20,7 @@ from ...db.models import Order, UploadBatch, UploadRejectedRow
 from ...auth import current_active_user
 from ...utils.cache import analysis_cache
 from ...utils.logger import log_exc, log_operation
+from ...utils.spreadsheet import SpreadsheetTooLarge, check_xlsx_expansion, read_excel_safely
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -83,7 +84,7 @@ def _peek_platform(tmp_path: str, filename: str) -> str | None:
     """
     try:
         if filename.lower().endswith((".xls", ".xlsx")):
-            header_df = pd.read_excel(tmp_path, dtype=str, nrows=0)
+            header_df = read_excel_safely(tmp_path, dtype=str, nrows=0)
         else:
             header_df = pd.read_csv(tmp_path, dtype=str, nrows=0)
         return detect_platform(header_df)
@@ -106,7 +107,7 @@ async def _run_ingestion(
     try:
         def _read(path: str) -> pd.DataFrame:
             if path.lower().endswith((".xls", ".xlsx")):
-                return pd.read_excel(path, dtype=str)
+                return read_excel_safely(path, dtype=str)
             return pd.read_csv(path, dtype=str)
 
         df = await asyncio.to_thread(_read, tmp_path)
@@ -224,6 +225,12 @@ async def upload_file(
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise HTTPException(status_code=500, detail=f"Could not save upload: {e}")
+
+    try:
+        await asyncio.to_thread(check_xlsx_expansion, tmp_path)
+    except SpreadsheetTooLarge as exc:
+        os.unlink(tmp_path)
+        raise HTTPException(status_code=400, detail=str(exc))
 
     if expected_platform:
         detected = _peek_platform(tmp_path, file.filename)

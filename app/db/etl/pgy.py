@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from ..models import PgyNote
+from ._upsert import coalesce_update_set
 
 _DEDUP_CONSTRAINT = "uq_pgy_notes_account_note_id"
 
@@ -62,12 +63,53 @@ def _str_or_none(v) -> Optional[str]:
     s = str(v).strip()
     return s if s else None
 
+# The parser reads columns by position (the export has merged multi-row
+# headers), so a column inserted or renamed by 蒲公英 would silently shift
+# every metric into the wrong field. Verify the header row (index 2) against
+# data/pgy_example.xlsx at every position whose value lands in a DB column.
+_EXPECTED_HEADERS = {
+    1: "博主昵称", 2: "博主主页链接", 3: "博主粉丝量", 4: "博主健康等级",
+    5: "笔记标题", 6: "笔记链接", 7: "笔记类型", 8: "笔记发布日期", 9: "笔记来源",
+    10: "笔记id", 11: "内容标签", 12: "订单id", 13: "合作名称", 14: "报备品牌",
+    15: "下单账号", 16: "博主报价", 17: "服务费金额", 18: "是否为优效模式",
+    19: "spu名称", 20: "曝光量", 21: "阅读量", 22: "阅读UV", 23: "5s播放率",
+    24: "3s阅读率", 25: "视频总时长", 26: "平均浏览时长", 27: "视频完播率",
+    28: "互动量", 29: "互动率", 30: "点赞量", 31: "收藏量", 32: "评论量",
+    33: "分享量", 34: "关注量", 35: "自然曝光量", 36: "自然阅读量",
+    37: "推广曝光量", 38: "推广阅读量", 39: "加热曝光量", 40: "加热阅读量",
+    53: "阅读单价", 54: "互动单价", 78: "粉丝占比", 79: "女", 80: "男",
+}
+_MIN_COLUMNS = 104  # highest positional index read by parse_pgy_xlsx is 103
+
+
+def validate_pgy_headers(df_raw: pd.DataFrame) -> None:
+    """Raise ValueError listing every position whose header differs from
+    the verified export layout."""
+    if df_raw.shape[1] < _MIN_COLUMNS:
+        raise ValueError(
+            f"蒲公英导出文件只有 {df_raw.shape[1]} 列，至少需要 {_MIN_COLUMNS} 列；"
+            "导出格式可能已变化，请检查文件或更新解析规则后再导入。"
+        )
+    header = df_raw.iloc[2]
+    problems = []
+    for idx, expected in _EXPECTED_HEADERS.items():
+        actual = _str_or_none(header.iloc[idx])
+        if actual != expected:
+            problems.append(f"第{idx + 1}列应为「{expected}」，实际为「{actual or '空'}」")
+    if problems:
+        raise ValueError(
+            "蒲公英导出文件列与预期不一致（缺少或改名的列）：" + "；".join(problems)
+            + "。请检查文件或更新解析规则后再导入。"
+        )
+
+
 def parse_pgy_xlsx(df_raw: pd.DataFrame) -> list[dict]:
     # Skip rows 1-2 (0-1 in 0-indexed) which are merged header groups
     # Row 3 (index 2) is the actual column names
     if len(df_raw) < 3:
         return []
-        
+    validate_pgy_headers(df_raw)
+
     df = df_raw.iloc[3:].copy()
     df = df.reset_index(drop=True)
 
@@ -183,14 +225,12 @@ def upsert_pgy_notes(rows: list[dict], account_id: int, session: Session) -> dic
 
     rows_with_account = [{**r, "account_id": account_id} for r in rows]
 
-    stmt = (
-        pg_insert(PgyNote)
-        .values(rows_with_account)
-        .on_conflict_do_update(
-            constraint=_DEDUP_CONSTRAINT,
-            set_={col: pg_insert(PgyNote).excluded[col] for col in _UPSERT_UPDATE_COLS}
-            | {"updated_at": text("NOW()")},
-        )
+    insert = pg_insert(PgyNote).values(rows_with_account)
+    stmt = insert.on_conflict_do_update(
+        constraint=_DEDUP_CONSTRAINT,
+        # NULL ('-' / blank in the export) keeps the stored value.
+        set_=coalesce_update_set(insert, PgyNote, _UPSERT_UPDATE_COLS)
+        | {"updated_at": text("NOW()")},
     )
     session.execute(stmt)
     session.commit()

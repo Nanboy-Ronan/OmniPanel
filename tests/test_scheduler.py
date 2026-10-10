@@ -68,6 +68,16 @@ class _FakeSchedulerSettings:
     watchdog_backup_max_age_days: int = 35
     watchdog_daily_backup_max_age_days: int = 2
     backup_dir: str = "unused"
+    # Collector sources (only xhs by default so tests opt in to the others)
+    collector_xhs_enabled: bool = True
+    collector_xhs_overview_enabled: bool = False
+    collector_zhihu_enabled: bool = False
+    collector_pugongying_enabled: bool = False
+    collector_channels_enabled: bool = False
+    collector_jd_enabled: bool = False
+    # Weekly report
+    report_hour: int = 9
+    app_timezone: str = "Asia/Shanghai"
 
 
 # ── run_watchdog_checks: collector (CollectorRun via the sync engine) ───────
@@ -97,55 +107,143 @@ def _age_collector_run(sync_session_factory, run_id: int, hours_ago: int) -> Non
         session.commit()
 
 
+def _xhs_account(sync_session_factory, name="示例账号", *, pgy_enabled=False, is_active=True) -> int:
+    from app.db.models import XhsAccount
+
+    with sync_session_factory() as session:
+        acc = XhsAccount(name=name, pgy_enabled=pgy_enabled, is_active=is_active)
+        session.add(acc)
+        session.commit()
+        return acc.id
+
+
+def _collector_run(sync_session_factory, platform, *, account_id=None, content_type=None,
+                   status="success", triggered_by="schedule", hours_ago=None) -> int:
+    from app.db.models import CollectorRun
+
+    with sync_session_factory() as session:
+        run = CollectorRun(platform=platform, account_id=account_id, content_type=content_type,
+                           status=status, triggered_by=triggered_by)
+        session.add(run)
+        session.commit()
+        run_id = run.id
+    if hours_ago is not None:
+        _age_collector_run(sync_session_factory, run_id, hours_ago)
+    return run_id
+
+
+def _check(settings, sync_session_factory):
+    return asyncio.run(run_watchdog_checks(settings, sync_session_factory=sync_session_factory))
+
+
 class TestRunWatchdogChecksCollector:
     def test_disabled_skips_check(self, sync_session_factory):
         settings = _FakeSchedulerSettings(collector_enabled=False)
-        problems = asyncio.run(
-            run_watchdog_checks(settings, sync_session_factory=sync_session_factory)
-        )
-        assert problems == []
+        assert _check(settings, sync_session_factory) == []
 
     def test_no_runs_ever_reports_problem(self, sync_session_factory):
+        _xhs_account(sync_session_factory)
         settings = _FakeSchedulerSettings(collector_enabled=True)
-        problems = asyncio.run(
-            run_watchdog_checks(settings, sync_session_factory=sync_session_factory)
-        )
+        problems = _check(settings, sync_session_factory)
         assert len(problems) == 1
-        assert "采集器" in problems[0]
+        assert "采集器" in problems[0] and "示例账号" in problems[0]
         assert "从未" in problems[0]
 
     def test_recent_run_is_healthy(self, sync_session_factory):
-        from app.db.models import CollectorRun
-
-        with sync_session_factory() as session:
-            session.add(CollectorRun(platform="xhs", account_id=1, status="success"))
-            session.commit()
-
+        acc = _xhs_account(sync_session_factory)
+        _collector_run(sync_session_factory, "xhs", account_id=acc)
         settings = _FakeSchedulerSettings(collector_enabled=True)
-        problems = asyncio.run(
-            run_watchdog_checks(settings, sync_session_factory=sync_session_factory)
-        )
-        assert problems == []
+        assert _check(settings, sync_session_factory) == []
 
     def test_stale_run_reports_problem(self, sync_session_factory):
-        from app.db.models import CollectorRun
-
-        with sync_session_factory() as session:
-            run = CollectorRun(platform="xhs", account_id=1, status="success")
-            session.add(run)
-            session.commit()
-            run_id = run.id
+        acc = _xhs_account(sync_session_factory)
         # 72h ago, computed via the DB's own now() so it can't drift from
         # whatever Postgres session timezone this engine happens to use.
-        _age_collector_run(sync_session_factory, run_id, hours_ago=72)
-
+        _collector_run(sync_session_factory, "xhs", account_id=acc, hours_ago=72)
         settings = _FakeSchedulerSettings(collector_enabled=True, watchdog_max_age_hours=30)
-        problems = asyncio.run(
-            run_watchdog_checks(settings, sync_session_factory=sync_session_factory)
-        )
+        problems = _check(settings, sync_session_factory)
         assert len(problems) == 1
         assert "采集器" in problems[0]
         assert "30 小时" in problems[0]
+
+    def test_recent_verify_run_does_not_mask_stale_collect(self, sync_session_factory):
+        """An evening verify-all run must not hide a collect that failed/stopped."""
+        acc = _xhs_account(sync_session_factory)
+        _collector_run(sync_session_factory, "xhs", account_id=acc, hours_ago=72)
+        _collector_run(sync_session_factory, "xhs", account_id=acc, triggered_by="verify")
+        settings = _FakeSchedulerSettings(collector_enabled=True)
+        problems = _check(settings, sync_session_factory)
+        assert len(problems) == 1 and "示例账号" in problems[0]
+
+    def test_recent_failed_collect_does_not_count(self, sync_session_factory):
+        acc = _xhs_account(sync_session_factory)
+        _collector_run(sync_session_factory, "xhs", account_id=acc, hours_ago=72)
+        _collector_run(sync_session_factory, "xhs", account_id=acc, status="download_failed")
+        settings = _FakeSchedulerSettings(collector_enabled=True)
+        assert len(_check(settings, sync_session_factory)) == 1
+
+    def test_one_dead_platform_alerts_while_others_are_fresh(self, sync_session_factory):
+        acc = _xhs_account(sync_session_factory)
+        _collector_run(sync_session_factory, "xhs", account_id=acc)
+        _collector_run(sync_session_factory, "zhihu", content_type="article")
+        settings = _FakeSchedulerSettings(collector_enabled=True, collector_zhihu_enabled=True)
+        problems = _check(settings, sync_session_factory)
+        assert len(problems) == 1
+        assert "知乎·问答" in problems[0] and "从未" in problems[0]
+
+    def test_per_account_staleness(self, sync_session_factory):
+        fresh = _xhs_account(sync_session_factory, "fresh-acc")
+        _xhs_account(sync_session_factory, "dead-acc")
+        _xhs_account(sync_session_factory, "inactive-acc", is_active=False)
+        _collector_run(sync_session_factory, "xhs", account_id=fresh)
+        settings = _FakeSchedulerSettings(collector_enabled=True)
+        problems = _check(settings, sync_session_factory)
+        assert len(problems) == 1 and "dead-acc" in problems[0]
+
+    def test_disabled_sources_are_not_expected(self, sync_session_factory):
+        """视频号 is intentionally disabled, 蒲公英 only runs for pgy_enabled
+        accounts and 数据概览 has its own flag — none of those may alert."""
+        from app.db.models import WxChannelsAccount
+
+        acc = _xhs_account(sync_session_factory, "no-pgy", pgy_enabled=False)
+        with sync_session_factory() as session:
+            session.add(WxChannelsAccount(name="视频号账号"))
+            session.commit()
+        _collector_run(sync_session_factory, "xhs", account_id=acc)
+        settings = _FakeSchedulerSettings(
+            collector_enabled=True, collector_pugongying_enabled=True,
+            collector_channels_enabled=False, collector_xhs_overview_enabled=False,
+        )
+        assert _check(settings, sync_session_factory) == []
+
+    def test_enabled_pgy_and_overview_sources_are_expected(self, sync_session_factory):
+        acc = _xhs_account(sync_session_factory, "示例账号", pgy_enabled=True)
+        _collector_run(sync_session_factory, "xhs", account_id=acc)
+        settings = _FakeSchedulerSettings(
+            collector_enabled=True, collector_pugongying_enabled=True, collector_xhs_overview_enabled=True,
+        )
+        problems = _check(settings, sync_session_factory)
+        assert len(problems) == 2
+        assert any("蒲公英·示例账号" in p for p in problems)
+        assert any("小红书数据概览·示例账号" in p for p in problems)
+
+    def test_stuck_running_rows_are_reaped_and_reported(self, sync_session_factory):
+        from app.db.models import CollectorRun
+
+        acc = _xhs_account(sync_session_factory)
+        _collector_run(sync_session_factory, "xhs", account_id=acc)
+        stuck = _collector_run(sync_session_factory, "xhs", account_id=acc, status="running", hours_ago=1)
+        recent = _collector_run(sync_session_factory, "zhihu", content_type="qa", status="running")
+        settings = _FakeSchedulerSettings(collector_enabled=True)
+        problems = _check(settings, sync_session_factory)
+        assert len(problems) == 1
+        assert f"#{stuck}" in problems[0] and "killed" in problems[0]
+        with sync_session_factory() as session:
+            assert session.get(CollectorRun, stuck).status == "killed"
+            assert session.get(CollectorRun, stuck).finished_at is not None
+            assert session.get(CollectorRun, recent).status == "running"
+        # Already reaped rows are not reported again.
+        assert _check(settings, sync_session_factory) == []
 
 
 # ── run_watchdog_checks: WeChat auto-sync (MediaSyncRun via the async engine) ─
@@ -251,12 +349,15 @@ class TestRunWatchdogChecksBackup:
     def test_missing_stamp_reports_problem(self, tmp_path):
         settings = _FakeSchedulerSettings(rap_disable_monthly_backup=False, backup_dir=str(tmp_path))
         problems = asyncio.run(run_watchdog_checks(settings))
-        assert len(problems) == 2
-        assert all("备份" in problem and "从未" in problem for problem in problems)
+        assert len(problems) == 3
+        assert all("备份" in problem for problem in problems)
+        assert sum("从未" in problem for problem in problems) == 2
+        assert any("没有任何备份文件" in problem for problem in problems)
 
     def test_recent_stamp_is_healthy(self, tmp_path):
         (tmp_path / ".last_monthly_backup").write_text(datetime.now().isoformat())
         (tmp_path / ".last_daily_backup").write_text(datetime.now().isoformat())
+        (tmp_path / "rpa-20260101-000000-daily.sql").write_bytes(b"--\n-- PostgreSQL database dump\n")
         settings = _FakeSchedulerSettings(rap_disable_monthly_backup=False, backup_dir=str(tmp_path))
         problems = asyncio.run(run_watchdog_checks(settings))
         assert problems == []
@@ -267,6 +368,7 @@ class TestRunWatchdogChecksBackup:
         stale = datetime.now() - timedelta(days=40)
         (tmp_path / ".last_monthly_backup").write_text(stale.isoformat())
         (tmp_path / ".last_daily_backup").write_text(datetime.now().isoformat())
+        (tmp_path / "rpa-20260101-000000-daily.sql").write_bytes(b"--\n-- PostgreSQL database dump\n")
         settings = _FakeSchedulerSettings(
             rap_disable_monthly_backup=False, watchdog_backup_max_age_days=35, backup_dir=str(tmp_path)
         )
@@ -471,3 +573,162 @@ class TestWeeklyReportDue:
             scheduler_mod._weekly_report_due(settings, today, async_session_factory=async_session_factory)
         )
         assert due is True
+
+
+# ── weekly_report_loop: startup timing + missed-week alert ──────────────────
+
+class _StopLoop(Exception):
+    pass
+
+
+def _drive_weekly_loop(monkeypatch, *, now, sleeps_before_stop=1, due=True, missed=None):
+    """Run weekly_report_loop with a fake clock/sleep; return (events, alerts)."""
+    from datetime import date
+
+    events: list[str] = []
+    alerts: list[str] = []
+    sleeps = {"n": 0}
+
+    async def fake_due(settings, today):
+        events.append(f"due:{today}")
+        return due
+
+    async def fake_run():
+        events.append("run")
+
+    async def fake_missed(this_week_start, **kw):
+        return list(missed or [])
+
+    async def fake_notify(text):
+        alerts.append(text)
+        return True
+
+    async def fake_sleep(delay):
+        events.append("sleep")
+        sleeps["n"] += 1
+        if sleeps["n"] >= sleeps_before_stop:
+            raise _StopLoop
+
+    monkeypatch.setattr(scheduler_mod, "_weekly_report_due", fake_due)
+    monkeypatch.setattr(scheduler_mod, "_run_weekly_report_once", fake_run)
+    monkeypatch.setattr(scheduler_mod, "_missed_report_weeks", fake_missed)
+    monkeypatch.setattr(scheduler_mod, "_notify_wecom", fake_notify)
+    settings = _FakeSchedulerSettings(report_hour=9)
+    with pytest.raises(_StopLoop):
+        asyncio.run(scheduler_mod.weekly_report_loop(settings, now_fn=lambda: now, sleep_fn=fake_sleep))
+    return events, alerts
+
+
+class TestWeeklyReportLoop:
+    def test_restart_before_report_hour_sleeps_first(self, monkeypatch):
+        """A midnight restart on a Tuesday must not push the overdue report
+        immediately — it waits for report_hour."""
+        from zoneinfo import ZoneInfo
+
+        now = datetime(2026, 9, 15, 0, 5, tzinfo=ZoneInfo("Asia/Shanghai"))
+        events, _ = _drive_weekly_loop(monkeypatch, now=now)
+        assert events == ["sleep"]
+
+    def test_restart_after_report_hour_checks_immediately(self, monkeypatch):
+        from zoneinfo import ZoneInfo
+
+        now = datetime(2026, 9, 15, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        events, _ = _drive_weekly_loop(monkeypatch, now=now)
+        assert events == ["due:2026-09-15", "run", "sleep"]
+
+    def test_after_sleeping_the_daily_check_runs(self, monkeypatch):
+        from zoneinfo import ZoneInfo
+
+        now = datetime(2026, 9, 15, 3, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        events, _ = _drive_weekly_loop(monkeypatch, now=now, sleeps_before_stop=2)
+        assert events == ["sleep", "due:2026-09-15", "run", "sleep"]
+
+    def test_missed_weeks_alert_once_and_are_not_backfilled(self, monkeypatch):
+        from datetime import date
+        from zoneinfo import ZoneInfo
+
+        now = datetime(2026, 9, 29, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        missed = [date(2026, 9, 7), date(2026, 9, 14)]
+        events, alerts = _drive_weekly_loop(monkeypatch, now=now, sleeps_before_stop=2, missed=missed)
+        assert events.count("run") == 2  # only the current week, re-checked daily
+        assert len(alerts) == 1
+        assert "2026-09-07" in alerts[0] and "2026-09-14" in alerts[0]
+        assert "不会自动补发" in alerts[0]
+
+    def test_not_due_means_no_run_and_no_alert(self, monkeypatch):
+        from zoneinfo import ZoneInfo
+
+        now = datetime(2026, 9, 14, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        events, alerts = _drive_weekly_loop(monkeypatch, now=now, due=False, missed=["x"])
+        assert "run" not in events and alerts == []
+
+
+class TestMissedReportWeeks:
+    def test_lists_gap_between_last_delivered_and_current_week(self, async_session_factory):
+        from datetime import date
+
+        asyncio.run(_insert_weekly_report_run(
+            async_session_factory, week_start=date(2026, 8, 31), week_end=date(2026, 9, 6),
+            status="success", wecom_sent=True,
+        ))
+        asyncio.run(_insert_weekly_report_run(
+            async_session_factory, week_start=date(2026, 9, 7), week_end=date(2026, 9, 13), status="error",
+        ))
+        missed = asyncio.run(scheduler_mod._missed_report_weeks(
+            date(2026, 9, 21), async_session_factory=async_session_factory
+        ))
+        assert missed == [date(2026, 9, 7), date(2026, 9, 14)]
+
+    def test_no_history_means_nothing_missed(self, async_session_factory):
+        from datetime import date
+
+        assert asyncio.run(scheduler_mod._missed_report_weeks(
+            date(2026, 9, 21), async_session_factory=async_session_factory
+        )) == []
+
+    def test_consecutive_weeks_have_no_gap(self, async_session_factory):
+        from datetime import date
+
+        asyncio.run(_insert_weekly_report_run(
+            async_session_factory, week_start=date(2026, 9, 7), week_end=date(2026, 9, 13),
+            status="success", wecom_sent=True,
+        ))
+        assert asyncio.run(scheduler_mod._missed_report_weeks(
+            date(2026, 9, 14), async_session_factory=async_session_factory
+        )) == []
+
+
+# ── RestartTracker: supervise() crash-loop alerting ─────────────────────────
+
+class TestRestartTracker:
+    def test_alerts_on_third_restart_within_window_then_rate_limits(self):
+        clock = {"t": 0.0}
+        tracker = scheduler_mod.RestartTracker(threshold=3, window_seconds=600, clock=lambda: clock["t"])
+        assert tracker.record("watchdog", RuntimeError("a")) is None
+        clock["t"] = 30
+        assert tracker.record("watchdog", RuntimeError("b")) is None
+        clock["t"] = 60
+        alert = tracker.record("watchdog", RuntimeError("boom"))
+        assert alert and "watchdog" in alert and "3 次" in alert and "boom" in alert
+        clock["t"] = 90
+        assert tracker.record("watchdog") is None  # rate-limited
+        clock["t"] = 700  # window since last alert elapsed and still crash-looping
+        tracker.record("watchdog")
+        clock["t"] = 715
+        tracker.record("watchdog")
+        clock["t"] = 730
+        assert tracker.record("watchdog") is not None
+
+    def test_restarts_spread_over_more_than_window_do_not_alert(self):
+        clock = {"t": 0.0}
+        tracker = scheduler_mod.RestartTracker(clock=lambda: clock["t"])
+        for t in (0, 400, 800, 1200):
+            clock["t"] = t
+            assert tracker.record("backup") is None
+
+    def test_tasks_are_tracked_independently(self):
+        tracker = scheduler_mod.RestartTracker(clock=lambda: 0.0)
+        tracker.record("a")
+        tracker.record("a")
+        assert tracker.record("b") is None
+        assert tracker.record("a") is not None

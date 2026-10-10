@@ -197,3 +197,71 @@ class TestResolveTouser:
         monkeypatch.setenv("WECOM_ALERT_TOUSER", "override_id")
         self._make_user(wired_db, email="a@example.com", wecom_userid="uidA", wecom_alert_enabled=True)
         assert wecom_bot._resolve_touser() == "override_id"
+
+    def test_db_lookup_failure_skips_instead_of_broadcasting(self, monkeypatch):
+        """A broken DB must never turn an alert into an @all broadcast."""
+        import app.db as db
+
+        monkeypatch.delenv("WECOM_ALERT_TOUSER", raising=False)
+
+        def _boom():
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(db, "SyncSessionLocal", _boom, raising=False)
+        assert wecom_bot._resolve_touser() is None
+
+    def test_db_lookup_failure_uses_env_override(self, monkeypatch):
+        import app.db as db
+
+        monkeypatch.setenv("WECOM_ALERT_TOUSER", "ops_user")
+
+        def _boom():
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(db, "SyncSessionLocal", _boom, raising=False)
+        assert wecom_bot._resolve_touser() == "ops_user"
+
+
+def test_send_skips_when_no_recipient(monkeypatch):
+    _set_wecom_env(monkeypatch)
+    monkeypatch.setattr(wecom_bot, "_resolve_touser", lambda: None)
+    called = {}
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: called.setdefault("hit", True))
+    assert wecom_bot.send_wecom_alert("x") is False
+    assert "hit" not in called
+
+
+def test_truncate_utf8_respects_byte_limit_and_characters():
+    text = "采集失败" * 400  # 12 bytes per repeat -> 4800 bytes
+    out = wecom_bot.truncate_utf8(text, 2048)
+    assert len(out.encode("utf-8")) <= 2048
+    assert out.endswith("（内容过长已截断）")
+    out.encode("utf-8").decode("utf-8")  # still valid UTF-8
+    assert wecom_bot.truncate_utf8("short") == "short"
+
+
+def test_long_alert_is_truncated_before_sending(monkeypatch):
+    _set_wecom_env(monkeypatch)
+    monkeypatch.setattr(wecom_bot, "_resolve_touser", lambda: "uid")
+    monkeypatch.setattr(httpx, "get", lambda *a, **kw: _FakeResponse(json_body={"access_token": "t"}))
+    captured = {}
+
+    def _post(url, params=None, json=None, timeout=None):
+        captured["json"] = json
+        return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "post", _post)
+    assert wecom_bot.send_wecom_alert("告" * 5000) is True
+    assert len(captured["json"]["text"]["content"].encode("utf-8")) <= wecom_bot.WECOM_TEXT_MAX_BYTES
+
+
+def test_notify_wecom_logs_error_when_not_delivered(monkeypatch, caplog):
+    import asyncio
+    import logging
+
+    from app import scheduler
+
+    monkeypatch.setattr(scheduler, "send_wecom_alert", lambda text: False)
+    with caplog.at_level(logging.ERROR, logger="app.scheduler"):
+        assert asyncio.run(scheduler._notify_wecom("[告警] x")) is False
+    assert any("NOT delivered" in r.message for r in caplog.records)

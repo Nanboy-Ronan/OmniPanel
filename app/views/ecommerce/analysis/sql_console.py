@@ -6,10 +6,10 @@ from typing import Any
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from ....auth import current_analyst_user
-from ....db import get_session
+from ....config import settings
+from ....db.sql_console import SqlConsoleNotConfigured, console_session
 from ....utils.logger import log_operation
 from ....utils.sql_validator import validate_sql_query, enforce_limit
 from ._common import router
@@ -32,19 +32,31 @@ class NLSqlRequest(BaseModel):
     model: str | None = None
 
 
-async def _restrict_reporting_session(session: AsyncSession) -> None:
-    """Run user SQL with the database role that can read only masked views."""
-    await session.execute(text("SET LOCAL ROLE rpa_analytics_readonly"))
-    await session.execute(text("SET LOCAL search_path TO reporting, pg_catalog"))
-    await session.execute(text("SET LOCAL transaction_read_only = on"))
-    await session.execute(text("SET LOCAL statement_timeout = '10000'"))
+# query_to_xml() and friends can fold any number of rows into a single cell, so
+# the row cap alone does not bound the response.
+MAX_RESULT_CHARS = 5_000_000
+
+
+async def _execute_console_sql(sql: str) -> tuple[list[list[Any]], list[str]]:
+    """Run validated SQL as the restricted console role; raise on oversize."""
+    async with console_session() as session:
+        result = await session.execute(text(sql))
+        columns = list(result.keys())
+        rows: list[list[Any]] = []
+        size = 0
+        for row in result:
+            values = list(row)
+            size += sum(len(str(value)) for value in values if value is not None)
+            if size > MAX_RESULT_CHARS:
+                raise ValueError("result too large")
+            rows.append(values)
+    return rows, columns
 
 
 @router.post("/sql", summary="Ad-hoc SQL query console (analyst+)")
 async def run_sql_query(
     body: SqlQueryRequest,
     _u=Depends(current_analyst_user),
-    session: AsyncSession = Depends(get_session),
 ):
     try:
         validate_sql_query(body.sql)
@@ -57,21 +69,20 @@ async def run_sql_query(
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        await _restrict_reporting_session(session)
-        result = await session.execute(text(safe_sql))
-        rows = result.fetchall()
-        columns: list[str] = list(result.keys())
-    except Exception as exc:
+        row_data, columns = await _execute_console_sql(safe_sql)
+    except SqlConsoleNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="查询结果过大，请减少返回的列或行。")
+    except Exception:
         raise HTTPException(
             status_code=400,
             detail="查询失败。请检查字段、表名或权限。",
         )
 
-    row_data = [list(row) for row in rows]
     row_count = len(row_data)
 
-    # session is read-only (SET LOCAL transaction_read_only = on); open a
-    # separate connection for the log write rather than passing session=.
+    # The console connection is read-only; the log write uses the app connection.
     await log_operation(
         str(_u.id),
         "sql_query",
@@ -98,7 +109,6 @@ async def nl_sql_providers(_u=Depends(current_analyst_user)):
 async def run_nl_sql(
     body: NLSqlRequest,
     _u=Depends(current_analyst_user),
-    session: AsyncSession = Depends(get_session),
 ):
     """Translate a Chinese question into SQL, then run it through the exact same
     read-only safety pipeline as the manual SQL console.
@@ -116,6 +126,9 @@ async def run_nl_sql(
     question = (body.question or "").strip()
     if not question:
         raise HTTPException(status_code=400, detail="请输入问题。")
+    if not settings.sql_console_database_url:
+        # Fail before paying for a model call whose SQL could not run anyway.
+        raise HTTPException(status_code=503, detail=str(SqlConsoleNotConfigured()))
 
     try:
         sql, explanation = await generate_sql(question, body.provider, body.model)
@@ -148,12 +161,15 @@ async def run_nl_sql(
     result["sql"] = safe_sql
 
     try:
-        await _restrict_reporting_session(session)
-        exec_result = await session.execute(text(safe_sql))
-        rows = exec_result.fetchall()
-        columns = list(exec_result.keys())
+        row_data, columns = await _execute_console_sql(safe_sql)
+    except SqlConsoleNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 - report execution errors to the UI
-        result["error"] = "查询执行错误：请检查字段、表名或权限。"
+        result["error"] = (
+            "查询结果过大，请减少返回的列或行。"
+            if isinstance(exc, ValueError)
+            else "查询执行错误：请检查字段、表名或权限。"
+        )
         await log_operation(
             str(_u.id),
             "nl_sql_query",
@@ -167,7 +183,6 @@ async def run_nl_sql(
         )
         return result
 
-    row_data = [list(row) for row in rows]
     result["rows"] = row_data
     result["columns"] = columns
     result["row_count"] = len(row_data)

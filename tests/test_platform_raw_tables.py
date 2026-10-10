@@ -795,3 +795,47 @@ def test_order_raw_endpoint_returns_all_jd_rows_for_aggregated_order(client, tok
     assert body["order"]["platform"] == "jd"
     assert body["row_count"] == 2
     assert {row["商品ID"] for row in body["rows"]} == {"SKU-A", "SKU-B"}
+
+
+def test_same_order_number_on_two_platforms_is_not_a_duplicate(sync_engine):
+    """Order numbers are only unique per platform: a 天猫 order sharing a
+    有赞 order's number is a different order and must still be inserted."""
+    from sqlalchemy.orm import Session
+
+    from app.db.etl.load import ingest, ingest_upload
+
+    youzan = pd.DataFrame([{
+        "订单号": "SHARED-1", "买家付款时间": "2026-02-01 10:00:00",
+        "收货人手机号/提货人手机号": "13800138000", "全部商品名称": "示例商品",
+        "商品种类数": "1", "订单实付金额": "88.50",
+    }], dtype=str)
+    tmall = pd.DataFrame([{
+        "订单编号": "SHARED-1", "支付单号": "", "买家应付货款": "", "总金额": "520",
+        "订单状态": "", "收货地址": "示例买家，86-13900000099，江苏省 示例市 示例区 示例路16号",
+        "订单创建时间": "2026-02-01 09:00:00", "商品标题": "示例商品",
+    }], dtype=str)
+
+    with Session(sync_engine) as session:
+        assert ingest_upload(youzan, session, filename="y.csv")["inserted_orders"] == 1
+    with Session(sync_engine) as session:
+        result = ingest_upload(tmall, session, filename="t.xlsx")
+        assert result["inserted_orders"] == 1
+        assert result["duplicate_rows"] == 0
+    # Re-uploading the same 天猫 file is still deduplicated within its platform.
+    with Session(sync_engine) as session:
+        assert ingest_upload(tmall, session, filename="t.xlsx")["duplicate_rows"] == 1
+
+    # The legacy ingest() path dedups on (platform, order_id) as well.
+    legacy = pd.DataFrame([{
+        "订单号": "SHARED-1", "买家付款时间": "2026-02-02", "客户标识": "jd-customer",
+        "全部商品名称": "x", "商品种类数": "1", "订单实付金额": "10", "平台": "jd",
+    }], dtype=str)
+    with Session(sync_engine) as session:
+        assert ingest(legacy, session) == 1
+    with Session(sync_engine) as session:
+        assert ingest(legacy, session) == 0
+
+    assert _scalar(sync_engine, "SELECT count(*) FROM orders WHERE order_id = 'SHARED-1'") == 3
+    assert _scalar(
+        sync_engine, "SELECT count(DISTINCT platform) FROM orders WHERE order_id = 'SHARED-1'"
+    ) == 3

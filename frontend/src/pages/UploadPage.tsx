@@ -1,32 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
-import { request } from '../lib/api';
-import { asRows, recordSchema, useResource } from '../lib/resources';
+import { FileSpreadsheet, UploadCloud } from 'lucide-react';
+import { request, upload as uploadForm, type UploadProgress } from '../lib/api';
+import { asRows, notifyFailure, recordSchema, useResource } from '../lib/resources';
+import { useToast } from '../components/Toast';
 import { batchSchema } from '../lib/data';
 import { navigate } from '../lib/navigation';
 import { Heading, QueryView, RecordTable, Stats } from '../components/workspace';
-import { ErrorState, Panel } from '../components/ui';
+import { ErrorState, isAbort, Panel, UploadMeter } from '../components/ui';
 import TasksPage from './TasksPage';
 export default function UploadPage() {
   const [platform, setPlatform] = useState('youzan');
   const [file, setFile] = useState<File | null>(null);
   const [batch, setBatch] = useState<number | null>(null);
   const [validation, setValidation] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const [progress, setProgress] = useState<UploadProgress | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  const toast = useToast();
+  // Leaving the page cancels an unfinished transfer instead of letting it finish unseen.
+  useEffect(() => () => controller.current?.abort(), []);
   const upload = useMutation({
     mutationFn: () => {
       if (!file) throw new Error('请选择文件。');
       const body = new FormData();
       body.set('file', file);
-      return request(
+      controller.current = new AbortController();
+      setProgress({ loaded: 0, total: file.size, percent: 0 });
+      return uploadForm(
         `/upload/?expected_platform=${platform}`,
         z.object({ batch_id: z.number(), status: z.string() }),
-        { body, timeoutMs: 120000 },
+        {
+          body,
+          timeoutMs: 120000,
+          signal: controller.current.signal,
+          onProgress: setProgress,
+        },
       );
     },
-    onSuccess: (data) => setBatch(data.batch_id),
+    onSuccess: (data) => {
+      setBatch(data.batch_id);
+      toast.success(`${file?.name ?? '订单文件'} 已提交，导入批次 #${data.batch_id} 正在校验`);
+    },
+    onError: (error) => notifyFailure(toast, error, '订单文件提交失败'),
+    onSettled: () => {
+      controller.current = null;
+    },
     retry: false,
   });
+  const cancelled = upload.isError && isAbort(upload.error);
   return (
     <>
       <Heading
@@ -47,36 +70,92 @@ export default function UploadPage() {
             upload.mutate();
           }}
         >
-          <label>
-            来源平台
-            <select
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value)}
-              disabled={upload.isPending}
+          <div className="form-field">
+            <span className="form-label" id="upload-platform">
+              来源平台
+            </span>
+            <div className="segmented" role="group" aria-labelledby="upload-platform">
+              {(
+                [
+                  ['youzan', '有赞'],
+                  ['jd', '京东'],
+                  ['tmall', '天猫'],
+                ] as const
+              ).map(([value, name]) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={platform === value}
+                  disabled={upload.isPending}
+                  onClick={() => setPlatform(value)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="form-field">
+            <span className="form-label">订单文件</span>
+            <label
+              className={`dropzone ${dragging ? 'dragging' : ''}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragging(false);
+                if (!upload.isPending) setFile(e.dataTransfer.files[0] ?? null);
+              }}
             >
-              <option value="youzan">有赞</option>
-              <option value="jd">京东</option>
-              <option value="tmall">天猫</option>
-            </select>
-          </label>
-          <label>
-            订单文件
-            <input
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              disabled={upload.isPending}
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-          </label>
+              {file ? <FileSpreadsheet size={28} /> : <UploadCloud size={28} />}
+              {file ? (
+                <>
+                  <span className="dropzone-file">{file.name}</span>
+                  <span>{(file.size / 1024 / 1024).toFixed(2)} MB · 点击或拖入其他文件可替换</span>
+                </>
+              ) : (
+                <>
+                  <strong>拖入订单文件，或点击选择</strong>
+                  <span>支持 CSV、XLSX、XLS，单个文件不超过 100 MB</span>
+                </>
+              )}
+              <input
+                type="file"
+                aria-label="订单文件"
+                accept=".csv,.xlsx,.xls"
+                disabled={upload.isPending}
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+          </div>
           <p className="footnote">
             文件平台必须与所选平台一致。重复记录会由后端识别；提交后不要重复上传同一文件。
           </p>
-          <button className="primary" disabled={!file || upload.isPending}>
-            {upload.isPending ? '正在提交…' : '提交导入'}
-          </button>
-          {validation && <p role="alert">{validation}</p>}
+          {upload.isPending && file && progress ? (
+            <UploadMeter
+              name={file.name}
+              progress={progress}
+              onCancel={() => controller.current?.abort()}
+            />
+          ) : (
+            <button className="primary" disabled={!file}>
+              提交导入
+            </button>
+          )}
+          {validation && (
+            <p role="alert" className="field-error">
+              {validation}
+            </p>
+          )}
         </form>
-        {upload.isError && (
+        {cancelled && (
+          <p role="status" className="footnote">
+            已取消上传，文件未提交。可重新选择文件后再次提交。
+          </p>
+        )}
+        {upload.isError && !cancelled && (
           <>
             <ErrorState error={upload.error} />
             <p className="stale-notice">若提交超时，请先检查导入任务，确认是否已受理后再重试。</p>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Drawer } from '../components/Drawer';
 import { useQuery } from '@tanstack/react-query';
 import {
   allPosts,
@@ -26,6 +27,7 @@ import { navigate, useLocationSearch } from '../lib/navigation';
 import { AccountManager, FileImport } from '../components/Accounts';
 import {
   ConfirmAction,
+  Detail,
   Heading,
   QueryView,
   RangeFilter,
@@ -66,7 +68,13 @@ export default function MediaPage({
   const [minimum, setMinimum] = useState(100);
   const [detail, setDetail] = useState<Row | null>(null);
   useEffect(() => setDetail(null), [platform, account]);
-  const sync = useAction();
+  const sync = useAction({
+    success: (data) =>
+      asRecord(data).status === 'partial'
+        ? { tone: 'error', message: '微信同步部分失败，请核对账号状态' }
+        : '微信数据同步成功',
+    error: '微信同步失败',
+  });
   const accounts = useResource(cfg.accounts ?? '/media/accounts', rowsSchema, !!cfg.accounts);
   const filters = {
     start_date: values.start_date,
@@ -284,14 +292,7 @@ export default function MediaPage({
                   rows={rows}
                   platform={platform}
                   end={values.end_date}
-                  onDetail={(row) => {
-                    setDetail(row);
-                    requestAnimationFrame(() =>
-                      document
-                        .getElementById('content-detail')
-                        ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
-                    );
-                  }}
+                  onDetail={setDetail}
                 />
               )}
               {tab === 'overview' && (
@@ -470,18 +471,20 @@ export default function MediaPage({
                 </Panel>
               )}
               {detail && (
-                <div id="content-detail">
-                  <Panel
-                    title={text(detail.title)}
-                    action={<button onClick={() => setDetail(null)}>关闭详情</button>}
-                  >
-                    {platform === 'wechat' ? (
+                <Drawer
+                  title={text(detail.title)}
+                  subtitle={cfg.title}
+                  onClose={() => setDetail(null)}
+                >
+                  {platform === 'wechat' && (
+                    <Panel title="每日阅读与互动">
                       <PostHistory id={Number(detail.id)} />
-                    ) : (
-                      <RecordTable rows={[detail]} caption="内容完整字段" />
-                    )}
+                    </Panel>
+                  )}
+                  <Panel title="内容完整字段">
+                    <Detail row={detail} />
                   </Panel>
-                </div>
+                </Drawer>
               )}
             </>
           )

@@ -26,6 +26,66 @@ export const batch = {
   status: 'completed',
   error_message: null,
 };
+/** Minimal XMLHttpRequest double: records the request and lets a test drive progress and the reply. */
+export class FakeXHR {
+  static last: FakeXHR | null = null;
+  static respondWith: ((xhr: FakeXHR) => void) | null = null;
+  method = '';
+  url = '';
+  headers: Record<string, string> = {};
+  body: unknown = null;
+  status = 0;
+  responseText = '';
+  aborted = false;
+  private listeners: Record<string, (() => void)[]> = {};
+  private uploadListeners: ((event: ProgressEvent) => void)[] = [];
+  upload = {
+    addEventListener: (_type: string, listener: (event: ProgressEvent) => void) => {
+      this.uploadListeners.push(listener);
+    },
+  };
+  constructor() {
+    FakeXHR.last = this;
+  }
+  static reset() {
+    FakeXHR.last = null;
+    FakeXHR.respondWith = null;
+  }
+  open(method: string, url: string) {
+    this.method = method;
+    this.url = url;
+  }
+  setRequestHeader(name: string, value: string) {
+    this.headers[name] = value;
+  }
+  addEventListener(type: string, listener: () => void) {
+    (this.listeners[type] ??= []).push(listener);
+  }
+  send(body: unknown) {
+    this.body = body;
+    const reply = FakeXHR.respondWith;
+    if (reply) queueMicrotask(() => reply(this));
+  }
+  abort() {
+    this.aborted = true;
+    this.emit('abort');
+  }
+  progress(loaded: number, total: number) {
+    const event = { lengthComputable: true, loaded, total } as ProgressEvent;
+    for (const listener of this.uploadListeners) listener(event);
+  }
+  respond(payload: unknown, status = 200) {
+    this.status = status;
+    this.responseText = JSON.stringify(payload);
+    this.emit('load');
+  }
+  fail() {
+    this.emit('error');
+  }
+  private emit(type: string) {
+    for (const listener of this.listeners[type] ?? []) listener();
+  }
+}
 export function response(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,

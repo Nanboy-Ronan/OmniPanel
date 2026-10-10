@@ -4,13 +4,14 @@ POST /media/accounts — admin creates a media account (no app credentials requi
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import current_admin_user
 from ...db import get_session
 from ...db.models import MediaAccount
+from ...utils.logger import log_operation
 
 upload_router = APIRouter(prefix="/media", tags=["media"])
 
@@ -28,6 +29,7 @@ class CreateAccountRequest(BaseModel):
 
 @upload_router.post("/accounts", status_code=201)
 async def create_media_account(
+    request: Request,
     payload: CreateAccountRequest,
     _u=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
@@ -41,6 +43,7 @@ async def create_media_account(
     )
     session.add(account)
     await session.commit()
+    await log_operation(str(_u.id), "media_account_create", {"account_id": account.id, "name": account.name}, request=request)
     await session.refresh(account)
     return {
         "id":        account.id,

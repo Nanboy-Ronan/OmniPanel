@@ -79,6 +79,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from ..models import WxChannelsPost
+from ._upsert import coalesce_update_set
 
 # China Standard Time — createTime (unix seconds) must be read in this zone,
 # not the collector host's local time. See module docstring.
@@ -303,14 +304,13 @@ def upsert_channels_posts(rows: list[dict], account_id: int, session: Session) -
 
     rows_with_account = [{**r, "account_id": account_id} for r in rows]
 
-    stmt = (
-        pg_insert(WxChannelsPost)
-        .values(rows_with_account)
-        .on_conflict_do_update(
-            constraint=_DEDUP_CONSTRAINT,
-            set_={col: pg_insert(WxChannelsPost).excluded[col] for col in _UPSERT_UPDATE_COLS}
-            | {"updated_at": text("NOW()")},
-        )
+    insert = pg_insert(WxChannelsPost).values(rows_with_account)
+    stmt = insert.on_conflict_do_update(
+        constraint=_DEDUP_CONSTRAINT,
+        # The JSON API path has no wecom_link_*/added_to_contacts_* fields;
+        # COALESCE keeps values a CSV upload stored instead of NULLing them.
+        set_=coalesce_update_set(insert, WxChannelsPost, _UPSERT_UPDATE_COLS)
+        | {"updated_at": text("NOW()")},
     )
     session.execute(stmt)
     session.commit()

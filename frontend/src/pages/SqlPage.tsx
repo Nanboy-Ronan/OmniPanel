@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
+import { Download, History, Trash2 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { z } from 'zod';
 import { request } from '../lib/api';
-import { asRecord, asRows, recordSchema, text, useResource } from '../lib/resources';
+import { asRecord, asRows, exportCsv, recordSchema, text, useResource } from '../lib/resources';
 import { Heading, QueryView, RecordTable } from '../components/workspace';
 import { ErrorState, Panel } from '../components/ui';
 import examples from '../lib/sqlExamples.json';
@@ -15,8 +16,43 @@ const resultSchema = z.object({
   explanation: z.string().optional(),
   error: z.string().nullable().optional(),
 });
+const HISTORY_KEY = 'rpa.console.sql.history';
+const HISTORY_LIMIT = 20;
+type HistoryEntry = { sql: string; at: string };
+const historySchema = z.array(z.object({ sql: z.string(), at: z.string() }));
+function readHistory(): HistoryEntry[] {
+  try {
+    return (
+      historySchema.safeParse(JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]')).data ?? []
+    );
+  } catch {
+    return [];
+  }
+}
+function writeHistory(entries: HistoryEntry[]) {
+  try {
+    if (entries.length) localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+    else localStorage.removeItem(HISTORY_KEY);
+  } catch {
+    // History is a convenience; queries still run without storage.
+  }
+}
+const stamp = (date: Date) =>
+  date.toLocaleString('zh-CN', {
+    hour12: false,
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+const fileStamp = (date: Date) =>
+  [date.getFullYear(), date.getMonth() + 1, date.getDate(), date.getHours(), date.getMinutes()]
+    .map((part) => String(part).padStart(2, '0'))
+    .join('');
+const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
 export default function SqlPage() {
   const [sql, setSql] = useState(examples[0][1]);
+  const [history, setHistory] = useState(readHistory);
   const [question, setQuestion] = useState('');
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
@@ -27,15 +63,43 @@ export default function SqlPage() {
     list.find((item) => item.id === providers.data?.default_provider) ||
     list[0];
   const query = useMutation({
-    mutationFn: ({ nl }: { nl: boolean }) =>
-      request(nl ? '/analysis/nl-sql' : '/analysis/sql', resultSchema, {
+    mutationFn: async ({ nl }: { nl: boolean }) => {
+      const started = performance.now();
+      const result = await request(nl ? '/analysis/nl-sql' : '/analysis/sql', resultSchema, {
         body: nl
           ? { question, provider: provider || undefined, model: model || undefined }
           : { sql },
         timeoutMs: nl ? 90000 : 30000,
-      }),
+      });
+      return { ...result, elapsed: performance.now() - started, finishedAt: new Date() };
+    },
     retry: false,
   });
+  const remember = (text: string) => {
+    const entry = { sql: text.trim(), at: new Date().toISOString() };
+    const next = [entry, ...history.filter((item) => item.sql !== entry.sql)].slice(
+      0,
+      HISTORY_LIMIT,
+    );
+    setHistory(next);
+    writeHistory(next);
+  };
+  const runSql = () => {
+    if (query.isPending || !sql.trim()) return;
+    remember(sql);
+    query.mutate({ nl: false });
+  };
+  const runShortcut = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      runSql();
+    }
+  };
+  const resultRows = query.data
+    ? query.data.rows.map((row) =>
+        Object.fromEntries(query.data!.columns.map((column, index) => [column, row[index]])),
+      )
+    : [];
   return (
     <>
       <Heading
@@ -109,7 +173,7 @@ export default function SqlPage() {
           className="editor-form"
           onSubmit={(e) => {
             e.preventDefault();
-            query.mutate({ nl: false });
+            runSql();
           }}
         >
           <label>
@@ -128,19 +192,80 @@ export default function SqlPage() {
               className="code-editor"
               value={sql}
               onChange={(e) => setSql(e.target.value)}
+              onKeyDown={runShortcut}
+              aria-keyshortcuts="Control+Enter Meta+Enter"
               rows={10}
               spellCheck={false}
               required
             />
           </label>
-          <button className="primary" disabled={query.isPending || !sql.trim()}>
-            {query.isPending ? '正在查询…' : '执行查询'}
-          </button>
+          <div className="sql-actions">
+            <button className="primary" disabled={query.isPending || !sql.trim()}>
+              {query.isPending ? '正在查询…' : '执行查询'}
+            </button>
+            <small>
+              <kbd>{isMac ? '⌘' : 'Ctrl'}</kbd> + <kbd>Enter</kbd> 执行
+            </small>
+          </div>
         </form>
+        {history.length > 0 && (
+          <details className="sql-history">
+            <summary>
+              <History size={14} aria-hidden />
+              最近查询 {history.length}
+            </summary>
+            <ol>
+              {history.map((entry) => (
+                <li key={entry.at + entry.sql}>
+                  <button
+                    type="button"
+                    className="sql-history-item"
+                    title={entry.sql}
+                    onClick={() => setSql(entry.sql)}
+                  >
+                    <code>{entry.sql.replace(/\s+/g, ' ')}</code>
+                    <small>{stamp(new Date(entry.at))}</small>
+                  </button>
+                </li>
+              ))}
+            </ol>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setHistory([]);
+                writeHistory([]);
+              }}
+            >
+              <Trash2 size={13} aria-hidden />
+              清空历史
+            </button>
+          </details>
+        )}
       </Panel>
       {query.isError && <ErrorState error={query.error} />}{' '}
       {query.data && (
-        <Panel title={`查询结果 · ${query.data.row_count} 行`}>
+        <Panel
+          title="查询结果"
+          subtitle={`${query.data.row_count.toLocaleString()} 行 · 用时 ${(query.data.elapsed / 1000).toFixed(2)} 秒`}
+          action={
+            !query.data.error && query.data.columns.length > 0 ? (
+              <button
+                onClick={() =>
+                  exportCsv(
+                    resultRows,
+                    query.data!.columns,
+                    `查询结果-${fileStamp(query.data!.finishedAt)}.csv`,
+                    'SQL 查询结果',
+                  )
+                }
+              >
+                <Download size={14} aria-hidden />
+                导出 CSV
+              </button>
+            ) : undefined
+          }
+        >
           {query.data.sql && (
             <>
               <pre className="sql-output">{query.data.sql}</pre>
@@ -152,13 +277,10 @@ export default function SqlPage() {
             <p className="stale-notice">{query.data.error}</p>
           ) : (
             <RecordTable
-              rows={query.data.rows.map((row) =>
-                Object.fromEntries(
-                  query.data!.columns.map((column, index) => [column, row[index]]),
-                ),
-              )}
+              rows={resultRows}
               columns={query.data.columns}
               caption="查询结果"
+              exportable={false}
             />
           )}
         </Panel>

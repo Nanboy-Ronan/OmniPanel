@@ -80,6 +80,7 @@ def compute_content_impact(
     posts: list[dict],
     daily_totals: dict[str, dict],
     window_days: int = 7,
+    latest_order_date: date | None = None,
 ) -> list[dict]:
     """Compare order/revenue volume before vs. after each article's publish date.
 
@@ -91,6 +92,12 @@ def compute_content_impact(
         window_days: days in each window.  Pre-window is
             [publish_date - window_days, publish_date - 1]; post-window is
             [publish_date, publish_date + window_days - 1].
+        latest_order_date: last day with order data on file. A post window
+            extending past it is clipped there and flagged
+            ``partial_window``; the pre-window is shortened to the same
+            number of days so the lift compares equal spans instead of
+            reading not-yet-uploaded days as a sales drop. A post published
+            after it has no post-window data: lifts are None.
 
     Returns:
         List of impact dicts sorted by order_lift_pct descending (None last).
@@ -98,17 +105,21 @@ def compute_content_impact(
     results = []
     for post in posts:
         pub = date.fromisoformat(str(post["publish_date"]))
-        pre_start = pub - timedelta(days=window_days)
-        pre_end = pub - timedelta(days=1)
         post_end = pub + timedelta(days=window_days - 1)
+        partial = latest_order_date is not None and post_end > latest_order_date
+        if partial:
+            post_end = latest_order_date
+        days = max(0, (post_end - pub).days + 1)
+        pre_start = pub - timedelta(days=days)
+        pre_end = pub - timedelta(days=1)
 
         pre_orders = sum(daily_totals.get(str(d), {}).get("orders", 0) for d in _date_range(pre_start, pre_end))
         post_orders = sum(daily_totals.get(str(d), {}).get("orders", 0) for d in _date_range(pub, post_end))
         pre_rev = sum(daily_totals.get(str(d), {}).get("revenue", 0.0) for d in _date_range(pre_start, pre_end))
         post_rev = sum(daily_totals.get(str(d), {}).get("revenue", 0.0) for d in _date_range(pub, post_end))
 
-        order_lift = (post_orders - pre_orders) / pre_orders * 100 if pre_orders > 0 else None
-        rev_lift = (post_rev - pre_rev) / pre_rev * 100 if pre_rev > 0 else None
+        order_lift = (post_orders - pre_orders) / pre_orders * 100 if pre_orders > 0 and days else None
+        rev_lift = (post_rev - pre_rev) / pre_rev * 100 if pre_rev > 0 and days else None
 
         results.append({
             "post_id": post["id"],
@@ -122,6 +133,8 @@ def compute_content_impact(
             "post_revenue": round(post_rev, 2),
             "order_lift_pct": round(order_lift, 1) if order_lift is not None else None,
             "revenue_lift_pct": round(rev_lift, 1) if rev_lift is not None else None,
+            "window_days_used": days,
+            "partial_window": partial,
         })
 
     return sorted(results, key=lambda x: (x["order_lift_pct"] is None, -(x["order_lift_pct"] or 0)))

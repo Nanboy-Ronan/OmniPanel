@@ -69,12 +69,16 @@ export function comparisonWindow(anchor: string, period: Period) {
   return { start: iso(start), end: iso(end), priorStart: iso(priorStart), priorEnd: iso(priorEnd) };
 }
 export const latestSchema = z.object({ latest_order_date: dateSchema.nullable() });
-export const freshnessSchema = z.object({
-  orders: z.object({
-    coverage_through: z.string().nullable(),
-    last_import_at: z.string().nullable(),
-  }),
+const coverageSchema = z.object({
+  coverage_through: z.string().nullable(),
+  last_import_at: z.string().nullable(),
 });
+export const freshnessSchema = z.object({
+  orders: coverageSchema,
+  /** Per-platform order coverage (youzan / jd / tmall); older servers omit it. */
+  platforms: z.record(z.string(), coverageSchema.partial()).optional(),
+});
+export type FreshnessData = z.infer<typeof freshnessSchema>;
 export const batchSchema = z.object({
   id: z.number().int(),
   filename: z.string(),

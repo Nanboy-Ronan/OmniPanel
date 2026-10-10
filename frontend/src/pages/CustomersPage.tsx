@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Drawer } from '../components/Drawer';
 import { useQuery } from '@tanstack/react-query';
 import {
   asRows,
@@ -42,20 +43,22 @@ export default function CustomersPage() {
   return (
     <>
       <Heading title="客户管理" description="按购买行为筛选客户，查看客户档案和历史订单。" />
-      <RangeFilter key={signature} values={values} search />
-      <label className="field-inline">
-        最低订单数
-        <input
-          type="number"
-          min={1}
-          max={100000}
-          value={min}
-          onChange={(e) => {
-            setMin(Math.max(1, Number(e.target.value)));
-            navigate({ offset: null });
-          }}
-        />
-      </label>
+      <RangeFilter key={signature} values={values} search>
+        <label>
+          最低订单数
+          <input
+            className="narrow-input"
+            type="number"
+            min={1}
+            max={100000}
+            value={min}
+            onChange={(e) => {
+              setMin(Math.max(1, Number(e.target.value)));
+              navigate({ offset: null });
+            }}
+          />
+        </label>
+      </RangeFilter>
       <Panel title="客户列表">
         <QueryView query={query}>
           {(data) => (
@@ -80,6 +83,7 @@ export default function CustomersPage() {
                 page={Math.floor(offset / 25)}
                 hasNext={data.total !== null ? offset + 25 < data.total : data.rows.length === 25}
                 total={data.total}
+                pageSize={25}
                 onPage={(page) => {
                   navigate({ offset: String(page * 25) });
                   setSelected(null);
@@ -121,29 +125,40 @@ function CustomerDetail({
     recordSchema,
   );
   return (
-    <Panel
+    <Drawer
       title={`${text(row.buyer_nick || row.receiver || row.mobile || '客户')} · 客户档案`}
-      action={<button onClick={onClose}>关闭</button>}
+      subtitle={all ? '全部历史订单' : `${start} 至 ${end} 的订单`}
+      onClose={onClose}
     >
-      <Detail row={row} />
-      <label className="field-inline">
-        <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
-        包含全部历史订单
-      </label>
-      <QueryView query={query}>
-        {(data) => (
-          <>
-            <Stats
-              items={[
-                { title: '订单数', value: data.count },
-                { title: '消费合计', value: data.total_spend },
-              ]}
-            />
-            <RecordTable rows={asRows(data.orders)} caption="客户订单" />
-          </>
-        )}
-      </QueryView>
-    </Panel>
+      <Panel title="客户资料">
+        <Detail row={row} />
+      </Panel>
+      <Panel
+        title="购买记录"
+        action={
+          <label className="checkbox-field">
+            <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
+            包含全部历史订单
+          </label>
+        }
+      >
+        <QueryView query={query}>
+          {(data) => (
+            <>
+              <div className="drawer-stats">
+                <Stats
+                  items={[
+                    { title: '订单数', value: data.count },
+                    { title: '消费合计', value: data.total_spend },
+                  ]}
+                />
+              </div>
+              <RecordTable rows={asRows(data.orders)} caption="客户订单" />
+            </>
+          )}
+        </QueryView>
+      </Panel>
+    </Drawer>
   );
 }
 export function IdentityPage() {

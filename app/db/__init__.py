@@ -30,8 +30,21 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False,
 )
 
+def sync_connect_args(tz_name: str | None = None) -> dict:
+    """psycopg2 connect_args giving the sync engine the same session
+    timezone the async engine sets via server_settings.
+
+    Without it the sync engine ran in the server default (UTC on the VM),
+    so server-generated naive timestamps it wrote (collector_runs.started_at,
+    the media-ETL created_at/updated_at columns) were UTC while everything
+    written through the async engine was APP_TIMEZONE local time. Historical
+    rows are converted by alembic revision 0020_sync_engine_tz_backfill.
+    """
+    return {"options": f"-c timezone={tz_name or settings.app_timezone}"}
+
+
 # Synchronous engine for use inside asyncio.to_thread() — psycopg2 driver,
-# same pool settings, no asyncpg-specific connect_args.
+# same pool settings and session timezone as the async engine.
 _sync_url = DATABASE_URL.replace("+asyncpg", "+psycopg2")
 sync_engine = create_engine(
     _sync_url,
@@ -40,6 +53,7 @@ sync_engine = create_engine(
     max_overflow=settings.db_max_overflow,
     pool_pre_ping=True,
     pool_recycle=settings.db_pool_recycle,
+    connect_args=sync_connect_args(),
 )
 
 SyncSessionLocal = sessionmaker(

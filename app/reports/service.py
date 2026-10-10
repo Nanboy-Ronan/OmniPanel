@@ -54,15 +54,16 @@ def _summary_lines(context: dict) -> list[str]:
         lines.append(f"【{section['account'].name}】新发布 {s['count']} 篇，累计涨粉 {s['total_new_followers']}")
     for section in context.get("channels_sections", []):
         s = section["this_week_summary"]
-        last_s = section["last_week_summary"]
-        diff = s["total_plays"] - last_s["total_plays"]
-        lines.append(f"【{section['account'].name}(视频号)】播放量 {s['total_plays']}（{_wow_arrow(diff)}），新增粉丝 {s['total_new_fans']}")
+        # Cumulative totals of different post cohorts — no ▲/▼ (see
+        # weekly_media.CUMULATIVE_COHORT_CAVEAT).
+        lines.append(
+            f"【{section['account'].name}(视频号)】新发 {s['count']} 条，累计播放 {s['total_plays']}，"
+            f"新增粉丝 {s['total_new_fans']}"
+        )
     zhihu = context.get("zhihu_section")
     if zhihu:
         s = zhihu["this_week_summary"]
-        last_s = zhihu["last_week_summary"]
-        diff = s["total_reads"] - last_s["total_reads"]
-        lines.append(f"【知乎】阅读量 {s['total_reads']}（{_wow_arrow(diff)}），新发布 {s['count']} 篇")
+        lines.append(f"【知乎】新发布 {s['count']} 篇，累计阅读 {s['total_reads']}")
     for section in context.get("pgy_sections", []):
         s = section["this_week_summary"]
         if s["count"] > 0:
@@ -72,8 +73,12 @@ def _summary_lines(context: dict) -> list[str]:
         tw = ecom["this_week_total"]
         lw = ecom["last_week_total"]
         diff = tw["gmv"] - lw["gmv"]
-        if tw["order_count"] > 0 or lw["order_count"] > 0:
-            lines.append(f"【商城】本周 GMV ¥{tw['gmv']:,.0f}（{_wow_arrow(int(diff))}），订单 {tw['order_count']} 笔")
+        if ecom.get("complete") is False:
+            # Orders for the week aren't fully uploaded — a GMV/arrow here
+            # would read as a sales drop that is really missing data.
+            lines.append(f"【商城】{ecom['incomplete_note']}，本周 GMV 暂不统计")
+        elif tw["order_count"] > 0 or lw["order_count"] > 0:
+            lines.append(f"【商城】本周 GMV ¥{tw['gmv']:,.0f}（{_wow_arrow(int(diff))}），订单 {tw['order_count']} 笔（不含关闭/未付款/已删除，已扣退款）")
     return lines
 
 

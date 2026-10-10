@@ -302,18 +302,18 @@ def client(pg_async_url, monkeypatch):
 def tokens(client):
     """Create viewer / analyst / admin users and return their JWT tokens."""
     # First registration → auto-promoted to admin
-    client.post("/auth/register", json={"email": "first@test.com", "password": "pw", "role": "viewer"})
-    r_login = client.post("/auth/jwt/login", data={"username": "first@test.com", "password": "pw"})
+    client.post("/auth/register", json={"email": "first@test.com", "password": "pw-test-passphrase", "role": "viewer"})
+    r_login = client.post("/auth/jwt/login", data={"username": "first@test.com", "password": "pw-test-passphrase"})
     admin_token = r_login.json()["access_token"]
 
     def _create(email, role):
         r = client.post(
             "/admin/users",
-            json={"email": email, "password": "pw", "role": role},
+            json={"email": email, "password": "pw-test-passphrase", "role": role},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert r.status_code == 201, r.text
-        r_l = client.post("/auth/jwt/login", data={"username": email, "password": "pw"})
+        r_l = client.post("/auth/jwt/login", data={"username": email, "password": "pw-test-passphrase"})
         return r_l.json()["access_token"]
 
     return {role: _create(f"{role}@test.com", role) for role in ["viewer", "analyst", "admin"]}
@@ -777,3 +777,55 @@ class TestSqlReadOnlyDbProtection:
             headers=_auth(tokens["analyst"]),
         )
         assert r.status_code == 200
+
+
+class TestSqlConsoleRoleIsolation:
+    """Console SQL runs as its own login role, so resetting the role cannot
+    reach the application's privileges (audit 2026-10, set_config escape)."""
+
+    ESCAPES = [
+        # Reset the role, then read through a function that runs a query string.
+        "WITH a AS MATERIALIZED (SELECT set_config('role','none',true) r) "
+        "SELECT query_to_xml('select email, hashed_password from public.\"user\"',true,false,'') FROM a",
+        # Direct reference to a base table outside the reporting schema.
+        "SELECT email FROM public.\"user\"",
+        # Credentials columns that the reporting views deliberately omit.
+        "SELECT cookies FROM public.xhs_accounts",
+    ]
+
+    @pytest.mark.parametrize("sql", ESCAPES)
+    def test_privileged_tables_are_unreachable(self, client, tokens, sql):
+        r = client.post("/analysis/sql", json={"sql": sql}, headers=_auth(tokens["analyst"]))
+        assert r.status_code == 400, r.text
+        assert "hashed_password" not in r.text
+
+    def test_session_identity_is_the_console_role(self, client, tokens):
+        r = client.post(
+            "/analysis/sql",
+            json={"sql": "SELECT session_user AS s, set_config('role','none',true) AS r, current_user AS c"},
+            headers=_auth(tokens["analyst"]),
+        )
+        assert r.status_code == 200, r.text
+        session_user, _, current = r.json()["rows"][0]
+        assert session_user == "rpa_sql_console"
+        assert current == "rpa_sql_console"
+
+    def test_unconfigured_console_is_disabled_not_downgraded(self, client, tokens, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "sql_console_database_url", None)
+        r = client.post("/analysis/sql", json={"sql": "SELECT 1"}, headers=_auth(tokens["analyst"]))
+        assert r.status_code == 503
+        assert "未配置" in r.json()["detail"]
+
+    def test_single_cell_payload_is_bounded(self, client, tokens, monkeypatch):
+        from app.views.ecommerce.analysis import sql_console as mod
+
+        monkeypatch.setattr(mod, "MAX_RESULT_CHARS", 1000)
+        r = client.post(
+            "/analysis/sql",
+            json={"sql": "SELECT repeat('x', 5000) AS big"},
+            headers=_auth(tokens["analyst"]),
+        )
+        assert r.status_code == 400
+        assert "过大" in r.json()["detail"]

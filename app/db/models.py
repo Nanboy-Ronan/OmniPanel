@@ -74,6 +74,10 @@ class Order(Base):
     buyer_nick = Column(String(200), nullable=True)
     coupon_name = Column(String(200), nullable=True)
     distributor = Column(String(200), nullable=True)
+    # See app/db/order_status.py: only COUNTED_GROUPS count toward revenue.
+    raw_status = Column(String(64), nullable=True)
+    status_group = Column(String(16), nullable=False, server_default="unknown", default="unknown")
+    refunded_amount = Column(Numeric(12, 2), nullable=True)
 
     customer = relationship("Customer", back_populates="orders")
 
@@ -91,6 +95,7 @@ class Order(Base):
         Index("ix_orders_platform", "platform"),
         Index("ix_orders_customer_key", "customer_key"),
         Index("ix_orders_date_platform", "order_date", "platform"),
+        Index("ix_orders_platform_order_id", "platform", "order_id"),
     )
 
 
@@ -112,6 +117,10 @@ class UploadBatch(Base):
     invalid_rows = Column(Integer, nullable=False, server_default="0")
     status = Column(String(32), nullable=False, server_default="completed")
     error_message = Column(Text, nullable=True)
+    # How many times the leader's crash-recovery loop has re-claimed this
+    # batch (app/db/maintenance.py). Capped so a poison file that kills the
+    # worker is not re-processed forever.
+    recovery_attempts = Column(Integer, nullable=False, server_default="0")
 
     __table_args__ = (
         Index("ix_upload_batches_platform", "platform"),
@@ -366,9 +375,10 @@ class OperationLog(Base):
     __tablename__ = "operation_log"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(UUID, nullable=False)
-    action = Column(String, nullable=False)
-    timestamp = Column(DateTime, nullable=False, server_default=func.now())
+    # NULL for sign-in attempts that match no account (alembic 0021).
+    user_id = Column(UUID, nullable=True)
+    action = Column(String, nullable=False, index=True)
+    timestamp = Column(DateTime, nullable=False, server_default=func.now(), index=True)
     detail = Column(Text, nullable=True)
 
 

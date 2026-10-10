@@ -6,9 +6,9 @@ report; the API itself still requires a bearer token.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,7 @@ from ..auth import current_active_user, current_admin_user
 from ..db import get_session
 from ..db.models import WeeklyReportRun
 from ..reports.service import generate_weekly_report
+from ..utils.logger import log_operation
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 admin_router = APIRouter(prefix="/admin/reports", tags=["reports"])
@@ -26,6 +27,7 @@ class WeeklyReportSummary(BaseModel):
     id: int
     week_start: date
     week_end: date
+    generated_at: datetime
     status: str
     wecom_sent: bool
 
@@ -65,10 +67,13 @@ async def get_weekly_report(
 
 @admin_router.post("/weekly/run", response_model=WeeklyReportDetail)
 async def trigger_weekly_report(
+    request: Request,
     _user=Depends(current_admin_user),
     session: AsyncSession = Depends(get_session),
 ):
     """Manually generate (or retry) the weekly report — for verifying the
     full pipeline (including the real WeCom push) without waiting for the
     scheduled loop to fire."""
-    return await generate_weekly_report(session)
+    run = await generate_weekly_report(session)
+    await log_operation(str(_user.id), "weekly_report_run", {"report_id": run.id, "week_start": run.week_start, "status": run.status, "wecom_sent": run.wecom_sent}, request=request)
+    return run

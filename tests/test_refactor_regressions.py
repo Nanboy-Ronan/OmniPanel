@@ -117,8 +117,15 @@ def test_manual_wechat_sync_continues_after_rollback(pg_async_url, monkeypatch):
         ))
         return {"posts_upserted": 1, "metrics_upserted": 1}
 
+    audits = []
+
+    async def audit(user_id, action, detail=None, **kwargs):
+        audits.append((user_id, action, detail))
+
     monkeypatch.setattr(routes, "_ensure_env_wechat_accounts", accounts)
     monkeypatch.setattr(routes, "_sync_one_wechat_account", sync)
+    monkeypatch.setattr(routes, "log_operation", audit)
+    admin = SimpleNamespace(id="00000000-0000-0000-0000-000000000001")
 
     async def run():
         async with factory() as session:
@@ -129,9 +136,13 @@ def test_manual_wechat_sync_continues_after_rollback(pg_async_url, monkeypatch):
             await session.commit()
             result = await routes.sync_wechat_official(
                 routes.WeChatSyncRequest(start_date=date(2026, 1, 1), end_date=date(2026, 1, 2)),
-                _u=None, session=session,
+                request=None, _u=admin, session=session,
             )
             assert result["status"] == "partial" and result["accounts_synced"] == 2
+            # The manual sync is audited, including which accounts failed.
+            [(user_id, action, detail)] = audits
+            assert action == "wechat_sync" and user_id == admin.id
+            assert len(detail["accounts"]) == 3 and len(detail["failed_accounts"]) == 1
             rows = (await session.execute(
                 select(MediaAccount.name, MediaSyncRun.status)
                 .join(MediaSyncRun, MediaSyncRun.account_id == MediaAccount.id)
@@ -418,6 +429,45 @@ def test_stale_upload_with_spooled_file_is_reclaimed(pg_async_url, monkeypatch, 
             assert len(jobs) == 1 and jobs[0][0] == str(path)
             await session.refresh(batch)
             assert batch.status == "recovering"
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_poison_upload_is_failed_after_max_recovery_attempts(pg_async_url, monkeypatch, tmp_path):
+    """A spooled file that keeps killing the worker must not be re-claimed
+    forever: after MAX_RECOVERY_ATTEMPTS claims the batch is failed."""
+    from app.config import settings
+    from app.db.maintenance import MAX_RECOVERY_ATTEMPTS, recover_uploads
+    from app.db.models import UploadBatch
+    from app.views.ecommerce.upload import upload_spool_path
+    from datetime import datetime
+
+    monkeypatch.setattr(settings, "backup_dir", str(tmp_path / "backups"))
+    engine = create_async_engine(pg_async_url, poolclass=NullPool)
+    factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def run():
+        async with factory() as session:
+            batch = UploadBatch(filename="poison.csv", platform="unknown", file_sha256="b" * 64,
+                                row_count=0, status="processing", uploaded_at=datetime(2020, 1, 1))
+            session.add(batch)
+            await session.commit()
+            path = upload_spool_path(batch.id, batch.filename)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("crashes the worker")
+            # Each claim's ingestion "crashes" (never completes), so the batch
+            # stays 'recovering' and is re-claimed on the next loop.
+            for attempt in range(1, MAX_RECOVERY_ATTEMPTS + 1):
+                jobs = await recover_uploads(session)
+                assert len(jobs) == 1
+                await session.refresh(batch)
+                assert batch.recovery_attempts == attempt
+            assert await recover_uploads(session) == []
+            await session.refresh(batch)
+            assert batch.status == "failed"
+            assert "已尝试 3 次" in batch.error_message
+            assert await recover_uploads(session) == []
         await engine.dispose()
 
     asyncio.run(run())

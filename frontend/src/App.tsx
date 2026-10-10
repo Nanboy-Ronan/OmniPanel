@@ -1,10 +1,23 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { BarChart3, ChevronRight, Database, LogOut, Menu, X } from 'lucide-react';
+import { z } from 'zod';
+import {
+  BarChart3,
+  ChevronRight,
+  LogOut,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  X,
+} from 'lucide-react';
 import { request, session, userSchema, loginStatusSchema, type User } from './lib/api';
 import { loginUrl, rememberLoginDestination } from './lib/auth';
 import { navigate, useLocationSearch } from './lib/navigation';
-import { EmptyState, ErrorState, Loading, PageBoundary } from './components/ui';
+import { EmptyState, ErrorState, Loading, PageBoundary, PageSkeleton } from './components/ui';
+import { CommandPalette } from './components/CommandPalette';
+import { ToastProvider } from './components/Toast';
+import { navIcon } from './lib/navIcons';
 import KpiPage from './pages/KpiPage';
 import TasksPage from './pages/TasksPage';
 import { routes, allowed, resolveRoute } from './lib/routes';
@@ -34,7 +47,7 @@ function Page({ page, user }: { page: string; user: User }) {
   const admin = user.role === 'admin';
   switch (page) {
     case 'overview':
-      return <KpiPage />;
+      return <KpiPage admin={admin} />;
     case 'tasks':
       return <TasksPage />;
     case 'orders':
@@ -128,6 +141,8 @@ export default function App({ callback = null }: { callback?: Promise<string> | 
       </div>
     );
   const logout = () => {
+    // Record the sign-out while the token is still valid; never block leaving on it.
+    void request('/auth/logout', z.null(), { method: 'POST' }).catch(() => undefined);
     session.clear();
     client.clear();
     setToken(null);
@@ -145,7 +160,11 @@ export default function App({ callback = null }: { callback?: Promise<string> | 
         </div>
       </div>
     );
-  return <Shell user={me.data} onLogout={logout} />;
+  return (
+    <ToastProvider>
+      <Shell user={me.data} onLogout={logout} />
+    </ToastProvider>
+  );
 }
 function Login({ error }: { error: Error | null }) {
   const status = useQuery({
@@ -195,6 +214,15 @@ function Login({ error }: { error: Error | null }) {
     </main>
   );
 }
+const COLLAPSE_KEY = 'rpa.console.navCollapsed';
+const shortcutLabel = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl K';
+function readCollapsed() {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
   const search = useLocationSearch();
   const route = resolveRoute(
@@ -202,10 +230,40 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
   const page = route?.key ?? 'unknown';
   const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const title = route?.title ?? '页面不存在';
+  const visible = routes.filter((item) => allowed(user.role, item.role));
   useEffect(() => {
     document.title = `${title} · OmniPanel`;
   }, [title]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey)) return;
+      // Ctrl+K is kill-line in macOS text fields; only ⌘K is claimed while editing text.
+      const target = event.target instanceof Element ? event.target : null;
+      if (
+        event.ctrlKey &&
+        !event.metaKey &&
+        target?.closest('textarea, [contenteditable]:not([contenteditable="false"])')
+      )
+        return;
+      event.preventDefault();
+      setPaletteOpen(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  const toggleCollapsed = () => {
+    setCollapsed((value) => {
+      try {
+        localStorage.setItem(COLLAPSE_KEY, value ? '0' : '1');
+      } catch {
+        // Preference is a convenience; the rail still toggles for this visit.
+      }
+      return !value;
+    });
+  };
   const go = (value: string) => {
     navigate({
       page: value,
@@ -226,11 +284,13 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
       note: null,
       metric: null,
       source: null,
+      report: null,
     });
     setNavOpen(false);
+    setPaletteOpen(false);
   };
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${collapsed ? 'nav-collapsed' : ''}`}>
       <a className="skip-link" href="#content">
         跳到主要内容
       </a>
@@ -240,40 +300,46 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
       <aside className={`sidebar ${navOpen ? 'open' : ''}`} aria-label="主导航">
         <div className="brand">
           <span className="brand-icon">
-            <BarChart3 size={23} />
+            <BarChart3 size={20} />
           </span>
           <div>
             OmniPanel<small>BUSINESS INTELLIGENCE</small>
           </div>
-          <button className="mobile-close" onClick={() => setNavOpen(false)} aria-label="关闭导航">
+          <button
+            className="mobile-close icon-button"
+            onClick={() => setNavOpen(false)}
+            aria-label="关闭导航"
+          >
             <X size={18} />
           </button>
         </div>
         <nav>
           {['商城分析', '数据管理', '内容分析', '系统管理'].map((group) => {
-            const items = routes.filter(
-              (item) => item.group === group && allowed(user.role, item.role),
-            );
+            const items = visible.filter((item) => item.group === group);
             return items.length ? (
               <div key={group}>
                 <div className="nav-label">{group}</div>
-                {items.map((item) => (
-                  <button
-                    key={item.key}
-                    className={`nav-item ${page === item.key ? 'active' : ''}`}
-                    aria-current={page === item.key ? 'page' : undefined}
-                    onClick={() => go(item.key)}
-                  >
-                    <Database size={16} />
-                    {item.title}
-                  </button>
-                ))}
+                {items.map((item) => {
+                  const Icon = navIcon(item.key);
+                  return (
+                    <button
+                      key={item.key}
+                      className={`nav-item ${page === item.key ? 'active' : ''}`}
+                      aria-current={page === item.key ? 'page' : undefined}
+                      title={collapsed ? item.title : undefined}
+                      onClick={() => go(item.key)}
+                    >
+                      <Icon size={17} aria-hidden />
+                      <span className="nav-text">{item.title}</span>
+                    </button>
+                  );
+                })}
               </div>
             ) : null;
           })}
         </nav>
         <div className="sidebar-footer">
-          <div className="avatar">
+          <div className="avatar" title={user.display_name || user.email}>
             {(user.display_name || user.email).slice(0, 1).toUpperCase()}
           </div>
           <div className="user-info">
@@ -289,22 +355,40 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
         <header className="topbar">
           <div>
             <button
-              className="mobile-menu"
+              className="mobile-menu icon-button"
               aria-label="打开导航"
               aria-expanded={navOpen}
               onClick={() => setNavOpen(true)}
             >
               <Menu size={20} />
             </button>
-            <span>{route?.group ?? '工作台'}</span>
-            <ChevronRight size={14} />
+            <button
+              className="collapse-toggle icon-button"
+              aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
+              title={collapsed ? '展开侧边栏' : '收起侧边栏'}
+              aria-pressed={collapsed}
+              onClick={toggleCollapsed}
+            >
+              {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            </button>
+            <span className="crumb-group">{route?.group ?? '工作台'}</span>
+            <ChevronRight size={14} className="crumb-sep" />
             <strong>{title}</strong>
           </div>
-          <span className="workspace-label">经营数据中心</span>
+          <button
+            className="search-trigger"
+            aria-label="快速跳转页面"
+            aria-keyshortcuts="Meta+K Control+K"
+            onClick={() => setPaletteOpen(true)}
+          >
+            <Search size={15} />
+            <span>跳转到页面…</span>
+            <kbd>{shortcutLabel}</kbd>
+          </button>
         </header>
         <main id="content" className="content" tabIndex={-1}>
           <PageBoundary key={page}>
-            <Suspense fallback={<Loading label="正在加载页面" />}>
+            <Suspense fallback={<PageSkeleton />}>
               {!route ? (
                 <EmptyState title="页面不存在">
                   <button onClick={() => go(user.role === 'viewer' ? 'orders' : 'overview')}>
@@ -326,6 +410,14 @@ function Shell({ user, onLogout }: { user: User; onLogout: () => void }) {
           </footer>
         </main>
       </div>
+      {paletteOpen && (
+        <CommandPalette
+          items={visible}
+          current={page}
+          onGo={go}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
     </div>
   );
 }

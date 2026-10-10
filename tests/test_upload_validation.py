@@ -96,9 +96,9 @@ def client(pg_async_url, monkeypatch):
 def admin_token(client):
     client.post(
         "/auth/register",
-        json={"email": "admin@upload.com", "password": "pw", "role": "viewer"},
+        json={"email": "admin@upload.com", "password": "pw-test-passphrase", "role": "viewer"},
     )
-    r = client.post("/auth/jwt/login", data={"username": "admin@upload.com", "password": "pw"})
+    r = client.post("/auth/jwt/login", data={"username": "admin@upload.com", "password": "pw-test-passphrase"})
     return r.json()["access_token"]
 
 

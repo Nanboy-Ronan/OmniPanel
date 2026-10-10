@@ -117,3 +117,21 @@ class TestHealthEndpoint:
         body = r.json()
         # 错误信息应该可读，而不是空字符串
         assert body["database"] and body["database"] != "ok"
+
+
+def test_health_does_not_echo_driver_errors(client, monkeypatch):
+    """/health is unauthenticated; driver messages can name hosts and users."""
+    import app.main as main_mod
+
+    async def _bad_check():
+        raise Exception('password authentication failed for user "rpa_app" at 10.0.0.5')
+
+    monkeypatch.setattr(main_mod, "_check_db", _bad_check)
+    r = client.get("/health")
+    assert r.status_code == 503
+    assert "rpa_app" not in r.text and "10.0.0.5" not in r.text
+
+
+def test_api_schema_and_docs_are_not_public(client):
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert client.get(path).status_code == 404

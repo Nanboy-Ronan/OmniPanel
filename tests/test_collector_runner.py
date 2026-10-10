@@ -709,3 +709,86 @@ class TestTargetLabel:
         qa = runner.Target(platform="zhihu", session_file=Path("z.json"), content_type="qa")
         assert article.label == "知乎·文章"
         assert qa.label == "知乎·问答"
+
+
+class TestRunCollectTimeBudgetAndInterruption:
+    """systemd's TimeoutStartSec=900 used to kill a slow run before the summary
+    alert went out, leaving CollectorRun rows 'running' forever."""
+
+    def _two_accounts(self, sessions):
+        _touch(sessions / "xhs_1.json")
+        _touch(sessions / "xhs_2.json")
+        return _FakeAPI(xhs_accounts=[
+            {"id": 1, "is_active": True, "name": "甲"},
+            {"id": 2, "is_active": True, "name": "乙"},
+        ])
+
+    def test_budget_exhausted_skips_remaining_targets_and_alerts(
+        self, sessions, _fake_bookkeeping, alerts, monkeypatch
+    ):
+        clock = {"t": 0.0}
+        monkeypatch.setattr(runner, "_monotonic", lambda: clock["t"])
+        api = self._two_accounts(sessions)
+
+        def slow_collect(storage_path, headless=None):
+            clock["t"] += 800  # first target alone eats the whole budget
+            return b"ok", "f.xlsx"
+
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        rc = runner.run_collect(settings=settings, api_client=api,
+                                collect_fns={"xhs": slow_collect, "zhihu": lambda *a, **kw: (b"", "x")})
+        assert rc == 1
+        assert [f["status"] for f in _fake_bookkeeping["finished"]] == ["success"]
+        assert len(_fake_bookkeeping["started"]) == 1
+        assert len(alerts) == 1
+        assert "时间预算" in alerts[0] and "小红书·乙" in alerts[0]
+        assert "成功的目标" in alerts[0]
+
+    def test_no_retry_when_budget_would_be_exceeded(self, sessions, _fake_bookkeeping, alerts, monkeypatch, fake_sleep):
+        clock = {"t": 0.0}
+        monkeypatch.setattr(runner, "_monotonic", lambda: clock["t"])
+        _touch(sessions / "xhs_1.json")
+        api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True, "name": "甲"}])
+        calls = {"n": 0}
+
+        def timeout(storage_path, headless=None):
+            calls["n"] += 1
+            clock["t"] += 700
+            raise DownloadTimeoutError("slow")
+
+        settings = _FakeSettings(collector_zhihu_enabled=False, collector_collect_retries=3,
+                                 collector_retry_delay_seconds=120)
+        rc = runner.run_collect(settings=settings, api_client=api,
+                                collect_fns={"xhs": timeout, "zhihu": lambda *a, **kw: (b"", "x")})
+        assert rc == 1
+        assert calls["n"] == 1 and fake_sleep == []
+        assert _fake_bookkeeping["finished"][0]["status"] == "download_failed"
+
+    def test_sigterm_marks_in_flight_run_killed_and_still_alerts(self, sessions, _fake_bookkeeping, alerts):
+        api = self._two_accounts(sessions)
+
+        def collect(storage_path, headless=None):
+            if "xhs_2" in str(storage_path):
+                raise runner.CollectorInterrupted("received signal 15")
+            return b"ok", "f.xlsx"
+
+        settings = _FakeSettings(collector_zhihu_enabled=False)
+        with pytest.raises(runner.CollectorInterrupted):
+            runner.run_collect(settings=settings, api_client=api,
+                               collect_fns={"xhs": collect, "zhihu": lambda *a, **kw: (b"", "x")})
+        finished = _fake_bookkeeping["finished"]
+        assert [f["status"] for f in finished] == ["success", "killed"]
+        assert finished[1]["id"] == 2
+        assert len(alerts) == 1
+        assert "中断" in alerts[0] and "小红书·甲" in alerts[0]
+
+    def test_cli_sigterm_handler_raises_collector_interrupted(self, monkeypatch):
+        import signal
+
+        from app.collector import cli
+
+        installed = {}
+        monkeypatch.setattr(signal, "signal", lambda sig, handler: installed.setdefault(sig, handler))
+        cli._install_sigterm_handler()
+        with pytest.raises(runner.CollectorInterrupted):
+            installed[signal.SIGTERM](signal.SIGTERM, None)
