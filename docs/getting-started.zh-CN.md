@@ -67,6 +67,16 @@ make db-upgrade        # 等价于：alembic upgrade head
 make db-check
 ```
 
+SQL 查询台和中文问数据使用独立的只读登录角色 `rpa_sql_console`，迁移会创建这个角色，但不设密码。要启用它们，请用数据库所有者设置密码，并在 `.env` 里配置连接：
+
+```bash
+psql <dbname> -c "ALTER ROLE rpa_sql_console PASSWORD '<足够长的随机密码>'"
+# .env
+RAP_SQL_CONSOLE_DATABASE_URL=postgresql+asyncpg://rpa_sql_console:<密码>@<host>:5432/<dbname>
+```
+
+配置之前，查询台会返回 503"未配置"；它不会退回使用应用自己的数据库角色。
+
 ## 5. 启动后端
 
 ```bash
@@ -139,6 +149,14 @@ OmniPanel 纯粹依靠列名来识别平台来源。请确保上传的是从平�
 ```sql
 UPDATE "user" SET role = 'admin' WHERE email = 'your@email.com';
 ```
+
+**SQL 查询台提示未配置（503）**
+
+`RAP_SQL_CONSOLE_DATABASE_URL` 为空，见第 4 步。
+
+**企业微信新成员登录后提示"账号尚未开通"**
+
+新成员需要管理员在用户管理页开通。设置 `WECOM_NEW_USERS_ACTIVE=true` 可以跳过这一步。
 
 **中文问数据返回 503**
 

@@ -75,7 +75,7 @@ describe('table paging', () => {
     });
     expect(bodyRows()).toHaveLength(31);
     expect(screen.getByRole('spinbutton', { name: '跳转到页码' })).toHaveValue(3);
-    expect(sessionStorage.getItem('rpa.console.pageSize')).toBe('50');
+    expect(sessionStorage.getItem('omnipanel.console.pageSize')).toBe('50');
     unmount();
     render(<RecordTable rows={many} caption="分页验收" exportable={false} />);
     expect(bodyRows()).toHaveLength(51);

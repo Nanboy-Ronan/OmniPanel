@@ -52,16 +52,16 @@ describe('SQL console', () => {
     // Plain Enter keeps editing.
     fireEvent.keyDown(editor, { key: 'Enter' });
     expect(sqlCalls(fetch)).toHaveLength(2);
-    expect(JSON.parse(localStorage.getItem('rpa.console.sql.history')!)).toHaveLength(2);
+    expect(JSON.parse(localStorage.getItem('omnipanel.console.sql.history')!)).toHaveLength(2);
     const history = screen.getByText(/最近查询 2/).closest('details')!;
     fireEvent.click(within(history).getByTitle('SELECT 1'));
     expect(editor).toHaveValue('SELECT 1');
     fireEvent.click(within(history).getByRole('button', { name: '清空历史' }));
     expect(screen.queryByText(/最近查询/)).not.toBeInTheDocument();
-    expect(localStorage.getItem('rpa.console.sql.history')).toBeNull();
+    expect(localStorage.getItem('omnipanel.console.sql.history')).toBeNull();
   });
   it('keeps at most 20 distinct queries and survives unreadable storage', async () => {
-    localStorage.setItem('rpa.console.sql.history', '{not json');
+    localStorage.setItem('omnipanel.console.sql.history', '{not json');
     const fetch = stub();
     renderPage();
     const editor = screen.getByRole('textbox', { name: 'SQL' });
@@ -70,7 +70,7 @@ describe('SQL console', () => {
       fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true });
       await waitFor(() => expect(sqlCalls(fetch)).toHaveLength(i + 1));
     }
-    const saved = JSON.parse(localStorage.getItem('rpa.console.sql.history')!);
+    const saved = JSON.parse(localStorage.getItem('omnipanel.console.sql.history')!);
     expect(saved).toHaveLength(20);
     expect(saved[0].sql).toBe('SELECT 0');
   });

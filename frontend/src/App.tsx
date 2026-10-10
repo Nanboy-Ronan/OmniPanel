@@ -214,7 +214,7 @@ function Login({ error }: { error: Error | null }) {
     </main>
   );
 }
-const COLLAPSE_KEY = 'rpa.console.navCollapsed';
+const COLLAPSE_KEY = 'omnipanel.console.navCollapsed';
 const shortcutLabel = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl K';
 function readCollapsed() {
   try {

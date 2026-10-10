@@ -4,6 +4,7 @@ Run `npm --prefix frontend run build`, start the fixture server with
 `node frontend/scripts/preview-fixtures.mjs`, then run this file with a Python
 environment containing Playwright and its Chromium browser.
 """
+import os
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -18,12 +19,15 @@ PANELS = {
     "cohort": "retention",
     "identity": "identity",
     "sql": "sql",
+    "logs": "logs",
 }
 
 
 def main():
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        # OMNIPANEL_BROWSER_CHANNEL=chrome uses an installed Chrome instead of
+        # Playwright's bundled Chromium.
+        browser = playwright.chromium.launch(channel=os.environ.get("OMNIPANEL_BROWSER_CHANNEL") or None)
         context = browser.new_context(
             viewport={"width": 1600, "height": 1350},
             device_scale_factor=1,

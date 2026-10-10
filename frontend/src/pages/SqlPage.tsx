@@ -16,7 +16,7 @@ const resultSchema = z.object({
   explanation: z.string().optional(),
   error: z.string().nullable().optional(),
 });
-const HISTORY_KEY = 'rpa.console.sql.history';
+const HISTORY_KEY = 'omnipanel.console.sql.history';
 const HISTORY_LIMIT = 20;
 type HistoryEntry = { sql: string; at: string };
 const historySchema = z.array(z.object({ sql: z.string(), at: z.string() }));

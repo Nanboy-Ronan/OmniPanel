@@ -70,6 +70,19 @@ This creates every table the app needs. Verify with:
 make db-check
 ```
 
+The SQL console and NL-to-SQL run as their own read-only login role,
+`rpa_sql_console`, which the migrations create without a password. To enable
+them, set a password as the database owner and point the app at it:
+
+```bash
+psql <dbname> -c "ALTER ROLE rpa_sql_console PASSWORD '<a long random password>'"
+# .env
+RAP_SQL_CONSOLE_DATABASE_URL=postgresql+asyncpg://rpa_sql_console:<password>@<host>:5432/<dbname>
+```
+
+Until this is set the console answers 503 "not configured"; it never falls
+back to the application's own database role.
+
 ## 5. Run the backend
 
 ```bash
@@ -151,6 +164,14 @@ The auto-promotion to `admin` only applies to the very first user row inserted i
 ```sql
 UPDATE "user" SET role = 'admin' WHERE email = 'your@email.com';
 ```
+
+**The SQL console says it is not configured (503)**
+
+`RAP_SQL_CONSOLE_DATABASE_URL` is empty — see step 4.
+
+**A new WeCom member sees "账号尚未开通"**
+
+New members wait for approval: an admin enables them on the user management page. Set `WECOM_NEW_USERS_ACTIVE=true` to skip this.
 
 **NL-to-SQL returns 503**
 

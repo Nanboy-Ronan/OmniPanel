@@ -386,7 +386,7 @@ export function RecordTable({
   );
 }
 export const PAGE_SIZES = [25, 50, 100] as const;
-const PAGE_SIZE_KEY = 'rpa.console.pageSize';
+const PAGE_SIZE_KEY = 'omnipanel.console.pageSize';
 function readPageSize() {
   try {
     const value = Number(sessionStorage.getItem(PAGE_SIZE_KEY));

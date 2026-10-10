@@ -72,7 +72,7 @@ Path A: Auto-sync                  Path B: Manual upload
 | ![Pugongying campaigns](docs/images/screenshot_pgy.png) | ![Database status](docs/images/screenshot_database.png) |
 
 <details>
-<summary>More panels: retention, identity, and SQL</summary>
+<summary>More panels: retention, identity, SQL, and audit log</summary>
 
 ![Cohort retention](docs/images/screenshot_cohort.png)
 
@@ -80,13 +80,15 @@ Path A: Auto-sync                  Path B: Manual upload
 
 ![SQL console](docs/images/screenshot_sql.png)
 
+![Audit log](docs/images/screenshot_logs.png)
+
 </details>
 
 ---
 
 ## Features
 
-- **React workbench** — 22 routes with shared filters, role-aware navigation, and a responsive layout.
+- **React workbench** — 22 routes with shared filters, role-aware navigation, and a responsive layout; a collapsible rail and page switcher (Ctrl/Cmd+K), sortable and selectable tables with remembered page sizes, drag-and-drop uploads with progress and cancel, and toast notifications.
 - **Interactive commerce BI** — linked revenue trends, channel contributions, product rankings, regional distribution, and period comparisons.
 - **Content and cooperation analytics** — readable long-tail distributions, linked Pugongying campaigns/bloggers, historical visibility, and source-health checks.
 - **Live operations panels** — explicit account permissions and database schema, row counts, and backup metadata derived from actual checks.
@@ -108,6 +110,7 @@ Path A: Auto-sync                  Path B: Manual upload
 - **Customer overview** — new vs. returning, repurchase rate and time-to-repurchase, per-customer order history, regional distribution
 - **Cohort retention** — monthly cohorts with right-censored retention curves
 - **Order browser** — server-side search and column filters, complete filtered CSV exports, and drill-down to original platform rows
+- **Order status and refunds** — each order keeps its platform status; revenue, order counts, AOV and customer metrics exclude closed, cancelled, unpaid and JD-deleted orders and subtract Youzan refunds, from one rule in `app/db/order_status.py`. Re-uploading an export refreshes statuses, and the dashboard shows what was excluded
 - **Cross-platform customer identity** — merge the same person's orders across Youzan, JD, and Tmall by phone number, with explicit exact/fuzzy confidence tiers (JD masks phone numbers; the fuzzy tier uses partial fingerprint matching and is structurally separate from the exact tier)
 
 ### Content analytics
@@ -118,20 +121,20 @@ Path A: Auto-sync                  Path B: Manual upload
 - **Content-to-sales impact** — correlate publish dates with order volume to measure content-driven sales, across WeChat, XHS, and Zhihu
 - **Topic-tag diagnostics** — keyword-based content-topic tagging (XHS, Zhihu) for spotting which subjects actually drive engagement
 - **KOL/KOC collaboration analytics (Pugongying)** — a 7-view dashboard covering blogger- and campaign-level ROI (spend, impressions, reads, engagement rate), audience demographics (age/gender/device/region/interest breakdowns), and component-level click performance (text links, bottom bar, interactive stickers, comment-area links)
-- **Weekly all-platform report** — WeChat, XHS, Channels, Zhihu, Pugongying, and Youzan/JD/Tmall sales in one report, with interactive charts, follower/source breakdowns, current-week and long-tail content, optional LLM commentary, and retryable WeCom delivery
+- **Weekly all-platform report** — WeChat, XHS, Channels, Zhihu, Pugongying, and Youzan/JD/Tmall sales in one report, with interactive charts, follower/source breakdowns, current-week and long-tail content, optional LLM commentary, and retryable WeCom delivery; the reader has a week rail, section navigation, and flags weeks whose orders are not fully uploaded yet
 - **Data freshness** — distinguish the latest covered content date from the last successful import or sync
 
 ### Query layer
 
-- **SQL console** — queries execute under a restricted PostgreSQL role over reporting views that exclude sensitive columns, with SELECT/WITH validation, automatic limits, timeout, and audit logging. Save and share frequently-used queries.
+- **SQL console** — queries execute under a dedicated read-only PostgreSQL login role (so a query cannot reset its way out) over reporting views that exclude sensitive columns, with SELECT/WITH validation, automatic limits, timeout, and audit logging. Save and share frequently-used queries; Ctrl/Cmd+Enter to run, local query history, and CSV export.
 - **Natural-language queries (NL-to-SQL)** — ask questions in plain Chinese and get back generated SQL + results. Pluggable LLM provider support (Anthropic, OpenAI, MiniMax, DeepSeek, Moonshot, Zhipu); API keys stay server-side and users pick provider/model from a dropdown.
 
 ### Security & operations
 
 - **Three roles** — viewer (read-only) / analyst (upload + analyze) / admin (user management, DB operations)
-- **Enterprise WeChat SSO** — QR-code sign-in for the React console
-- **Audit log** — every query and mutating action is written to an append-only operation log
-- **Background jobs** — scheduled WeChat sync, daily/monthly backups, leader failover, task restart, and recovery of interrupted uploads from persisted source files
+- **Enterprise WeChat SSO** — QR-code sign-in for the React console; new members wait for an admin to approve them (`WECOM_NEW_USERS_ACTIVE`), and the API's interactive docs are not served publicly
+- **Audit log** — every sign-in attempt (including failures, with the reason), sign-out, query, export, customer/order view and data or permission change is logged with source IP and device; the log page filters by category, user, date and keyword
+- **Background jobs** — scheduled WeChat sync, validated private (0600) daily/monthly backups with an off-site hook and a restore drill (`scripts/restore_drill.sh`), leader failover, task restart, and recovery of interrupted uploads from persisted source files
 - **Dashboard navigation** — role-aware navigation, shareable filter URLs, saved views, session-expiry handling, and consistent chart colors
 
 Existing installations should follow the [upgrade notes](docs/upgrading.md) before starting the updated API. The upgrade includes migrations 0015–0017 and requires a migration account able to create PostgreSQL roles.
