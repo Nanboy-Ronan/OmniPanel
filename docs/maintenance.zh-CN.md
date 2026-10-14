@@ -61,3 +61,10 @@ make test
   需要本机装了 [`pipx`](https://pipx.pypa.io/)；它在临时环境里跑，不会污染项目或 base 环境。
   没有 pipx 时：`python -m pip install pip-audit && python -m pip_audit -r requirements.txt`
   （建议在项目 venv 内，不要在 anaconda base 里装）。
+
+## 认证密钥轮换
+
+生成新的随机 `RAP_SECRET`，将旧值放入 `RAP_SECRET_PREVIOUS`（多个值以逗号分隔），
+然后重启 API。新令牌使用新密钥，已有令牌在过渡期仍可验证。等待至少
+`TOKEN_LIFETIME_SECONDS`（默认 24 小时）后，删除旧密钥并再次重启。若密钥已泄漏，
+应立即移除，不保留过渡期。所有密钥只存放在私有服务端配置中，不提交到仓库。

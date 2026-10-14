@@ -1,342 +1,157 @@
 # OmniPanel
 
-**Turn your e-commerce and self-media platform data into clean dashboards, customer analytics, and natural-language queries — self-hosted, zero scraping.**
+**A self-hosted workspace for commerce, content, and customer analytics.**
+
+Bring orders, content performance, and creator partnerships into one place. Import platform exports or connect a collector, explore the results, and share weekly reports—with data coverage and metric definitions visible alongside the numbers.
 
 [![CI](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml)
-[![License: AGPL-3.0](https://img.shields.io/github/license/Nanboy-Ronan/OmniPanel)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.13%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-13%2B-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![GitHub stars](https://img.shields.io/github/stars/Nanboy-Ronan/OmniPanel?style=social)](https://github.com/Nanboy-Ronan/OmniPanel/stargazers)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-[English](README.md) | [中文](README.zh-CN.md)
+**English** · [简体中文](README.zh-CN.md)
 
----
+[Try the preview](#try-the-preview) · [Supported platforms](#supported-platforms) · [Self-host](#self-host) · [Documentation](#documentation)
 
-> 🤖 WorkBuddy integration is available: scoped read-only queries, OAuth connections, queued reports, and owner-approved collector login repair. See the [integration guide](docs/workbuddy-integration.md).
+![OmniPanel business overview: revenue trends, channel mix, and data coverage](docs/images/screenshot_overview.png)
 
-## What is OmniPanel?
+*Every screenshot uses synthetic demo data. No production accounts, credentials, or business exports are included.*
 
-You sell on platforms like Youzan, JD, and Tmall, and you create content on WeChat Official Accounts, Xiaohongshu (XHS), and Zhihu. Each platform has data you need — but the formats are all different. Dozens of differently-named columns. "Customer" doesn't mean the same thing across platforms. Some metrics are cumulative. The same order might appear in multiple rows and needs de-duplication.
+## From platform exports to useful answers
 
-General-purpose BI tools (Tableau, Metabase, etc.) won't handle this for you. They draw charts on whatever schema you hand them — whether the numbers are right is your problem.
+OmniPanel is built for teams that sell across marketplaces and publish across content platforms. It handles platform-specific import formats, order normalization, duplicate detection, and analytics in the same application.
 
-**OmniPanel handles the correctness layer for you.** How data gets in depends on the platform:
-
-- **Platforms with an API** (WeChat Official Accounts) — configure once, background sync pulls fresh data daily
-- **Platforms with a login portal** (XHS, Zhihu, WeChat Channels, XHS's Pugongying KOL/KOC collaboration platform, and JD's merchant back-office) — a built-in collector agent logs in and exports automatically
-- **Export-only platforms** (Youzan, Tmall orders) — upload the spreadsheet, auto-detected by column fingerprint (JD also accepts a manual export as a fallback)
-
-Regardless of how it arrives, the data is automatically:
-
-- 🏷️ **Identified** — column fingerprinting detects which platform each dataset came from
-- 🔄 **Normalized** — mapped onto one unified schema (customer, amount, date, region, etc.)
-- 📊 **Analyzed** — dashboards, customer profiles, cohort retention, cross-platform identity resolution, a SQL console, and natural-language queries
-
-All data comes through **official channels** (official APIs, official export features) — no scraping, no grey areas.
-
-### How it works
-
-Data arrives through two paths; the analytics experience is the same either way:
-
-```
-Path A: Auto-sync                  Path B: Manual upload
-(WeChat OA / XHS / Zhihu /         (Youzan / Tmall orders)
- WeChat Channels / JD)
-        │                                    │
-        └──────────┬─────────────────────────┘
-                   ▼
-        OmniPanel detects → normalizes → stores
-                   ▼
-        Dashboards · Customer analytics · SQL console · NL queries
-```
-
-- **Auto-sync**: configure a platform account once; the background job pulls fresh data daily with no manual steps
-- **Manual upload**: export a file from the platform's back-office, drop it into OmniPanel — auto-detected and stored (content-hash de-duplication means re-uploads are safe)
-- **Analyze**: open dashboards, write SQL in the console, or ask questions in plain Chinese ("what was the repurchase rate in Guangdong last month?")
-
----
-
-## Screenshots
-
-> Captured from the React workbench using synthetic demo data only.
-
-![Business overview](docs/images/screenshot_overview.png)
-
-| Commerce analytics | Content analytics |
+| Your question | Where to start |
 |---|---|
-| ![Commerce analytics](docs/images/screenshot_analysis.png) | ![Content analytics](docs/images/screenshot_content.png) |
+| How are sales changing, and which channels or products contribute? | Commerce dashboard with period comparisons, channel mix, product rankings, and regional breakdowns |
+| Who returns, and how often? | Customer profiles, monthly retention cohorts, and cross-platform matching with separate exact and fuzzy results |
+| Which content gets attention and engagement? | Content distributions, publishing trends, account metrics, and audience sources |
+| How are creator partnerships performing? | Pugongying campaign and creator comparisons, spend, reach, and interaction costs |
+| What changed this week? | Saved weekly reports across commerce and content, with coverage warnings and optional commentary |
+| Can I investigate further? | Read-only SQL, natural-language queries, or scoped WorkBuddy tools |
 
-| Pugongying campaigns | Database status |
+Revenue follows shared order-status and refund rules. Dashboards distinguish data coverage from import time; incomplete periods remain visible. Content-to-sales views show associations, while exact and fuzzy customer matches remain separate.
+
+## Explore the workspace
+
+| Commerce analytics | Content performance |
 |---|---|
-| ![Pugongying campaigns](docs/images/screenshot_pgy.png) | ![Database status](docs/images/screenshot_database.png) |
+| ![Commerce analytics](docs/images/screenshot_analysis.png) | ![Content performance](docs/images/screenshot_content.png) |
 
-![WorkBuddy connection · synthetic demo](docs/images/screenshot_workbuddy.png)
+| Creator partnerships | WorkBuddy connection |
+|---|---|
+| ![Pugongying partnerships](docs/images/screenshot_pgy.png) | ![WorkBuddy connection using synthetic data](docs/images/screenshot_workbuddy.png) |
 
 <details>
-<summary>More panels: retention, identity, SQL, and audit log</summary>
+<summary>Customer retention, identity matching, SQL, and operations</summary>
 
-![Cohort retention](docs/images/screenshot_cohort.png)
+| Customer retention | Cross-platform customers |
+|---|---|
+| ![Monthly retention cohorts](docs/images/screenshot_cohort.png) | ![Customer identity matching](docs/images/screenshot_identity.png) |
 
-![Customer identity](docs/images/screenshot_identity.png)
+| SQL console | Database health |
+|---|---|
+| ![SQL console](docs/images/screenshot_sql.png) | ![Database status](docs/images/screenshot_database.png) |
 
-![SQL console](docs/images/screenshot_sql.png)
-
-![Audit log](docs/images/screenshot_logs.png)
+![Audit log with synthetic accounts and events](docs/images/screenshot_logs.png)
 
 </details>
 
----
+## Try the preview
 
-## Features
+Explore the interface locally with synthetic data. This preview needs **Node.js 22.18+**, with no database or Enterprise WeChat credentials.
 
-- **React workbench** — 23 routes with shared filters, role-aware navigation, and a responsive layout; a collapsible rail and page switcher (Ctrl/Cmd+K), sortable and selectable tables with remembered page sizes, drag-and-drop uploads with progress and cancel, and toast notifications.
-- **Interactive commerce BI** — linked revenue trends, channel contributions, product rankings, regional distribution, and period comparisons.
-- **Content and cooperation analytics** — readable long-tail distributions, linked Pugongying campaigns/bloggers, historical visibility, and source-health checks.
-- **Live operations panels** — explicit account permissions and database schema, row counts, and backup metadata derived from actual checks.
-
-### WorkBuddy integration
-
-Scoped read-only MCP tools, PKCE OAuth and revocable credentials; queued weekly reports with retries and evidence validation; owner-approved local collector login repair. External services are opt-in and examples use synthetic data. See [deployment and permissions](docs/workbuddy-integration.md).
-
-### Data ingestion
-
-| Type | Platforms | How |
-|---|---|---|
-| E-commerce orders | Youzan, Tmall | Upload official exports (.xlsx/.xls/.csv); auto-detected by column fingerprint |
-| E-commerce orders | JD | Upload official exports, **or** the built-in collector agent reads the merchant back-office's rendered (already-masked) order list — no export password needed |
-| WeChat OA | WeChat Official Accounts | Automatic API sync (daily scheduled pull), no manual steps needed |
-| Content platforms | Xiaohongshu (XHS), Zhihu, WeChat Channels (视频号) | Upload official exports or use the built-in automated collector agent |
-| KOL/KOC collaboration | Pugongying (蒲公英, XHS's official creator-collaboration platform) | Upload official campaign exports or use the same collector agent |
-
-> Content-hash de-duplication means re-uploading the same file is safe — no duplicates.
-
-### E-commerce analytics
-
-- **Customer overview** — new vs. returning, repurchase rate and time-to-repurchase, per-customer order history, regional distribution
-- **Cohort retention** — monthly cohorts with right-censored retention curves
-- **Order browser** — server-side search and column filters, complete filtered CSV exports, and drill-down to original platform rows
-- **Order status and refunds** — each order keeps its platform status; revenue, order counts, AOV and customer metrics exclude closed, cancelled, unpaid and JD-deleted orders and subtract Youzan refunds, from one rule in `app/db/order_status.py`. Re-uploading an export refreshes statuses, and the dashboard shows what was excluded
-- **Cross-platform customer identity** — merge the same person's orders across Youzan, JD, and Tmall by phone number, with explicit exact/fuzzy confidence tiers (JD masks phone numbers; the fuzzy tier uses partial fingerprint matching and is structurally separate from the exact tier)
-
-### Content analytics
-
-- **WeChat traffic** — daily reads, shares, followers; trends and comparisons, with a follower acquisition-scene breakdown (search, QR scan, article menu, …)
-- **WeChat Channels (视频号) analytics** — per-video plays, the two distinct "like" signals (推荐/喜欢), completion rate, and a WeCom-integration engagement cluster (link clicks, added-to-contacts, set-as-ringtone/status) unique to this platform
-- **XHS account-level overview** — daily fan gain/loss, watch time, and completion rate at the account level (not just per-note), plus a 7-/30-day audience-source channel breakdown
-- **Content-to-sales impact** — correlate publish dates with order volume to measure content-driven sales, across WeChat, XHS, and Zhihu
-- **Topic-tag diagnostics** — keyword-based content-topic tagging (XHS, Zhihu) for spotting which subjects actually drive engagement
-- **KOL/KOC collaboration analytics (Pugongying)** — a 7-view dashboard covering blogger- and campaign-level ROI (spend, impressions, reads, engagement rate), audience demographics (age/gender/device/region/interest breakdowns), and component-level click performance (text links, bottom bar, interactive stickers, comment-area links)
-- **Weekly all-platform report** — WeChat, XHS, Channels, Zhihu, Pugongying, and Youzan/JD/Tmall sales in one report, with interactive charts, follower/source breakdowns, current-week and long-tail content, optional LLM commentary, and retryable WeCom delivery; the reader has a week rail, section navigation, and flags weeks whose orders are not fully uploaded yet
-- **Data freshness** — distinguish the latest covered content date from the last successful import or sync
-
-### Query layer
-
-- **SQL console** — queries execute under a dedicated read-only PostgreSQL login role (so a query cannot reset its way out) over reporting views that exclude sensitive columns, with SELECT/WITH validation, automatic limits, timeout, and audit logging. Save and share frequently-used queries; Ctrl/Cmd+Enter to run, local query history, and CSV export.
-- **Natural-language queries (NL-to-SQL)** — ask questions in plain Chinese and get back generated SQL + results. Pluggable LLM provider support (Anthropic, OpenAI, MiniMax, DeepSeek, Moonshot, Zhipu); API keys stay server-side and users pick provider/model from a dropdown.
-
-### Security & operations
-
-- **Three roles** — viewer (read-only) / analyst (upload + analyze) / admin (user management, DB operations)
-- **Enterprise WeChat SSO** — QR-code sign-in for the React console; new members wait for an admin to approve them (`WECOM_NEW_USERS_ACTIVE`), and the API's interactive docs are not served publicly
-- **Audit log** — every sign-in attempt (including failures, with the reason), sign-out, query, export, customer/order view and data or permission change is logged with source IP and device; the log page filters by category, user, date and keyword
-- **Background jobs** — scheduled WeChat sync, validated private (0600) daily/monthly backups with an off-site hook and a restore drill (`scripts/restore_drill.sh`), leader failover, task restart, and recovery of interrupted uploads from persisted source files
-- **Dashboard navigation** — role-aware navigation, shareable filter URLs, saved views, session-expiry handling, and consistent chart colors
-
-Existing installations should follow the [upgrade notes](docs/upgrading.md) before starting the updated API. The upgrade includes migrations 0015–0017 and requires a migration account able to create PostgreSQL roles.
-- **Watchdog** — daily health check on every background pipeline (WeChat sync, collector, backups); alerts via WeCom if one stops running altogether, on top of per-run success/failure notifications
-- **Proactive session health check** — the collector's `verify-all` checks every saved creator-portal login on its own, earlier schedule, so an expired session is caught with lead time to fix it instead of discovered mid-run
-- **Granular alert routing** — admins pick exactly who receives WeCom alerts, per user, from the user management page — no `.env` edits needed
-
----
-
-## Why official channels, not scraping?
-
-Scraper-based tools have three fundamental problems:
-
-- **Legal risk** — they operate in a grey area, and platform ToS policies vary
-- **Fragility** — they break every time a platform redesigns its pages or tightens anti-bot measures
-- **Maintenance burden** — you need to track frontend changes across every platform
-
-OmniPanel only pulls data through official channels — APIs where available (WeChat OA), official creator-portal exports where offered (XHS, Zhihu), and platform-provided export features otherwise (e-commerce orders). These are authorized, structurally stable data sources that don't break on frontend redesigns. It spends its effort on the correctness layer that generic BI tools skip, instead of fighting anti-bot systems.
-
-<details>
-<summary>How this compares to similar projects</summary>
-
-| Project | Data source | What it ships |
-|---|---|---|
-| **OmniPanel** (this repo) | Official channels: APIs + official exports (Youzan/JD/Tmall, WeChat OA/XHS/Zhihu) | Self-hosted app: dashboards, cohort/identity analytics, SQL console, NL-to-SQL |
-| [DA_Multi_Agent_Workflow](https://github.com/liuchaoqi-7/DA_Multi_Agent_Workflow) | Platform APIs + crawlers (Douyin Shop, XHS, WeChat Channels, ad platforms) | n8n-orchestrated multi-agent ETL/analytics pipeline synced into Feishu |
-| [ECommerceCrawlers](https://github.com/DropsDevopsOrg/ECommerceCrawlers) | Web scraping (Taobao, Xianyu, Weibo, 20+ sites) | Scraper code samples; not a deployable product |
-| [data-api (Just One API)](https://github.com/justoneapi/data-api) | Web scraping, 40+ platforms | Hosted pay-per-call data feed; no analytics layer |
-| [bodapi global-ecommerce-data-scraping-solutions-cn](https://github.com/bodapi/global-ecommerce-data-scraping-solutions-cn) | Web scraping with anti-bot bypass, 20+ global platforms | Hosted cross-border data service |
-
-See [docs/comparison.md](docs/comparison.md) for a detailed breakdown.
-
-</details>
-
----
-
-## Architecture
-
-```
-Browser (React, /console/) ──→ Backend API (FastAPI, :8000) ──→ PostgreSQL
-                                        │
-                                   ┌────┴────┐
-                                   │  Redis    │ (optional, cache / rate limiting)
-                                   │  LLM API  │ (optional, NL-to-SQL)
-                                   └──────────┘
-```
-
-![OmniPanel architecture](docs/images/architecture.png)
-
-| Layer | Technology | Role |
-|---|---|---|
-| Frontend | React + TypeScript (`frontend/`) | Thin client — renders backend data; no business logic |
-| Backend | FastAPI (`app/`) | Auth, ETL, analytics, SQL console, background jobs |
-| Database | PostgreSQL + SQLAlchemy | Unified normalized schema; raw platform rows preserved alongside |
-| Cache | Redis (optional) | Distributed cache and login rate limiter; falls back to in-process |
-
-See [Architecture](docs/architecture.md) for full details.
-
----
-
-## Quick start
-
-### Docker (recommended)
-
-Requires Docker + Docker Compose v2. Starts Postgres, FastAPI, and the React/Nginx frontend together — no local Python or Postgres needed.
-
-```bash
+```sh
 git clone https://github.com/Nanboy-Ronan/OmniPanel.git
 cd OmniPanel
+npm --prefix frontend ci
+npm --prefix frontend run build
+node frontend/scripts/preview-fixtures.mjs
+```
+
+Open **http://127.0.0.1:5180/console/** and use the simulated sign-in. The preview serves fixture responses; uploads, authorization, and other backend operations are not a live deployment. The application interface is primarily Chinese.
+
+## Supported platforms
+
+| Platform | Data | Ingestion |
+|---|---|---|
+| Youzan · Tmall | Orders and customers | Upload platform exports |
+| JD | Orders and customers | Upload exports or collect the merchant portal's rendered order list |
+| WeChat Official Accounts | Articles, traffic, and followers | Scheduled API synchronization |
+| Xiaohongshu | Notes, engagement, account metrics, and audience sources | Upload exports or use browser-based collection; availability varies by dataset |
+| WeChat Channels · Zhihu | Content and performance | Upload exports or use browser-based collection |
+| Pugongying | Creator collaborations and campaign performance | Upload exports or use browser-based collection |
+
+Imports recognize supported column layouts and normalize records for analysis. Repeated files and orders are deduplicated; later exports can refresh order statuses. Browser collectors use authorized platform sessions and may need login renewal or updates when portal pages change. See the [collector guide](docs/collector.md).
+
+## WorkBuddy and AI queries
+
+**WorkBuddy connection.** Analysts and administrators grant scoped access through OAuth or personal tokens. Read-only tools return bounded analytics and media detail, with query auditing and revocation. They do not expose customer identity fields, collector credentials, or arbitrary SQL.
+
+**Weekly report generation.** An optional WorkBuddy provider processes aggregate snapshots through a job queue, validates evidence references, and supports retries and WeCom delivery. Account owners can also authorize local browser login repair for supported collectors.
+
+**Natural-language SQL.** Ask a question in Chinese, inspect the generated SQL, and query restricted reporting views. A dedicated database login enforces read-only access.
+
+These integrations require configuration. External AI features are opt-in and send their configured inputs to the selected provider. See [WorkBuddy setup](docs/workbuddy-integration.md) and [NL-to-SQL](docs/nl-to-sql.md).
+
+## Self-host
+
+The application uses **React + TypeScript**, **FastAPI**, and **PostgreSQL**. Docker Compose runs the database, migrations, API, and Nginx-served frontend.
+
+From the repository root:
+
+```sh
 cp .env.example .env
-#    edit .env: set RAP_SECRET to a strong random value
-#    python -c "import secrets; print(secrets.token_urlsafe(48))"
+# Configure .env before starting the application.
 docker compose up --build
 ```
 
-Open http://localhost:5173/console/ and sign in with Enterprise WeChat. Configure its credentials and callback URL in `.env`; the first authenticated user becomes an admin. To explore without credentials, use the [synthetic preview](frontend/README.md#checks-and-synthetic-preview).
+Before signing in, configure:
 
-### Manual setup
-
-Requires Python 3.13+, Node.js 22.18+, and PostgreSQL 13+.
-
-```bash
-# 1. Clone and install
-git clone https://github.com/Nanboy-Ronan/OmniPanel.git
-cd OmniPanel
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# 2. Configure
-cp .env.example .env
-#    edit .env: set RAP_DATABASE_URL, RAP_SECRET, and (optionally) an LLM API key
-
-# 3. Apply database migrations
-make db-upgrade            # or: alembic upgrade head
-
-# 4. Start the backend (FastAPI on :8000)
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-# 5. In another terminal, install and start the React frontend
-npm --prefix frontend ci
-make ui  # http://localhost:5173/console/
-```
-
-Full walkthrough: [Getting started](docs/getting-started.md).
-
----
-
-## Configuration
-
-All settings are environment variables (full list in `.env.example`).
-
-### Essentials
-
-| Variable | Purpose |
+| Setting | Purpose |
 |---|---|
-| `RAP_DATABASE_URL` | PostgreSQL connection string |
-| `RAP_SECRET` | JWT signing key — **must be changed**; generate with `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
-| `RAP_SECRET_PREVIOUS` | Previous `RAP_SECRET` values (comma-separated), used to validate old tokens during key rotation |
-| `FORWARDED_ALLOW_IPS` | Trusted proxy IPs when behind a reverse proxy (default `127.0.0.1`) |
+| `RAP_SECRET` | A long, randomly generated authentication signing secret |
+| `WECOM_CORP_ID`, `WECOM_AGENT_ID`, `WECOM_APP_SECRET` | Your Enterprise WeChat application credentials |
+| `WECOM_CONSOLE_REDIRECT_URI` | Your reachable `/console/` callback URL, registered with WeCom |
+| `PUBLIC_BASE_URL` | Your public deployment origin for authorization and report links |
 
-### Enabling NL-to-SQL
+The frontend listens on **http://localhost:5173/console/**. Real sign-in requires a WeCom-compatible callback setup; use the preview for a credential-free tour. The first authenticated user becomes an administrator; subsequent new users await approval by default.
 
-Configure an API key for any supported provider. Users pick provider and model from a dropdown. Keys never leave the server.
+Compose supplies its own database connection and persists database and backup volumes. For a public deployment, configure HTTPS, database credentials, and trusted proxy settings for your environment. SQL and NL-to-SQL additionally require `RAP_SQL_CONSOLE_DATABASE_URL`; without it, those query features remain disabled.
 
-```dotenv
-NL_SQL_PROVIDER=minimax            # default provider
-MINIMAX_API_KEY=eyJ...             # or ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / etc.
-```
+- **First installation:** [Getting started](docs/getting-started.md)
+- **Existing installation:** [Upgrade notes](docs/upgrading.md)—apply migrations through `0026` before starting this version
+- **All settings:** [.env.example](.env.example)
 
-With no keys configured, the feature returns 503; nothing else is affected.
+## Built to operate
 
-### Secret rotation
+Viewer, analyst, and administrator roles govern access. Audit logs cover authentication, queries, exports, and data or permission changes. Background jobs support leader election, restarts, interrupted-upload recovery, and collector health checks. Database backups include validation, retention, an optional off-site hook, and a restore-drill script.
 
-Changing `RAP_SECRET` directly logs out every user. Use `RAP_SECRET_PREVIOUS` for zero-downtime rotation:
+<details>
+<summary>Architecture</summary>
 
-1. Generate a new secret, move the current `RAP_SECRET` value into `RAP_SECRET_PREVIOUS`, set `RAP_SECRET` to the new value, and restart.
-2. Wait at least `TOKEN_LIFETIME_SECONDS` (default 24h) for all old tokens to expire.
-3. Remove `RAP_SECRET_PREVIOUS` and restart.
+![OmniPanel architecture](docs/images/architecture.png)
 
-> If the old secret is suspected compromised (vs. routine rotation), skip the wait in step 2 and act immediately.
+The React console calls FastAPI through a same-origin proxy. The API handles ingestion, analytics, authentication, and scheduled work against PostgreSQL. SQL queries use a separate restricted login. Optional integrations add collection, AI queries, and notifications.
 
----
+See the [architecture guide](docs/architecture.md) for the data model and service boundaries.
+
+</details>
 
 ## Documentation
 
-| Doc | Contents |
+| Start here | Extend and operate |
 |---|---|
-| [Getting started](docs/getting-started.md) | Install, configure, run, create your first admin |
-| [Architecture](docs/architecture.md) | Components, data model, ETL pipeline, roles, API surface, full config reference |
-| [NL-to-SQL](docs/nl-to-sql.md) | How it works, provider registry, adding a provider |
-| [Testing](docs/testing.md) | Running the suite, synthetic dataset |
-| [WeChat auto-sync](docs/wechat-auto-sync.md) | Daily background sync for official-account metrics |
-| [Creator-portal collector](docs/collector.md) | Playwright automation for XHS/Zhihu/Pugongying creator-backend exports |
-| [Dependency maintenance](docs/maintenance.md) | Upgrade cadence, critical packages |
-| [Project comparison](docs/comparison.md) | Honest pros/cons vs. scraper-based and agent-workflow alternatives |
+| [Installation and login](docs/getting-started.md) | [Architecture](docs/architecture.md) |
+| [Frontend development and preview](frontend/README.md) | [Collector setup](docs/collector.md) |
+| [WorkBuddy integration](docs/workbuddy-integration.md) | [WeChat synchronization](docs/wechat-auto-sync.md) |
+| [Natural-language queries](docs/nl-to-sql.md) | [Maintenance and secret rotation](docs/maintenance.md) |
+| [Testing with synthetic data](docs/testing.md) | [Upgrading](docs/upgrading.md) |
 
----
+## Contribute
 
-## Roadmap
+Contributions to connectors, metric definitions, tests, and the interface are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), or open an [issue](https://github.com/Nanboy-Ronan/OmniPanel/issues) with a reproducible example. Use synthetic fixtures and screenshots; keep credentials, real exports, and organization-specific identifiers out of contributions.
 
-In progress:
-
-- **Douyin, Weibo, Bilibili** — tracking for stable official API/export availability on each platform before building the connector
-- **Xiaohongshu (XHS) Marketplace orders** — e-commerce order analytics for XHS's own marketplace, alongside its existing content/KOL data
-- **Feishu / DingTalk push** — send saved query results to team collaboration tools
-- **Overseas platforms (Amazon, Lazada, Shopify)** — extend order data sync beyond domestic marketplaces to cross-border sales channels
-
-Under consideration (join the [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions)):
-
-- Multi-step NL-to-SQL with agent routing for ambiguous or multi-hop questions
-- Data warehouse layering (ODS → DWD → DIM → ADS)
-- Usage visualization on the admin dashboard
-
----
-
-## Contributing
-
-Issues and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-
-- Local dev environment setup
-- Code style and commit conventions
-- Adding a platform connector or NL-to-SQL provider
-- The PR checklist
-
----
-
-## Community & Support
-
-- **Questions & discussion** — [GitHub Discussions](https://github.com/Nanboy-Ronan/OmniPanel/discussions)
-- **Bugs & feature requests** — [GitHub Issues](https://github.com/Nanboy-Ronan/OmniPanel/issues)
-- **Security vulnerabilities** — see [SECURITY.md](SECURITY.md); please don't open a public issue
-
----
+Report security issues through [SECURITY.md](SECURITY.md).
 
 ## License
 
-OmniPanel is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
-
-You may freely use, modify, and self-host OmniPanel. Distributing a modified version, or running it as a network service, requires making the source code available under the same license.
+[GNU Affero General Public License v3.0](LICENSE).

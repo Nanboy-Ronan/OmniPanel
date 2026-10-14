@@ -69,3 +69,13 @@ ecosystem.
   environment so it never pollutes the project or base env.
   Without pipx: `python -m pip install pip-audit && python -m pip_audit -r requirements.txt`
   (do this inside the project venv, not a base/conda environment).
+
+## Authentication secret rotation
+
+Generate a new random `RAP_SECRET`, move the previous value into
+`RAP_SECRET_PREVIOUS` (comma-separated), and restart the API. New tokens use
+the new secret; existing tokens remain valid during the transition. After at
+least `TOKEN_LIFETIME_SECONDS` (24 hours by default), remove the previous secret
+and restart again. If a secret is compromised, remove it immediately rather
+than retaining it for a transition period. Keep all values in private server
+configuration, never in the repository.

@@ -1,341 +1,157 @@
 # OmniPanel
 
-**把电商和自媒体的平台数据，变成干净的仪表盘、客户分析和自然语言查询 —— 自托管，零爬虫。**
+**可自行部署的商城、内容与客户分析工作台。**
+
+把分散在多个平台的订单、内容表现和达人合作数据汇集到一起。从导入报表、查看趋势，到分析客户与生成周报，让每个数字都有可查看的数据覆盖范围和统计口径。
 
 [![CI](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml)
-[![License: AGPL-3.0](https://img.shields.io/github/license/Nanboy-Ronan/OmniPanel)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.13%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-13%2B-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![GitHub stars](https://img.shields.io/github/stars/Nanboy-Ronan/OmniPanel?style=social)](https://github.com/Nanboy-Ronan/OmniPanel/stargazers)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-[English](README.md) | [中文](README.zh-CN.md)
+[English](README.md) · **简体中文**
 
----
+[体验界面](#体验界面) · [支持的平台](#支持的平台) · [自行部署](#自行部署) · [文档](#文档)
 
-> 🤖 已支持 WorkBuddy：按用户授权的只读查询、OAuth 连接、异步周报和采集登录修复。参见[接入说明](docs/workbuddy-integration.md)。
+![OmniPanel 经营概览：营业额趋势、渠道构成与数据覆盖状态](docs/images/screenshot_overview.png)
 
-## OmniPanel 是什么？
+*所有截图均使用合成演示数据。仓库不包含生产账号、凭据或真实业务导出文件。*
 
-你在有赞、京东、天猫上卖货，也在公众号、小红书、知乎上做内容。每个平台都有数据，但拿出来的格式各不相同 —— 几十个列名不一样的表格、不同平台对"客户"的定义不一样、有些指标是累计值、同一笔订单可能有多行记录需要去重。
+## 从平台报表到经营分析
 
-通用 BI 工具（如 Tableau、Metabase）不会替你处理这些问题。它们只是在你给的表结构上画图，至于图上画的东西对不对，全靠你自己。
+OmniPanel 面向同时经营多个商城、运营多个内容账号的团队，将平台格式识别、订单归一化、重复数据处理和分析放在同一个应用中完成。
 
-**OmniPanel 替你把这些脏活干了。** 数据怎么进来，取决于平台：
-
-- **有 API 的平台**（微信公众号）—— 配置一次，后台每天自动拉取
-- **有登录后台的平台**（小红书、知乎、视频号、小红书的蒲公英 KOL/KOC 商业合作平台，以及京东商家后台）—— 内置采集代理，自动登录后台导出
-- **只有导出文件的平台**（有赞、天猫订单）—— 上传 Excel，自动识别平台来源（京东也支持这种手动上传作为备选方式）
-
-不管哪种方式，进来的数据都会自动：
-
-- 🏷️ **识别平台** —— 根据列名指纹判断数据来自哪个平台
-- 🔄 **归一化** —— 把不同平台的数据，统一成同一套字段（客户、金额、时间、地区……）
-- 📊 **给你分析** —— 仪表盘、客户画像、队列留存、跨平台客户合并、SQL 查询台、中文问数据
-
-所有数据来源都是**平台官方渠道**（官方 API、官方导出功能）—— 不涉及爬虫，不走灰色地带。
-
-### 使用流程
-
-数据进来有两种方式，之后的分析体验是一样的：
-
-```
-方式一：自动同步                    方式二：手动上传
-（公众号 / 小红书 / 知乎 /          （有赞 / 天猫订单）
- 视频号 / 京东）
-        │                                    │
-        └──────────┬─────────────────────────┘
-                   ▼
-        OmniPanel 识别 → 归一化 → 入库
-                   ▼
-        仪表盘 · 客户分析 · SQL 查询台 · 中文问数据
-```
-
-- **自动同步**：配置一次平台账号，之后每天后台自动拉取最新数据，无需人工干预
-- **手动上传**：从平台后台导出文件，拖进 OmniPanel，自动识别平台来源后入库（内容哈希去重，重复上传不会产生脏数据）
-- **分析**：打开仪表盘看数据，在 SQL 查询台写 SQL，或直接用中文提问（比如"上个月广东地区复购率是多少"）
-
----
-
-## 界面截图
-
-> 以下截图来自新版 React 工作台，全部使用合成演示数据。
-
-![经营概览](docs/images/screenshot_overview.png)
-
-| 商城分析 | 内容分析 |
+| 想了解什么 | 从哪里开始 |
 |---|---|
-| ![商城分析](docs/images/screenshot_analysis.png) | ![内容分析](docs/images/screenshot_content.png) |
+| 销售额如何变化，哪些渠道和商品贡献最大？ | 商城看板：同期对比、渠道构成、商品排行和地区分布 |
+| 哪些客户会回来，多久回来一次？ | 客户档案、月度留存队列，以及区分精确和模糊结果的跨平台匹配 |
+| 哪些内容获得了阅读与互动？ | 内容分布、发布趋势、账号指标和观众来源分析 |
+| 达人合作的投入与表现如何？ | 蒲公英项目和达人对比，查看费用、曝光与互动成本 |
+| 这一周发生了什么？ | 商城与内容周报，保留历史报告、数据完整性提示和可选的分析摘要 |
+| 如何进一步查证？ | 只读 SQL、中文问数据，或按权限开放的 WorkBuddy 查询工具 |
 
-| 蒲公英合作 | 数据库状态 |
+营业额遵循统一的订单状态与退款规则。看板分别展示数据覆盖日期和导入时间，并提示不完整的统计区间。内容带货分析用于观察关联，跨平台客户的精确与模糊匹配结果分别展示。
+
+## 工作台一览
+
+| 商城分析 | 内容表现 |
 |---|---|
-| ![蒲公英合作](docs/images/screenshot_pgy.png) | ![数据库状态](docs/images/screenshot_database.png) |
+| ![商城分析](docs/images/screenshot_analysis.png) | ![内容表现分析](docs/images/screenshot_content.png) |
 
-![WorkBuddy 连接 · 合成演示数据](docs/images/screenshot_workbuddy.png)
+| 达人合作 | WorkBuddy 连接 |
+|---|---|
+| ![蒲公英合作分析](docs/images/screenshot_pgy.png) | ![WorkBuddy 连接，使用合成数据](docs/images/screenshot_workbuddy.png) |
 
 <details>
-<summary>更多面板：留存、客户身份、SQL 与操作日志</summary>
+<summary>查看客户留存、身份匹配、SQL 与运维面板</summary>
 
-![队列留存](docs/images/screenshot_cohort.png)
+| 客户留存 | 跨平台客户 |
+|---|---|
+| ![月度留存队列](docs/images/screenshot_cohort.png) | ![跨平台客户匹配](docs/images/screenshot_identity.png) |
 
-![客户身份](docs/images/screenshot_identity.png)
+| SQL 查询台 | 数据库状态 |
+|---|---|
+| ![SQL 查询台](docs/images/screenshot_sql.png) | ![数据库状态](docs/images/screenshot_database.png) |
 
-![SQL 查询台](docs/images/screenshot_sql.png)
-
-![操作日志](docs/images/screenshot_logs.png)
+![操作日志：账号与事件均为合成样例](docs/images/screenshot_logs.png)
 
 </details>
 
----
+## 体验界面
 
-## 功能
+先用合成数据在本地浏览工作台。只需 **Node.js 22.18+**，无需数据库或企业微信凭据。
 
-- **React 工作台** —— 23 个页面入口，统一筛选、角色导航与响应式布局；可折叠侧栏与页面快速跳转（Ctrl/Cmd+K）、可排序可多选的表格并记住每页条数、拖拽上传带进度与取消、操作结果提示。
-- **交互式商城 BI** —— 营业额趋势、渠道贡献、商品排行、地区分布与同期对比联动分析。
-- **内容与合作分析** —— 可读的长尾分布、蒲公英项目/博主联动、历史内容查看与数据来源健康检查。
-- **实时运维面板** —— 显式说明账号权限，实时检查数据库结构、数据量与备份元信息。
-
-### WorkBuddy 接入
-
-按用户授权的只读 MCP 查询、PKCE OAuth 与可撤销令牌；周报任务队列、重试与证据校验；采集账号负责人授权本地登录修复。默认不启用外部服务，示例数据全部为合成数据。见[部署与权限说明](docs/workbuddy-integration.md)。
-
-### 数据接入
-
-| 类型 | 支持平台 | 接入方式 |
-|---|---|---|
-| 电商订单 | 有赞、天猫 | 上传官方导出文件（.xlsx / .xls / .csv），自动识别平台 |
-| 电商订单 | 京东 | 上传官方导出文件，**或**使用内置采集代理直接读取商家后台已脱敏的订单列表，无需短信导出密码 |
-| 公众号 | 微信公众号 | 微信 API 自动同步（每天定时拉取），无需手动操作 |
-| 内容平台 | 小红书、知乎、视频号 | 上传官方导出文件 或 使用内置的自动采集代理 |
-| KOL/KOC 商业合作 | 蒲公英（小红书官方创作者合作平台） | 上传官方投放导出文件，或使用同一套内置采集代理 |
-
-> 上传采用内容哈希去重，同一份文件传多次不会产生重复数据。
-
-### 电商分析
-
-- **客户总览** —— 新老客户构成、复购率和复购间隔、单客户订单历史、地区分布
-- **队列留存** —— 按月分组，跟踪每组客户的后续购买留存曲线（含右删失处理）
-- **订单明细** —— 所有归一化订单的可浏览、可导出视图
-- **订单状态与退款口径** —— 每笔订单保留平台原始状态；营业额、订单数、客单价和客户指标不计入已关闭、已取消、未付款和京东已删除的订单，有赞订单扣除退款。规则集中在 `app/db/order_status.py`；重复上传会刷新订单状态，看板会说明本期排除了哪些订单
-- **跨平台客户识别** —— 把同一个人在不同平台的订单按手机号合并，分为精确匹配和模糊匹配两档（京东手机号脱敏，模糊档用部分指纹匹配，与精确档结构隔离）
-
-### 内容分析
-
-- **公众号流量** —— 每日阅读、分享、新增关注等指标的趋势和对比，含关注来源渠道拆分（搜索、扫码、文章菜单等）
-- **视频号数据** —— 单条视频的播放、两种独立的"点赞"信号（推荐/喜欢）、完播率，以及视频号独有的企微联动指标（链接点击、添加到通讯录、设为铃声/状态）
-- **小红书账号级数据概览** —— 账号级别（而不只是单篇笔记）的每日涨粉/掉粉、观看时长、完播率，以及 7/30 天观众来源渠道构成
-- **内容带货** —— 发文时间与订单量的关联分析，覆盖公众号、小红书、知乎三个来源，帮助判断内容对销售的拉动效果
-- **话题标签诊断** —— 基于关键词的内容话题标注（小红书、知乎），看清哪些话题真正带动了互动
-- **KOL/KOC 商业合作分析（蒲公英）** —— 7 个视图的分析看板，覆盖博主/项目级别的投放效果（花费、曝光、阅读、互动率）、受众画像（年龄/性别/设备/地域/兴趣分布），以及组件级点击表现（文字链接、底部条、互动组件、评论区链接）
-- **全平台周报** —— 汇总公众号、小红书、视频号、知乎、蒲公英与有赞/京东/天猫销售；支持交互图表、涨粉和来源拆分、本周与长尾内容分区、可选 LLM 点评及可重试的企微推送；阅读页带周次列表和章节导航，订单未上传完整的周会明确标注
-- **数据新鲜度** —— 分别展示内容覆盖日期与最近成功导入或同步时间
-
-### 查询层
-
-- **SQL 查询台** —— 使用独立的只读 PostgreSQL 登录角色（查询无法通过重置角色越权）查询排除敏感字段的 reporting 视图；只允许 SELECT / WITH、自动加 LIMIT、语句超时、全程审计，支持保存和共享常用查询；Ctrl/Cmd+Enter 执行、本地查询历史、导出 CSV。
-- **中文问数据 (NL-to-SQL)** —— 用中文输入问题，自动生成 SQL 并返回结果。支持 Anthropic、OpenAI、MiniMax、DeepSeek、月之暗面、智谱等多家大模型；API Key 只存在服务端，用户在下拉框里选服务商和模型即可。
-
-### 安全与运维
-
-本次更新增加每日备份、后台任务重启与主节点接替、上传中断恢复、服务端订单筛选与完整 CSV 导出，以及可分享筛选条件的导航和已保存视图。已有部署请先阅读[升级说明](docs/upgrading.md)：本次包含 0015–0017 数据库迁移，迁移账号需要创建 PostgreSQL 角色的权限。
-
-- **三级角色** —— viewer（只读）/ analyst（可上传和分析）/ admin（用户管理、数据库操作）
-- **企业微信 SSO** —— React 工作台使用企业微信扫码登录；新成员首次登录后需管理员开通（`WECOM_NEW_USERS_ACTIVE`），接口文档不对外公开
-- **操作日志** —— 每次登录尝试（含失败原因）、退出、查询、导出、查看客户与订单、数据和权限变更都会记录，并带来源 IP 和设备；日志页可按分类、用户、日期和关键词筛选
-- **后台任务** —— 微信指标自动同步、数据库每日/月度备份（私有权限、自动校验、可接异地存储，附恢复演练脚本 `scripts/restore_drill.sh`），均带 leader 选举保障多进程安全
-- **看门狗** —— 每天检查每个后台任务（微信同步、自动采集、备份）是否正常运行，任务彻底停止时通过企业微信告警，与单次运行的成功/失败通知互补
-- **登录态健康巡检** —— 采集器的 `verify-all` 会按独立的、更早的时间点主动检查每个已保存的创作者后台登录态，提前发现过期，而不是等采集运行到一半才发现
-- **精细化告警接收人** —— 管理员可以在用户管理页面按用户勾选谁接收 WeCom 告警，不需要改 `.env`
-
----
-
-## 为什么走官方渠道，不用爬虫？
-
-爬虫方案有三个硬伤：
-
-- **法律风险** —— 处于灰色地带，不同平台的用户协议态度不一
-- **脆弱** —— 平台改版或升级反爬策略，爬虫就可能失效
-- **维护成本高** —— 需要持续跟进每个平台的前端变化
-
-OmniPanel 只通过官方渠道拿数据 —— 有 API 的走 API（公众号），有创作者后台的走官方后台导出（小红书、知乎），其余的走平台提供的导出功能（电商订单）。这些都是平台授权、结构稳定的数据来源，不受前端改版影响。把精力花在通用 BI 工具不会替你做的那一层正确性工作上，而不是花在和平台对抗反爬机制上。
-
-<details>
-<summary>和同类项目的对比</summary>
-
-| 项目 | 数据来源 | 实际交付 |
-|---|---|---|
-| **OmniPanel**（本仓库） | 官方渠道：API + 官方导出（有赞/京东/天猫，公众号/小红书/知乎） | 自托管应用：仪表盘、队列留存、跨平台客户识别、SQL 查询台、中文问数据 |
-| [DA_Multi_Agent_Workflow](https://github.com/liuchaoqi-7/DA_Multi_Agent_Workflow) | 平台 API + 爬虫（抖音小店、小红书、视频号、广告平台） | n8n 编排的多��能体 ETL/分析流水线，结果同步到飞书 |
-| [ECommerceCrawlers](https://github.com/DropsDevopsOrg/ECommerceCrawlers) | 网页爬虫（淘宝、闲鱼、微博等 20+ 网站） | 爬虫代码示例，非可部署产品 |
-| [data-api (Just One API)](https://github.com/justoneapi/data-api) | 网页爬虫，40+ 平台 | 托管型按调用计费的数据接口，无分析层 |
-| [bodapi global-ecommerce-data-scraping-solutions-cn](https://github.com/bodapi/global-ecommerce-data-scraping-solutions-cn) | 带反爬绕过的网页爬虫，20+ 全球平台 | 面向跨境的托管型数据服务 |
-
-详见 [docs/comparison.zh-CN.md](docs/comparison.zh-CN.md)。
-
-</details>
-
----
-
-## 架构
-
-```
-浏览器 (React, /console/) ──→ 后端 API (FastAPI, :8000) ──→ PostgreSQL
-                                       │
-                                  ┌─────┴─────┐
-                                  │  Redis     │ (可选，缓存 / 限流)
-                                  │  大模型 API │ (可选，NL-to-SQL)
-                                  └───────────┘
-```
-
-![OmniPanel 架构图](docs/images/architecture.zh-CN.png)
-
-| 层 | 技术 | 职责 |
-|---|---|---|
-| 前端 | React + TypeScript（`frontend/`） | 薄客户端 —— 只负责渲染后端数据，不含业务逻辑 |
-| 后端 | FastAPI（`app/`） | 鉴权、ETL、分析接口、SQL 查询台、后台任务 |
-| 数据库 | PostgreSQL + SQLAlchemy | 统一的归一化表结构，同时保留各平台原始数据 |
-| 缓存 | Redis（可选） | 分布式缓存和登录限流；不配置时退化为进程内缓存 |
-
-详见 [架构说明](docs/architecture.zh-CN.md)。
-
----
-
-## 快速开始
-
-### Docker（推荐）
-
-需要 Docker + Docker Compose v2。一键启动 Postgres、FastAPI 和 React/Nginx 前端，本机不需要装 Python 或 Postgres。
-
-```bash
+```sh
 git clone https://github.com/Nanboy-Ronan/OmniPanel.git
 cd OmniPanel
+npm --prefix frontend ci
+npm --prefix frontend run build
+node frontend/scripts/preview-fixtures.mjs
+```
+
+打开 **http://127.0.0.1:5180/console/**，使用模拟登录进入。预览服务返回固定的演示数据，上传、授权等后台操作不代表真实部署。应用界面以中文为主。
+
+## 支持的平台
+
+| 平台 | 数据内容 | 接入方式 |
+|---|---|---|
+| 有赞 · 天猫 | 订单与客户 | 上传平台导出文件 |
+| 京东 | 订单与客户 | 上传导出文件，或通过浏览器采集商家后台已展示的订单列表 |
+| 微信公众号 | 文章、流量与粉丝 | 定时调用 API 同步 |
+| 小红书 | 笔记、互动、账号指标与观众来源 | 上传导出文件或浏览器采集；具体能力随数据类型而异 |
+| 微信视频号 · 知乎 | 内容与表现指标 | 上传导出文件或浏览器采集 |
+| 蒲公英 | 达人合作与项目表现 | 上传导出文件或浏览器采集 |
+
+导入时识别支持的列结构，将记录转换为统一的分析数据。重复文件和订单会去重，后续导出可以更新订单状态。浏览器采集使用经过授权的平台登录态；登录过期或平台页面变化时，可能需要重新登录或更新采集适配。详见[采集器文档](docs/collector.zh-CN.md)。
+
+## WorkBuddy 与 AI 查询
+
+**连接 WorkBuddy。** 分析员和管理员通过 OAuth 或个人令牌授予查询范围。只读工具返回有数量限制的汇总分析与媒体明细，支持审计和撤销授权，不开放客户身份字段、采集凭据或任意 SQL。
+
+**生成经营周报。** 可选的 WorkBuddy 周报服务通过任务队列处理汇总快照，校验分析结论引用的指标，并支持重试和企业微信推送。采集账号负责人还可以授权本地浏览器登录，修复支持平台的采集登录态。
+
+**中文问数据。** 输入问题，查看生成的 SQL，再通过受限的报表视图查询结果。查询使用独立的只读数据库账号。
+
+这些能力需要单独配置。外部 AI 服务按需启用，启用后会将相应输入发送给所选服务商。详见 [WorkBuddy 接入说明](docs/workbuddy-integration.md)和[中文问数据文档](docs/nl-to-sql.zh-CN.md)。
+
+## 自行部署
+
+应用使用 **React + TypeScript、FastAPI 和 PostgreSQL**。Docker Compose 包含数据库、迁移任务、API，以及由 Nginx 提供的前端。
+
+在仓库根目录运行：
+
+```sh
 cp .env.example .env
-#    编辑 .env：把 RAP_SECRET 设为一个随机的强密钥
-#    python -c "import secrets; print(secrets.token_urlsafe(48))"
+# 先完成 .env 配置，再启动应用。
 docker compose up --build
 ```
 
-在 `.env` 配置企业微信凭据与回调地址后，打开 http://localhost:5173/console/ 登录；首个登录用户成为管理员。无需凭据体验界面可使用[合成数据预览](frontend/README.md#checks-and-synthetic-preview)。
+登录前需要配置：
 
-### 手动安装
-
-需要 Python 3.13+、Node.js 22.18+ 和 PostgreSQL 13+。
-
-```bash
-# 1. 克隆并安装依赖
-git clone https://github.com/Nanboy-Ronan/OmniPanel.git
-cd OmniPanel
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-
-# 2. 配置
-cp .env.example .env
-#    编辑 .env：设置 RAP_DATABASE_URL、RAP_SECRET，（可选）大模型 API Key
-
-# 3. 数据库迁移
-make db-upgrade            # 等价于 alembic upgrade head
-
-# 4. 启动后端（FastAPI，端口 8000）
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-# 5. 另开终端，安装并启动 React 前端
-npm --prefix frontend ci
-make ui  # http://localhost:5173/console/
-```
-
-完整步骤见 [快速上手](docs/getting-started.zh-CN.md)。
-
----
-
-## 配置
-
-所有配置通过环境变量设置��完整列表见 `.env.example`）。
-
-### 核心配置
-
-| 变量 | 用途 |
+| 配置项 | 用途 |
 |---|---|
-| `RAP_DATABASE_URL` | PostgreSQL 连接串 |
-| `RAP_SECRET` | 签发 JWT 的密钥 —— **必须修改**，用 `python -c "import secrets; print(secrets.token_urlsafe(48))"` 生成 |
-| `RAP_SECRET_PREVIOUS` | 旧的 `RAP_SECRET`（逗号分隔），用于密钥轮换期间继续校验旧令牌 |
-| `FORWARDED_ALLOW_IPS` | 反向代理场景下信任的 IP（默认 `127.0.0.1`） |
+| `RAP_SECRET` | 足够长的随机认证签名密钥 |
+| `WECOM_CORP_ID`、`WECOM_AGENT_ID`、`WECOM_APP_SECRET` | 自己的企业微信应用凭据 |
+| `WECOM_CONSOLE_REDIRECT_URI` | 可访问且已在企业微信登记的 `/console/` 回调地址 |
+| `PUBLIC_BASE_URL` | 对外部署域名，用于授权和报告链接 |
 
-### 启用中文问数据
+前端监听 **http://localhost:5173/console/**。真实登录需要配置符合企业微信要求的回调地址；无需凭据的界面体验请使用上面的预览服务。首个认证用户成为管理员，后续新增用户默认等待管理员审批。
 
-配置对应服务商的 API Key 即可，用户在下拉框中选择服务商和模型。Key 不会离开服务端。
+Compose 已提供容器内数据库连接，并持久化数据库和备份卷。对外部署时，请按自己的环境配置 HTTPS、数据库凭据和可信代理。SQL 与中文问数据还需要配置 `RAP_SQL_CONSOLE_DATABASE_URL`；未配置时，这两项查询功能保持关闭。
 
-```dotenv
-NL_SQL_PROVIDER=minimax            # 默认服务商
-MINIMAX_API_KEY=eyJ...             # 或 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY 等
-```
+- **首次安装：** [快速开始](docs/getting-started.zh-CN.md)
+- **已有部署：** [升级说明](docs/upgrading.md)——启动本版本前，先将数据库迁移至 `0026`
+- **完整配置：** [.env.example](.env.example)
 
-不配置时，该功能返回 503，不影响其他功能。
+## 日常运行与维护
 
-### 密钥轮换
+查看者、分析员和管理员角色控制功能访问。审计日志覆盖认证、查询、导出以及数据和权限变更。后台任务支持主节点选举、异常重启、上传中断恢复和采集健康检查。数据库备份包含校验、保留策略、可选的异地复制钩子及恢复演练脚本。
 
-直接更换 `RAP_SECRET` 会强制所有用户下线。配合 `RAP_SECRET_PREVIOUS` 可以实现无缝轮换：
+<details>
+<summary>查看系统架构</summary>
 
-1. 生成新密钥，把当前 `RAP_SECRET` 的值移到 `RAP_SECRET_PREVIOUS`，`RAP_SECRET` 设为新值，重启。
-2. 等待 `TOKEN_LIFETIME_SECONDS`（默认 24 小时），确保旧令牌全部过期。
-3. 删除 `RAP_SECRET_PREVIOUS`，重启。
+![OmniPanel 系统架构](docs/images/architecture.zh-CN.png)
 
-> 如果怀疑旧密钥已泄露，跳过步骤 2 的等待，立即处理。
+React 工作台通过同源代理调用 FastAPI。API 负责数据导入、分析、认证和定时任务，数据保存在 PostgreSQL 中；SQL 查询使用独立的受限账号。可选接入提供自动采集、AI 查询与通知能力。
 
----
+数据模型与服务边界详见[架构文档](docs/architecture.zh-CN.md)。
+
+</details>
 
 ## 文档
 
-| 文档 | 内容 |
+| 开始使用 | 扩展与维护 |
 |---|---|
-| [快速上手](docs/getting-started.zh-CN.md) | 安装、配置、运行、创建管理员 |
-| [架构说明](docs/architecture.zh-CN.md) | 组件关系、数据模型、ETL 流程、角色权限、API 一览、全量配置项 |
-| [中文问数据](docs/nl-to-sql.zh-CN.md) | 工作原理、服务商注册、如何新增服务商 |
-| [测试指南](docs/testing.zh-CN.md) | 跑测试、合成数据集 |
-| [微信自动同步](docs/wechat-auto-sync.zh-CN.md) | 公众号指标每日自动同步 |
-| [自动采集代理](docs/collector.zh-CN.md) | Playwright 自动化小红书/知乎/蒲公英创作者后台导出 |
-| [依赖维护](docs/maintenance.zh-CN.md) | 升级节奏、关键包清单 |
-| [同类项目对比](docs/comparison.zh-CN.md) | 与爬虫和智能体方案的优势/劣势对比 |
-
----
-
-## 路线图
-
-正在推进：
-
-- **抖音 / 微博 / B 站** —— 持续跟踪各平台稳定的官方 API / 导出能力，成熟后再接入
-- **小红书商城订单** —— 在现有的内容/KOL 数据基础上，接入小红书自营电商的订单分析
-- **飞书 / 钉钉推送** —— 将已保存的查询结果推送到团队协作工具
-- **海外平台（Amazon、Lazada、Shopify）** —— 把订单数据同步从国内电商平台扩展到跨境销售渠道
-
-考虑中（欢迎在 [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions) 参与讨论）：
-
-- 多步 NL-to-SQL（supervisor-agent 路由，处理模糊或多跳问题）
-- 数据仓库分层（ODS → DWD → DIM → ADS）
-- 管理后台用量可视化
-
----
+| [安装与登录](docs/getting-started.zh-CN.md) | [系统架构](docs/architecture.zh-CN.md) |
+| [前端开发与合成预览](frontend/README.md) | [采集器配置](docs/collector.zh-CN.md) |
+| [WorkBuddy 接入](docs/workbuddy-integration.md) | [公众号自动同步](docs/wechat-auto-sync.zh-CN.md) |
+| [中文问数据](docs/nl-to-sql.zh-CN.md) | [维护与密钥轮换](docs/maintenance.zh-CN.md) |
+| [合成数据测试](docs/testing.zh-CN.md) | [版本升级](docs/upgrading.md) |
 
 ## 参与贡献
 
-欢迎提 Issue 和 PR。详见 [CONTRIBUTING.md](CONTRIBUTING.md)（英文）：
+欢迎改进平台适配、统计口径、测试和界面。请先阅读[贡献指南](CONTRIBUTING.md)，或通过 [Issue](https://github.com/Nanboy-Ronan/OmniPanel/issues) 提交可复现的例子。贡献中的样例与截图请使用合成数据，不要提交凭据、真实导出文件或组织专属标识。
 
-- 本地开发环境搭建
-- 代码风格与提交规范
-- 如何新增平台连接器或 NL-to-SQL 服务商
-- PR 提交前检查清单
-
----
-
-## 社区与支持
-
-- **提问与讨论** —— [GitHub Discussions](https://github.com/Nanboy-Ronan/OmniPanel/discussions)
-- **Bug 与功能请求** —— [GitHub Issues](https://github.com/Nanboy-Ronan/OmniPanel/issues)
-- **安全漏洞** —— 见 [SECURITY.md](SECURITY.md)，请勿公开提 Issue
-
----
+安全问题请按 [SECURITY.md](SECURITY.md) 中的方式报告。
 
 ## 许可证
 
-OmniPanel 采用 [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）。
-
-可自由使用、修改和自托管。分发修改版本或将其作为网络服务运行，须以相同许可证开放源代码。
+[GNU Affero General Public License v3.0](LICENSE)。
