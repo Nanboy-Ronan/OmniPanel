@@ -20,6 +20,7 @@ PANELS = {
     "identity": "identity",
     "sql": "sql",
     "logs": "logs",
+    "workbuddy": "workbuddy",
 }
 
 

@@ -531,7 +531,7 @@ def run_verify(
 
     for target in targets:
         if not target.session_file.exists():
-            problems.append(f"{target.label}: 未找到登录态文件 {target.session_file}，请尽快 bootstrap-login 并上传")
+            problems.append(f"{target.label}: 未找到登录态文件 {target.session_file}，请让账号负责人在 WorkBuddy 中说：帮我修复这个账号的采集登录")
             continue
 
         run_id = start_run(
@@ -546,7 +546,7 @@ def run_verify(
             finish_run(run_id, "wrong_account", error_message=str(exc))
             problems.append(
                 f"{target.label}: 登录态存在但账号不对（很可能选错了子账号），"
-                f"请重新执行 bootstrap-login 并选择正确的账号——不要只是重传现有登录态。{exc}"
+                f"请让账号负责人在 WorkBuddy 中发起采集登录修复，并选择正确的账号。{exc}"
             )
             continue
         except Exception as exc:
@@ -559,7 +559,7 @@ def run_verify(
             continue
 
         finish_run(run_id, "session_expired")
-        problems.append(f"{target.label}: 登录态已过期，请尽快本地重新执行 bootstrap-login 并到管理页重传")
+        problems.append(f"{target.label}: 登录态已过期，请让账号负责人在 WorkBuddy 中说：帮我修复这个账号的采集登录")
 
     if problems:
         header = f"[采集巡检] 发现 {len(problems)} 个登录态异常，请尽快处理，避免影响下次采集：\n"

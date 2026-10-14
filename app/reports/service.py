@@ -83,6 +83,9 @@ def _summary_lines(context: dict) -> list[str]:
 
 
 async def generate_weekly_report(session: AsyncSession, reference_date: date | None = None) -> WeeklyReportRun:
+    if settings.report_provider == "workbuddy":
+        from .workbuddy_jobs import enqueue
+        return await enqueue(session, reference_date)
     reference_date = reference_date or date.today()
     bounds = week_bounds(reference_date)
     # Serialize generation for the same week across manual and scheduled runs.
@@ -96,6 +99,13 @@ async def generate_weekly_report(session: AsyncSession, reference_date: date | N
             select(WeeklyReportRun).where(WeeklyReportRun.week_start == bounds.this_week_start)
         )
     ).scalar_one_or_none()
+    if existing is not None:
+        from ..db.models import WorkBuddyReportJob
+        if await session.get(WorkBuddyReportJob, existing.id) is not None:
+            # A provider switch must not bypass WorkBuddy's delivery fence or
+            # overwrite a queued report. Resolve that job through its own API.
+            await session.commit()
+            return existing
     if existing is not None and existing.status == "success" and existing.wecom_sent:
         return existing
 

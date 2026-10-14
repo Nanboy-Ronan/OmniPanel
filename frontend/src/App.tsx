@@ -35,6 +35,9 @@ const MediaPage = lazy(() => import('./pages/MediaPage'));
 const PgyPage = lazy(() => import('./pages/PgyPage'));
 const ImpactPage = lazy(() => import('./pages/ImpactPage'));
 const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const CollectorRepairPage = lazy(() => import('./pages/CollectorRepairPage'));
+const WorkBuddyAuthorizePage = lazy(() => import('./pages/WorkBuddyAuthorizePage'));
+const WorkBuddyPage = lazy(() => import('./pages/WorkBuddyPage'));
 const UsersPage = lazy(() => import('./pages/AdminPage'));
 const LogsPage = lazy(() => import('./pages/AdminPage').then((m) => ({ default: m.LogsPage })));
 const DatabasePage = lazy(() =>
@@ -68,6 +71,8 @@ function Page({ page, user }: { page: string; user: User }) {
       return <SqlPage />;
     case 'reports':
       return <ReportsPage admin={admin} />;
+    case 'workbuddy':
+      return <WorkBuddyPage />;
     case 'wechat':
     case 'traffic':
     case 'xhs':
@@ -159,6 +164,18 @@ export default function App({ callback = null }: { callback?: Promise<string> | 
           <button onClick={logout}>返回登录</button>
         </div>
       </div>
+    );
+  if (new URLSearchParams(window.location.search).get('repair'))
+    return (
+      <Suspense fallback={<Loading label="正在检查修复请求" />}>
+        <CollectorRepairPage user={me.data} onLogout={logout} />
+      </Suspense>
+    );
+  if (new URLSearchParams(window.location.search).get('authorization'))
+    return (
+      <Suspense fallback={<Loading label="正在加载授权请求" />}>
+        <WorkBuddyAuthorizePage user={me.data} onLogout={logout} />
+      </Suspense>
     );
   return (
     <ToastProvider>

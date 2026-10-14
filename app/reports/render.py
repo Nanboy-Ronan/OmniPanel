@@ -110,3 +110,15 @@ _env.filters["sparkline"] = _sparkline
 def render_html(context: dict[str, Any], narrative: str | None) -> str:
     template = _env.get_template("weekly_media.html.j2")
     return template.render(context=context, narrative=narrative)
+
+
+def attach_narrative(html_content: str, narrative: str) -> str:
+    """Fill the trusted template slot in an already archived data snapshot."""
+    marker = "<!--WORKBUDDY_NARRATIVE-->"
+    if html_content.count(marker) != 1:
+        raise ValueError("Report narrative slot missing or duplicated")
+    panel = _env.from_string(
+        '<div class="ai-panel"><div class="ai-panel-title">业务解读</div>'
+        '<div class="ai-panel-content" style="white-space:pre-line">{{ narrative }}</div></div>'
+    ).render(narrative=narrative)
+    return html_content.replace(marker, panel, 1)

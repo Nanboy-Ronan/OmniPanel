@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...services.media_metrics import _latest_metric_subquery, wechat_metrics
 from ...auth import current_admin_user, current_analyst_user
 from ...db import get_session
 from ...db.models import (
@@ -146,38 +147,6 @@ async def sync_wechat_official(
     }
 
 
-def _latest_metric_subquery(
-    start_date: date | None = None,
-    end_date: date | None = None,
-):
-    """Build a subquery with each post's most recent metric snapshot.
-
-    WeChat reports `read_user_count` (and friends) as a cumulative-to-date
-    value per `metric_date`, not a daily delta. Summing across days double
-    counts repeat readers, so we take the latest snapshot in range instead.
-    """
-    ranked = select(
-        MediaPostMetricDaily.post_id.label("post_id"),
-        MediaPostMetricDaily.read_user_count.label("read_user_count"),
-        MediaPostMetricDaily.share_user_count.label("share_user_count"),
-        MediaPostMetricDaily.add_to_fav_count.label("add_to_fav_count"),
-        MediaPostMetricDaily.like_user.label("like_user"),
-        MediaPostMetricDaily.comment_count.label("comment_count"),
-        MediaPostMetricDaily.collection_user.label("collection_user"),
-        MediaPostMetricDaily.read_finish_rate.label("read_finish_rate"),
-        func.row_number()
-        .over(
-            partition_by=MediaPostMetricDaily.post_id,
-            order_by=MediaPostMetricDaily.metric_date.desc(),
-        )
-        .label("rn"),
-    )
-    if start_date:
-        ranked = ranked.where(MediaPostMetricDaily.metric_date >= start_date)
-    if end_date:
-        ranked = ranked.where(MediaPostMetricDaily.metric_date <= end_date)
-    ranked_subq = ranked.subquery()
-    return select(ranked_subq).where(ranked_subq.c.rn == 1).subquery()
 
 
 @router.get("/posts")
@@ -247,34 +216,7 @@ async def media_overview(
     _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
 ):
-    metric_subq = _latest_metric_subquery(start_date, end_date)
-    stmt = (
-        select(
-            func.count(func.distinct(MediaPost.id)).label("posts"),
-            func.sum(metric_subq.c.read_user_count).label("read_user_count"),
-            func.sum(metric_subq.c.share_user_count).label("share_user_count"),
-            func.sum(metric_subq.c.like_user).label("like_user"),
-            func.sum(metric_subq.c.comment_count).label("comment_count"),
-            func.sum(metric_subq.c.collection_user).label("collection_user"),
-        )
-        .select_from(MediaPost)
-        .join(metric_subq, MediaPost.id == metric_subq.c.post_id)
-    )
-    if account_id:
-        stmt = stmt.where(MediaPost.account_id == account_id)
-
-    row = (await session.execute(stmt)).one()
-    posts = int(row.posts or 0)
-    read_user_count = int(row.read_user_count or 0)
-    return {
-        "posts": posts,
-        "read_user_count": read_user_count,
-        "share_user_count": int(row.share_user_count or 0),
-        "like_user": int(row.like_user or 0),
-        "comment_count": int(row.comment_count or 0),
-        "collection_user": int(row.collection_user or 0),
-        "avg_read_user_count": round(read_user_count / posts, 2) if posts else 0,
-    }
+    return await wechat_metrics(session, start_date, end_date, account_id)
 
 
 @router.get("/traffic")

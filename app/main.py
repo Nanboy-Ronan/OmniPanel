@@ -4,7 +4,7 @@ import logging
 import os
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, AsyncExitStack
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -59,6 +59,9 @@ from .views.saved_queries import router as saved_queries_router  # GET/POST/DELE
 from .views.data_freshness import router as data_freshness_router
 from .views.reports import router as reports_router, admin_router as reports_admin_router  # /reports/weekly, /admin/reports/weekly/run
 from .views.audit import router as audit_router  # /auth/logout, /audit/export
+from .views.workbuddy import router as workbuddy_router
+from .views.workbuddy_oauth import router as workbuddy_oauth_router
+from .views.collector_repair import router as collector_repair_router
 
 # ─── Lifespan ───────────────────────────────────────────────────────────────
 
@@ -105,6 +108,9 @@ async def lifespan(app: FastAPI):
             tasks.append(asyncio.create_task(supervise("watchdog", lambda: watchdog_loop(settings))))
         if settings.weekly_report_enabled:
             tasks.append(asyncio.create_task(supervise("weekly_report", lambda: weekly_report_loop(settings))))
+        if settings.report_provider == "workbuddy":
+            from .reports.workbuddy_jobs import report_worker_loop
+            tasks.append(asyncio.create_task(supervise("workbuddy_reports", report_worker_loop)))
         try:
             if tasks:
                 await asyncio.gather(*tasks)
@@ -118,7 +124,10 @@ async def lifespan(app: FastAPI):
     app.state.background_leader = False
     leader_task = asyncio.create_task(run_leader_tasks())
     try:
-        yield
+        async with AsyncExitStack() as stack:
+            if app.state.workbuddy_mcp is not None:
+                await stack.enter_async_context(app.state.workbuddy_mcp.session_manager.run())
+            yield
     finally:
         leader_task.cancel()
         await asyncio.gather(leader_task, return_exceptions=True)
@@ -256,6 +265,14 @@ app.include_router(saved_queries_router)  # /saved-queries/
 app.include_router(reports_router)        # /reports/weekly
 app.include_router(reports_admin_router)  # /admin/reports/weekly/run
 app.include_router(audit_router)          # /auth/logout, /audit/export
+app.include_router(workbuddy_router)
+app.include_router(workbuddy_oauth_router)
+app.include_router(collector_repair_router)
+app.state.workbuddy_mcp = None
+if settings.workbuddy_mcp_enabled:
+    from .integrations.workbuddy.server import create_mcp_server
+    app.state.workbuddy_mcp, workbuddy_app = create_mcp_server()
+    app.mount("/integrations/workbuddy", workbuddy_app)
 
 # ─── Health check ───────────────────────────────────────────────────────────
 

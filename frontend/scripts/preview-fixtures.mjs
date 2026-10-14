@@ -251,6 +251,12 @@ payloads['/api/upload/batches'].push({
     },
   ];
 }
+Object.assign(payloads, {
+  '/api/integrations/workbuddy/status': { mcp_enabled: true, report_api_ready: false },
+  '/api/integrations/workbuddy/tokens': [],
+  '/api/integrations/workbuddy/queries': [],
+  '/api/collector/repair/targets': [],
+});
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',

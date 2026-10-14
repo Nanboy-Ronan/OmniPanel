@@ -1,3 +1,4 @@
+import CollectorOwners from '../components/CollectorOwners';
 import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { useQuery } from '@tanstack/react-query';
@@ -579,6 +580,7 @@ export function CollectorPage() {
   );
   return (
     <>
+      <CollectorOwners />
       <Heading
         title="自动采集"
         description="管理采集登录态，查看定时采集与登录验证记录。"

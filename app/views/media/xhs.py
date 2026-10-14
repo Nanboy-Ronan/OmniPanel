@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...services.media_metrics import xhs_metrics
 from ...auth import current_active_user, current_admin_user, current_analyst_user
 from ... import db as _db_mod
 from ...db import get_session
@@ -255,27 +256,7 @@ async def xhs_overview(
     _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
 ):
-    stmt = select(
-        func.count(XhsPost.id),
-        func.sum(XhsPost.impressions),
-        func.sum(XhsPost.views),
-        func.sum(func.coalesce(XhsPost.likes, 0) + func.coalesce(XhsPost.comments, 0)
-                 + func.coalesce(XhsPost.collects, 0) + func.coalesce(XhsPost.shares, 0)),
-        func.sum(XhsPost.new_followers),
-        func.avg(func.coalesce(XhsPost.cover_click_rate, 0)),
-    )
-    if account_id is not None:
-        stmt = stmt.where(XhsPost.account_id == account_id)
-    if start_date:
-        stmt = stmt.where(XhsPost.publish_date >= start_date)
-    if end_date:
-        stmt = stmt.where(XhsPost.publish_date <= end_date)
-    posts, impressions, views, engagement, followers, cover_rate = (await session.execute(stmt)).one()
-    return XhsOverview(
-        posts=posts or 0, impressions=impressions or 0, views=views or 0,
-        engagement=engagement or 0, new_followers=followers or 0,
-        avg_cover_click_rate=float(cover_rate or 0),
-    )
+    return XhsOverview.model_validate(await xhs_metrics(session, start_date, end_date, account_id))
 
 @router.get("/posts")
 async def list_xhs_posts(

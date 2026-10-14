@@ -1,6 +1,6 @@
 # OmniPanel · React + TypeScript
 
-The React workbench provides 22 routes for commerce BI, customers, orders,
+The React workbench provides 23 routes for commerce BI, customers, orders,
 content analytics, reporting, and administration. FastAPI owns authentication,
 authorization, ingestion, analytics, and background jobs.
 

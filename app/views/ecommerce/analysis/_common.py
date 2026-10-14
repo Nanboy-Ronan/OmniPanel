@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ....services.ecommerce_metrics import _platform_filter, _window  # shared query rules
 from ....db.models import Order
 from ....db.order_status import counted
 
@@ -36,22 +37,3 @@ async def _ensure_data(session: AsyncSession) -> None:
         raise AnalysisDataNotReady(
             "Analysis data not initialised. Upload order data before using analysis endpoints."
         )
-
-
-def _platform_filter(platform: str | None):
-    if platform:
-        return Order.platform == platform
-    return None
-
-
-def _window(stmt, start_date: dt.date, end_date: dt.date, pf):
-    """Apply the standard order-date window, optional platform filter and status rule.
-
-    Centralises the ``where(order_date.between(...))`` + optional platform
-    clause that nearly every analysis query repeats. Cancelled and unpaid orders
-    are excluded (app/db/order_status.py).
-    """
-    stmt = stmt.where(Order.order_date.between(start_date, end_date), counted())
-    if pf is not None:
-        stmt = stmt.where(pf)
-    return stmt

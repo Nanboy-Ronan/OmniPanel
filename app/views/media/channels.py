@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...services.media_metrics import channels_metrics
 from ...auth import current_active_user, current_admin_user, current_analyst_user
 from ... import db as _db_mod
 from ...db import get_session
@@ -257,39 +258,4 @@ async def channels_overview(
     _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
 ):
-    stmt = select(
-        func.count(WxChannelsPost.id).label("posts"),
-        func.sum(WxChannelsPost.plays).label("plays"),
-        func.sum(WxChannelsPost.recommends).label("recommends"),
-        func.sum(WxChannelsPost.likes_thumb).label("likes_thumb"),
-        func.sum(WxChannelsPost.comments).label("comments"),
-        func.sum(WxChannelsPost.shares).label("shares"),
-        func.sum(WxChannelsPost.new_fans).label("new_fans"),
-        func.sum(WxChannelsPost.forwards_chat_moments).label("forwards_chat_moments"),
-        func.avg(func.coalesce(WxChannelsPost.completion_rate, 0)).label("avg_completion_rate"),
-    )
-    if account_id is not None:
-        stmt = stmt.where(WxChannelsPost.account_id == account_id)
-    if start_date:
-        stmt = stmt.where(WxChannelsPost.publish_date >= start_date)
-    if end_date:
-        stmt = stmt.where(WxChannelsPost.publish_date <= end_date)
-
-    row = (await session.execute(stmt)).one()
-    posts = int(row.posts or 0)
-    plays = int(row.plays or 0)
-    return {
-        "posts": posts,
-        "plays": plays,
-        "recommends": int(row.recommends or 0),
-        "likes_thumb": int(row.likes_thumb or 0),
-        "comments": int(row.comments or 0),
-        "shares": int(row.shares or 0),
-        "new_fans": int(row.new_fans or 0),
-        "forwards_chat_moments": int(row.forwards_chat_moments or 0),
-        "engagement": sum(int(value or 0) for value in (
-            row.recommends, row.likes_thumb, row.comments, row.shares,
-        )),
-        "avg_completion_rate": float(row.avg_completion_rate or 0),
-        "avg_plays_per_post": round(plays / posts, 1) if posts else 0,
-    }
+    return await channels_metrics(session, start_date, end_date, account_id)

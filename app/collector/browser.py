@@ -141,7 +141,9 @@ def open_context(storage_state_path: Path, headless: bool | None = None) -> Iter
 
     headless = settings.collector_headless if headless is None else headless
 
-    with sync_playwright() as pw:
+    from .session_lock import session_lock
+
+    with session_lock(storage_state_path), sync_playwright() as pw:
         # No --disable-blink-features=AutomationControlled: confirmed live
         # 2026-07-15 that this flag itself gets XHS's pro.xiaohongshu.com to
         # treat an otherwise-valid session as invalid and force it back to

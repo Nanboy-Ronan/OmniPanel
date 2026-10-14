@@ -1,0 +1,20 @@
+{
+  "name": "采集登录修复",
+  "name_zh": "采集登录修复",
+  "name_en": "Collector Login Repair",
+  "description": "账号负责人在本地登录，自动更新公司平台采集凭证并复检，无需复制 token。",
+  "description_zh": "账号负责人在本地登录，自动更新公司平台采集凭证并复检，无需复制 token。",
+  "description_en": "Repair owned collector accounts using a local browser and verified credential upload.",
+  "source": "omnipanel-collector-login",
+  "type": "cli",
+  "version": "1.0.0",
+  "minWorkbuddyVersion": "5.0.0",
+  "examples_zh": [
+    "帮我修复小红书采集登录",
+    "视频号登录过期了，帮我重新登录"
+  ],
+  "examples_en": [
+    "Repair my collector login",
+    "Renew the Channels login"
+  ]
+}

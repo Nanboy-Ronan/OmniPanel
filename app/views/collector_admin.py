@@ -82,10 +82,15 @@ async def upload_collector_session(
         raise HTTPException(status_code=400, detail="不是合法的 storage_state.json（缺少 cookies 字段）。")
 
     target_path = session_path(platform, account_id if platform in _PER_ACCOUNT_PLATFORMS else None)
-    tmp_path = target_path.with_suffix(".json.tmp")
-    tmp_path.write_bytes(raw)
-    os.chmod(tmp_path, 0o600)
-    os.replace(tmp_path, target_path)
+    from ..collector.session_lock import session_lock
+    try:
+        with session_lock(target_path, blocking=False):
+            tmp_path = target_path.with_suffix(".json.tmp")
+            tmp_path.write_bytes(raw)
+            os.chmod(tmp_path, 0o600)
+            os.replace(tmp_path, target_path)
+    except BlockingIOError:
+        raise HTTPException(409, "采集正在运行，请稍后更新登录态") from None
 
     await log_operation(
         str(_user.id),

@@ -7,7 +7,8 @@ and prevents the scattered boolean-parsing pattern spread across the codebase.
 """
 from __future__ import annotations
 
-from pydantic import AliasChoices, Field, field_validator
+from typing import Literal
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,6 +42,17 @@ class Settings(BaseSettings):
     # ── Auth ──────────────────────────────────────────────────────────────────
     rap_secret: str = "CHANGE_ME"
     token_lifetime_seconds: int = 86400  # 24 h
+    # Explicitly enabled after migrations and HTTPS/proxy configuration.
+    workbuddy_mcp_enabled: bool = False
+    workbuddy_web_callback_url: str = ""
+
+    @property
+    def public_origin(self) -> str:
+        """Support both legacy /console/ URLs and origin-only deployment URLs."""
+        from urllib.parse import urlsplit
+        parsed = urlsplit(self.public_base_url)
+        return f"{parsed.scheme}://{parsed.netloc}"
+
     # Comma-separated previous RAP_SECRET values, accepted for verifying
     # already-issued JWTs only — new tokens are always signed with rap_secret.
     # Lets the secret be rotated without forcing every signed-in user to log
@@ -234,6 +246,11 @@ class Settings(BaseSettings):
     # Set WEEKLY_REPORT_ENABLED=true to enable the daily background check that
     # generates + pushes the report once a complete ISO week is due.
     weekly_report_enabled: bool = False
+    report_provider: Literal["legacy", "workbuddy"] = "legacy"
+    workbuddy_api_key: SecretStr | None = None
+    workbuddy_source_app: str = "OmniPanel"
+    workbuddy_agent_id: str | None = None
+    workbuddy_report_timeout_seconds: int = Field(300, ge=30, le=600)
     # Hour of the day (0-23) in app_timezone at which the daily due-check runs.
     report_hour: int = 9
     # Publicly reachable URL recipients open from the WeCom push — the nginx

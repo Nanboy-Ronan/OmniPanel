@@ -108,12 +108,14 @@ describe('complete workbench data contracts', () => {
     ).toEqual(['新品', '发布']);
   });
   it('maps all retired Chinese links and enforces role groups', () => {
-    expect(routes).toHaveLength(22);
+    expect(routes).toHaveLength(23);
     for (const route of routes) {
       expect(resolveRoute(route.alias)).toEqual(route);
       expect(allowed('admin', route.role)).toBe(true);
     }
     expect(allowed('viewer', resolveRoute('SQL 控制台')!.role)).toBe(false);
+    expect(allowed('viewer', resolveRoute('workbuddy')!.role)).toBe(false);
+    expect(allowed('analyst', resolveRoute('workbuddy')!.role)).toBe(true);
     expect(allowed('analyst', resolveRoute('自动采集')!.role)).toBe(false);
     expect(allowed('viewer', resolveRoute('数据浏览')!.role)).toBe(true);
   });

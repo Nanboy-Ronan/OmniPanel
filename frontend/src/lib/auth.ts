@@ -3,6 +3,8 @@ import { request, session, tokenSchema } from './api';
 const RETURN_KEY = 'omnipanel.console.return';
 const FILTER_KEYS = [
   'page',
+  'authorization',
+  'repair',
   'anchor',
   'period',
   'start',

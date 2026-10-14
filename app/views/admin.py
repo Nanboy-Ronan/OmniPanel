@@ -346,7 +346,7 @@ LOG_CATEGORIES: dict[str, tuple[str, ...]] = {
         "login", "wecom_login", "login_failed", "wecom_login_failed", "logout",
         "register", "wecom_register",
     ),
-    "access": ("download", "export_client", "view_customer", "view_order_raw", "sql_query", "nl_sql_query"),
+    "access": ("download", "export_client", "view_customer", "view_order_raw", "sql_query", "nl_sql_query", "workbuddy_query"),
     "data": (
         "upload", "xhs_upload", "xhs_upload_overview", "zhihu_upload", "pgy_upload", "channels_upload",
         "wechat_sync", "clear_db", "weekly_report_run",

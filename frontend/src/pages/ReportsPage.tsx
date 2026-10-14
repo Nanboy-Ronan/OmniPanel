@@ -16,13 +16,28 @@ const summary = z.object({
   generated_at: z.string().nullish(),
   status: z.string(),
   wecom_sent: z.boolean(),
+  job_state: z.string().nullish(),
+  narrative_status: z.string().nullish(),
 });
 const detail = summary.extend({
   narrative: z.string().nullable(),
   html_content: z.string().nullable(),
   error_message: z.string().nullable(),
+  delivery_error: z.string().nullish(),
 });
 type Summary = z.infer<typeof summary>;
+const pendingStates = ['queued', 'preparing', 'generating', 'ready', 'sending'];
+const jobLabels: Record<string, string> = {
+  queued: '等待生成',
+  preparing: '整理数据',
+  generating: '生成智能解读',
+  ready: '等待推送',
+  sending: '正在推送',
+  sent: '已推送',
+  failed: '生成失败',
+  delivery_failed: '推送失败',
+  delivery_unknown: '推送结果待确认',
+};
 
 /** ISO-8601 week number of the report's Monday. */
 function isoWeek(day: string) {
@@ -55,8 +70,15 @@ export default function ReportsPage({ admin }: { admin: boolean }) {
   const list = useResource('/reports/weekly?limit=100', z.array(summary));
   const search = useLocationSearch();
   const requested = Number(new URLSearchParams(search).get('report')) || null;
-  const action = useAction({ success: '本周周报已生成', error: '周报生成失败' });
+  const action = useAction({ success: '周报请求已处理，请查看报告状态', error: '周报请求失败' });
   const rows = list.data ?? [];
+  const pending = rows.some((row) => pendingStates.includes(row.job_state ?? ''));
+  const { refetch } = list;
+  useEffect(() => {
+    if (!pending) return;
+    const timer = window.setInterval(() => void refetch(), 3000);
+    return () => window.clearInterval(timer);
+  }, [pending, refetch]);
   const id = rows.some((row) => row.id === requested) ? requested! : rows[0]?.id;
   const current = rows.find((row) => row.id === id);
   return (
@@ -68,7 +90,7 @@ export default function ReportsPage({ admin }: { admin: boolean }) {
           admin ? (
             <ConfirmAction
               title="生成本周周报"
-              description="将生成或重试本周报告；如已配置企业微信通知，会发送到已配置群。"
+              description="将生成最近一个完整周的报告，并推送给已配置的企业微信收件人。已有任务不会重复创建。"
               onConfirm={() =>
                 action.mutate({ path: '/admin/reports/weekly/run', timeoutMs: 180000 })
               }
@@ -111,7 +133,7 @@ export default function ReportsPage({ admin }: { admin: boolean }) {
                   ))}
                 </ol>
               </nav>
-              {current && <Report key={current.id} row={current} />}
+              {current && <Report key={current.id} row={current} admin={admin} />}
             </div>
           ) : (
             <EmptyState title="暂无周报">
@@ -124,8 +146,16 @@ export default function ReportsPage({ admin }: { admin: boolean }) {
   );
 }
 
-function Report({ row }: { row: Summary }) {
+function Report({ row, admin }: { row: Summary; admin: boolean }) {
   const query = useResource(`/reports/weekly/${row.id}`, detail);
+  const delivery = useAction({ success: '投递状态已更新', error: '投递操作失败' });
+  const { refetch } = query;
+  useEffect(() => {
+    void refetch();
+  }, [row.job_state, refetch]);
+  const state = query.data?.job_state ?? row.job_state;
+  const pending = pendingStates.includes(state ?? '');
+  const uncertain = state === 'delivery_unknown';
   const prepared = useMemo(
     () =>
       query.data?.html_content ? prepareReport(query.data.html_content, { embedded: true }) : null,
@@ -151,10 +181,50 @@ function Report({ row }: { row: Summary }) {
           </p>
         </div>
       </header>
+      {state && <p role="status">{jobLabels[state] ?? state}</p>}
+      {query.data?.narrative_status === 'unavailable' && <p>智能解读暂缺，数据报告仍可查看。</p>}
+      {query.data?.delivery_error && <p className="stale-notice">{query.data.delivery_error}</p>}
+      {delivery.isError && <ErrorState error={delivery.error} />}
+      {admin && (state === 'delivery_failed' || uncertain) && (
+        <div className="toolbar">
+          <ConfirmAction
+            title="重试推送"
+            description={
+              uncertain
+                ? '请先核对企业微信是否已收到。确认重试可能造成重复推送。'
+                : '修正企业微信配置后，将向原收件人重新发送已保存的报告。'
+            }
+            busy={delivery.isPending}
+            onConfirm={() =>
+              delivery.mutate({
+                path: `/admin/reports/weekly/${row.id}/delivery`,
+                body: { action: 'retry', acknowledged_uncertain_delivery: uncertain },
+              })
+            }
+          />
+          {uncertain && (
+            <ConfirmAction
+              title="确认已收到"
+              description="确认收件人已经收到本份周报，标记为已推送。"
+              busy={delivery.isPending}
+              onConfirm={() =>
+                delivery.mutate({
+                  path: `/admin/reports/weekly/${row.id}/delivery`,
+                  body: { action: 'mark_sent', acknowledged_uncertain_delivery: true },
+                })
+              }
+            />
+          )}
+        </div>
+      )}
       <QueryView query={query}>
         {(data) =>
           !prepared ? (
-            <ErrorState error={new Error(data.error_message ?? '报告尚未生成成功。')} />
+            pending ? (
+              <p>周报正在后台处理，完成后此页面会自动更新。</p>
+            ) : (
+              <ErrorState error={new Error(data.error_message ?? '报告尚未生成成功。')} />
+            )
           ) : (
             <>
               {data.status !== 'success' && data.error_message && (

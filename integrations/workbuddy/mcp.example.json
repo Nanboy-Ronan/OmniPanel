@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "OmniPanel": {
+      "type": "streamableHttp",
+      "url": "https://YOUR_PLATFORM_HOST/api/integrations/workbuddy/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_PERSONAL_RPA_WORKBUDDY_TOKEN"
+      }
+    }
+  }
+}

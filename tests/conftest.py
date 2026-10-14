@@ -163,6 +163,9 @@ def _clean_db(request):
     if not pg_db.startswith("rpa_test_"):
         raise RuntimeError(f"Refusing to clean non-test database {pg_db!r}")
     data_tables = [
+        "workbuddy_oauth_clients",
+        "collector_owners",
+        "collector_repairs",
         "pgy_notes",
         "xhs_posts",
         "xhs_account_daily_metrics",

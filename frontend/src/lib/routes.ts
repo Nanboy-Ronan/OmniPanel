@@ -10,6 +10,7 @@ export const routes = [
   ['tasks', '导入任务', '数据管理', 'viewer', '导入任务'],
   ['dictionary', '数据字典', '数据管理', 'viewer', '数据字典'],
   ['sql', 'SQL 控制台', '数据管理', 'analyst', 'SQL 控制台'],
+  ['workbuddy', 'WorkBuddy 连接', '数据管理', 'analyst', 'WorkBuddy 连接'],
   ['reports', '周报', '内容分析', 'analyst', '周报'],
   ['traffic', '公众号流量', '内容分析', 'analyst', '公众号流量'],
   ['wechat', '公众号内容', '内容分析', 'analyst', '公众号内容分析'],

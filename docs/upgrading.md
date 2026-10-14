@@ -1,3 +1,21 @@
+## WorkBuddy integration update
+
+Back up the database, install the updated Python requirements and rebuild the
+frontend. Run `python -m alembic upgrade head` before restarting the API.
+Migrations 0023–0026 add scoped tokens, report jobs, OAuth grants, collector
+owners and short-lived repair requests; existing users and saved reports remain.
+The integration is off by default. Configure your own HTTPS origin, OAuth
+callback and optional report credentials using [the integration guide](workbuddy-integration.md).
+Update the reverse proxy to route root OAuth discovery and disable MCP response
+buffering. Build collector helper packages from public source for your own host;
+never copy credentials, private exports or existing deployment archives.
+
+## WorkBuddy 接入升级
+
+先备份、安装依赖并重建前端，再执行 `python -m alembic upgrade head`，新增版本为
+0023–0026。保留原有用户和周报；外部服务默认关闭。配置自己的域名、回调地址，并更新
+OAuth 发现端点的代理规则。采集修复安装包须从公开源码构建，不能复制内部发布包。
+
 # Upgrading OmniPanel
 
 ## React workbench update — October 2026

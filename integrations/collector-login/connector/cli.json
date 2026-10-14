@@ -1,0 +1,17 @@
+{
+  "runtime": {
+    "type": "python",
+    "version": "3.11"
+  },
+  "init": {
+    "darwin": "python -m pip install \"__WHEEL_URL__\" && python -m playwright install chromium",
+    "linux": "python -m pip install \"__WHEEL_URL__\" && python -m playwright install chromium",
+    "win32": "python -m pip install \"__WHEEL_URL__\" && python -m playwright install chromium"
+  },
+  "status": {
+    "darwin": "rpa-collector-login status",
+    "linux": "rpa-collector-login status",
+    "win32": "rpa-collector-login status"
+  },
+  "statusMatch": "\"ready\": true"
+}

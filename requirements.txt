@@ -69,3 +69,8 @@ uvloop==0.21.0
 watchfiles==1.0.5
 websockets==15.0.1
 httpx==0.28.1
+mcp==1.30.0
+httpx-sse==0.4.3
+sse-starlette==2.3.6
+codebuddy-cloud-agent-sdk==0.3.4
+agent-client-protocol==0.12.1

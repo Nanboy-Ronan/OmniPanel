@@ -17,6 +17,7 @@ function setup(page: string, role = 'admin', overrides: Record<string, unknown> 
   const payloads: Record<string, unknown> = {
     '/auth/me': { ...user, role },
     ...fixtures,
+    '/collector/repair/targets': [],
     ...overrides,
   };
   const fetch = vi.fn(async (path: string, options?: RequestInit) => {

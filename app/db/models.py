@@ -27,6 +27,74 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from . import Base  # now available
 from .raw_headers import YOUZAN_RAW_HEADERS, JD_RAW_HEADERS, TMALL_RAW_HEADERS  # noqa: F401 — re-exported for ETL
 
+class IntegrationToken(Base):
+    """Revocable per-user MCP credentials; plaintext is returned only at creation."""
+
+    __tablename__ = "integration_tokens"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    scopes = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class WorkBuddyOAuthClient(Base):
+    __tablename__ = "workbuddy_oauth_clients"
+    id = Column(String(64), primary_key=True)
+    redirect_uris = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class WorkBuddyOAuthRequest(Base):
+    __tablename__ = "workbuddy_oauth_requests"
+    id = Column(String(64), primary_key=True)
+    client_id = Column(String(64), ForeignKey("workbuddy_oauth_clients.id", ondelete="CASCADE"), nullable=False)
+    redirect_uri = Column(Text, nullable=False)
+    state = Column(Text, nullable=False)
+    challenge = Column(String(43), nullable=False)
+    scopes = Column(JSON, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"))
+    code_hash = Column(String(64), unique=True)
+    decided_at = Column(DateTime(timezone=True))
+    consumed_at = Column(DateTime(timezone=True))
+
+
+class WorkBuddyOAuthGrant(Base):
+    __tablename__ = "workbuddy_oauth_grants"
+    token_id = Column(UUID(as_uuid=True), ForeignKey("integration_tokens.id", ondelete="CASCADE"), primary_key=True)
+    client_id = Column(String(64), ForeignKey("workbuddy_oauth_clients.id", ondelete="CASCADE"), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class WorkBuddyOAuthRefresh(Base):
+    __tablename__ = "workbuddy_oauth_refresh"
+    token_hash = Column(String(64), primary_key=True)
+    grant_id = Column(UUID(as_uuid=True), ForeignKey("workbuddy_oauth_grants.token_id", ondelete="CASCADE"), nullable=False, index=True)
+    used_at = Column(DateTime(timezone=True))
+
+
+class CollectorOwner(Base):
+    __tablename__ = "collector_owners"
+    platform = Column(String(20), primary_key=True)
+    account_id = Column(Integer, primary_key=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+
+
+class CollectorRepair(Base):
+    __tablename__ = "collector_repairs"
+    id = Column(String(64), primary_key=True)
+    secret_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"))
+    platform = Column(String(20))
+    account_id = Column(Integer)
+    status = Column(String(24), nullable=False, server_default="pending")
+
+
 class User(SQLAlchemyBaseUserTableUUID, Base):
     """
     FastAPI-Users’ built-in user model. It expects Base to come from .db/__init__.py
@@ -736,6 +804,28 @@ class PgyNote(Base):
         Index('ix_pgy_notes_account_id', 'account_id'),
         Index('ix_pgy_notes_publish_date', 'publish_date'),
     )
+
+
+class WorkBuddyReportJob(Base):
+    """Durable single-week job; leases protect against concurrent workers."""
+    __tablename__ = "workbuddy_report_jobs"
+    report_id = Column(Integer, ForeignKey("weekly_report_runs.id", ondelete="CASCADE"), primary_key=True)
+    state = Column(String(32), nullable=False, index=True)
+    lease_token = Column(UUID(as_uuid=True), nullable=True)
+    lease_until = Column(DateTime(timezone=True), nullable=True)
+    snapshot = Column(JSON, nullable=True)
+    agent_id = Column(String(200), nullable=False)
+    manifest_version = Column(String(32), nullable=False)
+    prompt_version = Column(String(32), nullable=False)
+    runtime_id = Column(String(100), nullable=True)
+    cleanup_pending = Column(Boolean, nullable=False, server_default="false")
+    agent_output = Column(JSON, nullable=True)
+    recipients = Column(JSON, nullable=False)
+    narrative_status = Column(String(32), nullable=False, server_default="pending")
+    generation_error = Column(String(200), nullable=True)
+    delivery_error = Column(String(200), nullable=True)
+    delivery_attempts = Column(Integer, nullable=False, server_default="0")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class WeeklyReportRun(Base):

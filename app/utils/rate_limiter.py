@@ -101,7 +101,8 @@ class LoginRateLimiter:
         await limiter.reset(identifier, "password_login")
     """
 
-    def __init__(self, *, redis_client: Any = None) -> None:
+    def __init__(self, *, redis_client: Any = None, max_attempts: int = MAX_ATTEMPTS) -> None:
+        self.max_attempts = max_attempts
         # Accept an injected client (used in tests with fakeredis).
         self._client: Any = redis_client
         self._memory = _MemoryFallback()
@@ -151,12 +152,12 @@ class LoginRateLimiter:
         r = await self._redis()
         if r is None:
             count, remaining = self._memory.get(key)
-            if count >= MAX_ATTEMPTS:
+            if count >= self.max_attempts:
                 self._raise_429(remaining)
             return
         try:
             raw = await r.get(key)
-            if raw is not None and int(raw) >= MAX_ATTEMPTS:
+            if raw is not None and int(raw) >= self.max_attempts:
                 ttl = await r.ttl(key)
                 self._raise_429(int(ttl))
         except HTTPException:
@@ -166,7 +167,7 @@ class LoginRateLimiter:
                 "LoginRateLimiter.check error: %s — using in-memory fallback", exc
             )
             count, remaining = self._memory.get(key)
-            if count >= MAX_ATTEMPTS:
+            if count >= self.max_attempts:
                 self._raise_429(remaining)
 
     async def record_failure(self, identifier: str, endpoint: str) -> None:

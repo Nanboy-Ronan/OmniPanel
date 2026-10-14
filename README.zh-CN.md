@@ -13,7 +13,7 @@
 
 ---
 
-> 🤖 **面向智能体时代而生。** 我们计划把 OmniPanel 与企业级 AI 智能体平台（如 workbuddy）打通，让你的数据不只是能在仪表盘上看，还能直接被智能体工作流查询和调用。详见[路线图](#路线图)。
+> 🤖 已支持 WorkBuddy：按用户授权的只读查询、OAuth 连接、异步周报和采集登录修复。参见[接入说明](docs/workbuddy-integration.md)。
 
 ## OmniPanel 是什么？
 
@@ -71,6 +71,8 @@
 |---|---|
 | ![蒲公英合作](docs/images/screenshot_pgy.png) | ![数据库状态](docs/images/screenshot_database.png) |
 
+![WorkBuddy 连接 · 合成演示数据](docs/images/screenshot_workbuddy.png)
+
 <details>
 <summary>更多面板：留存、客户身份、SQL 与操作日志</summary>
 
@@ -88,10 +90,14 @@
 
 ## 功能
 
-- **React 工作台** —— 22 个页面入口，统一筛选、角色导航与响应式布局；可折叠侧栏与页面快速跳转（Ctrl/Cmd+K）、可排序可多选的表格并记住每页条数、拖拽上传带进度与取消、操作结果提示。
+- **React 工作台** —— 23 个页面入口，统一筛选、角色导航与响应式布局；可折叠侧栏与页面快速跳转（Ctrl/Cmd+K）、可排序可多选的表格并记住每页条数、拖拽上传带进度与取消、操作结果提示。
 - **交互式商城 BI** —— 营业额趋势、渠道贡献、商品排行、地区分布与同期对比联动分析。
 - **内容与合作分析** —— 可读的长尾分布、蒲公英项目/博主联动、历史内容查看与数据来源健康检查。
 - **实时运维面板** —— 显式说明账号权限，实时检查数据库结构、数据量与备份元信息。
+
+### WorkBuddy 接入
+
+按用户授权的只读 MCP 查询、PKCE OAuth 与可撤销令牌；周报任务队列、重试与证据校验；采集账号负责人授权本地登录修复。默认不启用外部服务，示例数据全部为合成数据。见[部署与权限说明](docs/workbuddy-integration.md)。
 
 ### 数据接入
 
@@ -300,7 +306,6 @@ MINIMAX_API_KEY=eyJ...             # 或 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY �
 - **小红书商城订单** —— 在现有的内容/KOL 数据基础上，接入小红书自营电商的订单分析
 - **飞书 / 钉钉推送** —— 将已保存的查询结果推送到团队协作工具
 - **海外平台（Amazon、Lazada、Shopify）** —— 把订单数据同步从国内电商平台扩展到跨境销售渠道
-- **与企业级智能体平台联动（如 workbuddy）** —— 接入企业级 AI 智能体平台，让 OmniPanel 的数据能在这些工作流里被查询和调用
 
 考虑中（欢迎在 [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions) 参与讨论）：
 

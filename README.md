@@ -13,7 +13,7 @@
 
 ---
 
-> 🤖 **Built for the agent era.** We're on the roadmap to connect OmniPanel with enterprise-grade AI agent platforms (e.g. workbuddy), so your data can be queried and acted on directly from agent workflows — not just from dashboards. See [Roadmap](#roadmap).
+> 🤖 WorkBuddy integration is available: scoped read-only queries, OAuth connections, queued reports, and owner-approved collector login repair. See the [integration guide](docs/workbuddy-integration.md).
 
 ## What is OmniPanel?
 
@@ -71,6 +71,8 @@ Path A: Auto-sync                  Path B: Manual upload
 |---|---|
 | ![Pugongying campaigns](docs/images/screenshot_pgy.png) | ![Database status](docs/images/screenshot_database.png) |
 
+![WorkBuddy connection · synthetic demo](docs/images/screenshot_workbuddy.png)
+
 <details>
 <summary>More panels: retention, identity, SQL, and audit log</summary>
 
@@ -88,10 +90,14 @@ Path A: Auto-sync                  Path B: Manual upload
 
 ## Features
 
-- **React workbench** — 22 routes with shared filters, role-aware navigation, and a responsive layout; a collapsible rail and page switcher (Ctrl/Cmd+K), sortable and selectable tables with remembered page sizes, drag-and-drop uploads with progress and cancel, and toast notifications.
+- **React workbench** — 23 routes with shared filters, role-aware navigation, and a responsive layout; a collapsible rail and page switcher (Ctrl/Cmd+K), sortable and selectable tables with remembered page sizes, drag-and-drop uploads with progress and cancel, and toast notifications.
 - **Interactive commerce BI** — linked revenue trends, channel contributions, product rankings, regional distribution, and period comparisons.
 - **Content and cooperation analytics** — readable long-tail distributions, linked Pugongying campaigns/bloggers, historical visibility, and source-health checks.
 - **Live operations panels** — explicit account permissions and database schema, row counts, and backup metadata derived from actual checks.
+
+### WorkBuddy integration
+
+Scoped read-only MCP tools, PKCE OAuth and revocable credentials; queued weekly reports with retries and evidence validation; owner-approved local collector login repair. External services are opt-in and examples use synthetic data. See [deployment and permissions](docs/workbuddy-integration.md).
 
 ### Data ingestion
 
@@ -301,7 +307,6 @@ In progress:
 - **Xiaohongshu (XHS) Marketplace orders** — e-commerce order analytics for XHS's own marketplace, alongside its existing content/KOL data
 - **Feishu / DingTalk push** — send saved query results to team collaboration tools
 - **Overseas platforms (Amazon, Lazada, Shopify)** — extend order data sync beyond domestic marketplaces to cross-border sales channels
-- **Enterprise agent platform integration (e.g. workbuddy)** — connect with enterprise-grade AI agent platforms so OmniPanel's data can be queried/acted on from within those workflows
 
 Under consideration (join the [Discussion](https://github.com/Nanboy-Ronan/OmniPanel/discussions)):
 

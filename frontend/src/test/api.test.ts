@@ -91,14 +91,16 @@ describe('HTTP and identity boundary', () => {
     window.history.replaceState(
       null,
       '',
-      '/console/?anchor=2026-10-01&period=week&redirect=https://evil.test',
+      '/console/?authorization=pending-request&anchor=2026-10-01&period=week&redirect=https://evil.test',
     );
     rememberLoginDestination();
     window.history.replaceState(null, '', '/console/?code=once&state=signed');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({ access_token: 'jwt' })));
     await consumeOAuthCallback();
     expect(window.location.pathname).toBe('/console/');
-    expect(window.location.search).toBe('?anchor=2026-10-01&period=week');
+    expect(window.location.search).toBe(
+      '?authorization=pending-request&anchor=2026-10-01&period=week',
+    );
   });
   it('uses the fixed console callback rather than user query parameters', () => {
     window.history.replaceState(null, '', '/console/?redirect_uri=https://evil.test');
