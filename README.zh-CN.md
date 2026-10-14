@@ -1,15 +1,43 @@
 # OmniPanel
 
-**可自行部署的商城、内容与客户分析工作台。**
+**面向经营分析与企业智能体的开源数据工作台。**
 
-把分散在多个平台的订单、内容表现和达人合作数据汇集到一起。从导入报表、查看趋势，到分析客户与生成周报，让每个数字都有可查看的数据覆盖范围和统计口径。
+把订单、内容表现和达人合作数据汇集到一起，既能在看板中分析，也能通过 **WorkBuddy 企业智能体**按权限查询、生成周报与发起采集登录修复。数据接入、统计口径和访问审计由 OmniPanel 统一处理。
 
 [![CI](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 [English](README.md) · **简体中文**
 
-[体验界面](#体验界面) · [支持的平台](#支持的平台) · [自行部署](#自行部署) · [文档](#文档)
+[系统框架](#系统框架) · [WorkBuddy 与其他智能体](#workbuddy-与其他企业智能体) · [体验界面](#体验界面) · [自行部署](#自行部署) · [文档](#文档)
+
+## 最近更新
+
+- **2026-10-14** — 新增 WorkBuddy 企业智能体接入：只读 MCP 查询、OAuth 授权、异步周报，以及负责人确认的采集登录修复。[功能提交](https://github.com/Nanboy-Ronan/OmniPanel/commit/91e7b05)
+- **2026-10-10** — 更新交互界面，强化登录审批、SQL 隔离、操作审计、订单退款口径与备份恢复。[功能提交](https://github.com/Nanboy-Ronan/OmniPanel/commit/6c9e41a)
+- **2026-10-05** — 迁移至 React + TypeScript 工作台，加入商城 BI、内容合作分析与数据库状态面板。[功能提交](https://github.com/Nanboy-Ronan/OmniPanel/commit/02128cb)
+
+## 系统框架
+
+```mermaid
+flowchart TB
+    Sources["平台 API · 导出文件 · 授权浏览器采集"] --> Ingest["识别 · 校验 · 去重 · 归一化"]
+    Ingest --> DB[("PostgreSQL")]
+    UI["React 分析工作台"] --> API["FastAPI · 角色权限 · 统计口径 · 审计"]
+    WB["WorkBuddy 企业智能体"] -->|"MCP · OAuth / 个人令牌"| MCP["受限只读工具"]
+    Other["其他兼容 MCP 的智能体"] -.->|"令牌接入 · 待逐端验证"| MCP
+    MCP --> API
+    API --> DB
+    API --> Jobs["周报队列 · 校验 · 重试"]
+    Jobs -->|"可选汇总快照"| Cloud["WorkBuddy Cloud Agent"]
+    Cloud -->|"分析结果"| Jobs
+    Jobs --> Reports["保存周报 · 企业微信通知"]
+    WB -->|"用户发起"| Local["本地采集登录助手"]
+    Local -->|"负责人授权 · 账号复检"| Repair["采集登录修复 API"]
+    Repair --> Sessions["采集登录态"]
+```
+
+实线表示已实现的功能路径；虚线表示可扩展的客户端接入路径。外部 AI 服务按需启用，采集登录修复需要用户确认。部署细节见[架构文档](docs/architecture.zh-CN.md)。
 
 ![OmniPanel 经营概览：营业额趋势、渠道构成与数据覆盖状态](docs/images/screenshot_overview.png)
 
@@ -29,6 +57,42 @@ OmniPanel 面向同时经营多个商城、运营多个内容账号的团队，�
 | 如何进一步查证？ | 只读 SQL、中文问数据，或按权限开放的 WorkBuddy 查询工具 |
 
 营业额遵循统一的订单状态与退款规则。看板分别展示数据覆盖日期和导入时间，并提示不完整的统计区间。内容带货分析用于观察关联，跨平台客户的精确与模糊匹配结果分别展示。
+
+## WorkBuddy 与其他企业智能体
+
+### 已实现：WorkBuddy
+
+WorkBuddy 是 OmniPanel 的企业智能体入口，可以直接在对话中使用平台已经整理好的数据：
+
+| 能力 | 实现方式 |
+|---|---|
+| 查询商城与内容表现 | 通过 MCP 获取汇总指标、媒体明细、统计口径、数据新鲜度和来源链接 |
+| 按用户授权访问 | OAuth + PKCE 或个人令牌，按查询范围授权，支持撤销与审计 |
+| 生成经营周报 | OmniPanel 将汇总快照交给 WorkBuddy Cloud Agent，排队执行、校验证据引用、保存报告并按配置推送 |
+| 修复采集登录 | 负责人确认后启动独立本地浏览器，验证目标账号，再更新采集登录态 |
+
+例如，可以问：“比较上周各渠道的销售表现，注明数据覆盖范围”，或“按账号分析内容表现，区分累计指标和期间新增”。只读工具不开放客户身份字段、采集凭据或任意 SQL。
+
+[配置 WorkBuddy →](docs/workbuddy-integration.md)
+
+### 可扩展：其他企业智能体
+
+**可以接入，但不同能力的适配工作不同。** 当前查询服务使用 Streamable HTTP MCP，支持 Bearer 个人令牌；具备相应能力的客户端可尝试复用现有端点：
+
+```text
+https://<你的域名>/api/integrations/workbuddy/mcp
+```
+
+| 接入目标 | 当前基础与需要完成的工作 |
+|---|---|
+| 其他 MCP 智能体查询数据 | 复用现有工具和个人令牌；验证客户端的传输方式、请求头、Host/Origin 校验、权限与撤销行为 |
+| 其他平台的一键 OAuth 连接 | 当前回调规则针对 WorkBuddy 与本地回环地址；新平台需增加精确回调规则并测试授权流程 |
+| 其他智能体代替 WorkBuddy 生成周报 | 需要增加服务商适配器，保留快照、队列、证据校验与交付控制；仅支持 MCP 不等于可替换周报运行服务 |
+| 其他平台执行本地登录修复 | 需要适配其本地工具或技能运行环境，保留每次授权和账号复检流程 |
+
+尚未完成其他企业智能体产品的端到端验证，因此不将它们列为已支持平台。当前端点保留 `workbuddy` 名称；可参考[个人令牌配置模板](integrations/workbuddy/mcp.example.json)进行适配。
+
+此外，独立的[中文问数据](docs/nl-to-sql.zh-CN.md)支持通过模型服务商生成 SQL，再使用专用只读数据库账号执行。AI 能力均需单独配置，启用后会将相应输入发送给所选服务商。
 
 ## 工作台一览
 
@@ -82,16 +146,6 @@ node frontend/scripts/preview-fixtures.mjs
 
 导入时识别支持的列结构，将记录转换为统一的分析数据。重复文件和订单会去重，后续导出可以更新订单状态。浏览器采集使用经过授权的平台登录态；登录过期或平台页面变化时，可能需要重新登录或更新采集适配。详见[采集器文档](docs/collector.zh-CN.md)。
 
-## WorkBuddy 与 AI 查询
-
-**连接 WorkBuddy。** 分析员和管理员通过 OAuth 或个人令牌授予查询范围。只读工具返回有数量限制的汇总分析与媒体明细，支持审计和撤销授权，不开放客户身份字段、采集凭据或任意 SQL。
-
-**生成经营周报。** 可选的 WorkBuddy 周报服务通过任务队列处理汇总快照，校验分析结论引用的指标，并支持重试和企业微信推送。采集账号负责人还可以授权本地浏览器登录，修复支持平台的采集登录态。
-
-**中文问数据。** 输入问题，查看生成的 SQL，再通过受限的报表视图查询结果。查询使用独立的只读数据库账号。
-
-这些能力需要单独配置。外部 AI 服务按需启用，启用后会将相应输入发送给所选服务商。详见 [WorkBuddy 接入说明](docs/workbuddy-integration.md)和[中文问数据文档](docs/nl-to-sql.zh-CN.md)。
-
 ## 自行部署
 
 应用使用 **React + TypeScript、FastAPI 和 PostgreSQL**。Docker Compose 包含数据库、迁移任务、API，以及由 Nginx 提供的前端。
@@ -125,16 +179,6 @@ Compose 已提供容器内数据库连接，并持久化数据库和备份卷。
 
 查看者、分析员和管理员角色控制功能访问。审计日志覆盖认证、查询、导出以及数据和权限变更。后台任务支持主节点选举、异常重启、上传中断恢复和采集健康检查。数据库备份包含校验、保留策略、可选的异地复制钩子及恢复演练脚本。
 
-<details>
-<summary>查看系统架构</summary>
-
-![OmniPanel 系统架构](docs/images/architecture.zh-CN.png)
-
-React 工作台通过同源代理调用 FastAPI。API 负责数据导入、分析、认证和定时任务，数据保存在 PostgreSQL 中；SQL 查询使用独立的受限账号。可选接入提供自动采集、AI 查询与通知能力。
-
-数据模型与服务边界详见[架构文档](docs/architecture.zh-CN.md)。
-
-</details>
 
 ## 文档
 

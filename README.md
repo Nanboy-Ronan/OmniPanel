@@ -1,15 +1,43 @@
 # OmniPanel
 
-**A self-hosted workspace for commerce, content, and customer analytics.**
+**An open-source data workspace for business analytics and enterprise agents.**
 
-Bring orders, content performance, and creator partnerships into one place. Import platform exports or connect a collector, explore the results, and share weekly reports—with data coverage and metric definitions visible alongside the numbers.
+Bring orders, content performance, and creator partnerships into one place. Explore dashboards or use **WorkBuddy enterprise agents** to query authorized data, generate weekly reports, and initiate collector login repair. OmniPanel handles ingestion, metric definitions, and access auditing.
 
 [![CI](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml/badge.svg)](https://github.com/Nanboy-Ronan/OmniPanel/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
 **English** · [简体中文](README.zh-CN.md)
 
-[Try the preview](#try-the-preview) · [Supported platforms](#supported-platforms) · [Self-host](#self-host) · [Documentation](#documentation)
+[System overview](#system-overview) · [WorkBuddy and other agents](#workbuddy-and-other-enterprise-agents) · [Try the preview](#try-the-preview) · [Self-host](#self-host) · [Documentation](#documentation)
+
+## Recent updates
+
+- **2026-10-14** — Added WorkBuddy integration: read-only MCP queries, OAuth authorization, queued weekly reports, and owner-approved collector login repair. [Feature commit](https://github.com/Nanboy-Ronan/OmniPanel/commit/91e7b05)
+- **2026-10-10** — Refreshed interactions, login approval, SQL isolation, audit logging, order/refund rules, and backup recovery. [Feature commit](https://github.com/Nanboy-Ronan/OmniPanel/commit/6c9e41a)
+- **2026-10-05** — Migrated to React + TypeScript, with commerce BI, content and partnership analytics, and database status panels. [Feature commit](https://github.com/Nanboy-Ronan/OmniPanel/commit/02128cb)
+
+## System overview
+
+```mermaid
+flowchart TB
+    Sources["Platform APIs · Exports · Authorized browser collection"] --> Ingest["Detect · Validate · Deduplicate · Normalize"]
+    Ingest --> DB[("PostgreSQL")]
+    UI["React analytics workspace"] --> API["FastAPI · Roles · Metric definitions · Audit"]
+    WB["WorkBuddy enterprise agents"] -->|"MCP · OAuth / Personal token"| MCP["Scoped read-only tools"]
+    Other["Other compatible MCP agents"] -.->|"Token access · Client validation pending"| MCP
+    MCP --> API
+    API --> DB
+    API --> Jobs["Report queue · Validation · Retries"]
+    Jobs -->|"Optional aggregate snapshot"| Cloud["WorkBuddy Cloud Agent"]
+    Cloud -->|"Analysis result"| Jobs
+    Jobs --> Reports["Saved reports · WeCom notifications"]
+    WB -->|"User initiated"| Local["Local collector login helper"]
+    Local -->|"Owner approval · Account verification"| Repair["Collector repair API"]
+    Repair --> Sessions["Collector sessions"]
+```
+
+Solid lines show implemented paths; the dashed line shows a client extension path. External AI is opt-in, and login repair requires user approval. See the [architecture guide](docs/architecture.md) for deployment details.
 
 ![OmniPanel business overview: revenue trends, channel mix, and data coverage](docs/images/screenshot_overview.png)
 
@@ -29,6 +57,42 @@ OmniPanel is built for teams that sell across marketplaces and publish across co
 | Can I investigate further? | Read-only SQL, natural-language queries, or scoped WorkBuddy tools |
 
 Revenue follows shared order-status and refund rules. Dashboards distinguish data coverage from import time; incomplete periods remain visible. Content-to-sales views show associations, while exact and fuzzy customer matches remain separate.
+
+## WorkBuddy and other enterprise agents
+
+### Implemented: WorkBuddy
+
+WorkBuddy provides a conversational entry point to the data OmniPanel has already normalized:
+
+| Capability | Implementation |
+|---|---|
+| Query commerce and content performance | MCP tools expose aggregate metrics, media detail, definitions, freshness, and source links |
+| Authorize each user | OAuth with PKCE or personal tokens, scoped access, revocation, and auditing |
+| Generate weekly reports | OmniPanel sends aggregate snapshots to WorkBuddy Cloud Agent, queues work, validates evidence references, saves reports, and delivers notifications when configured |
+| Repair collector login | An owner approves the request, signs in through an isolated local browser, and the platform verifies the account before updating its session |
+
+Ask, for example: “Compare last week's channel sales and state the data coverage,” or “Analyze content by account, separating cumulative metrics from period gains.” Read-only tools do not expose customer identity fields, collector credentials, or arbitrary SQL.
+
+[Configure WorkBuddy →](docs/workbuddy-integration.md)
+
+### Extensible: other enterprise agents
+
+**Yes—other agents can be integrated, with different work required for each capability.** The query service uses Streamable HTTP MCP and accepts Bearer personal tokens. Clients supporting both can attempt to reuse the existing endpoint:
+
+```text
+https://<your-domain>/api/integrations/workbuddy/mcp
+```
+
+| Integration goal | Existing foundation and remaining work |
+|---|---|
+| Query data from another MCP agent | Reuse the tools and personal tokens; validate transport, headers, Host/Origin checks, permissions, and revocation with that client |
+| Add another platform's OAuth connection | Current callback rules target WorkBuddy and loopback addresses; add exact callback rules and test the new authorization flow |
+| Use another agent to generate reports | Add a provider adapter while retaining snapshots, queueing, evidence validation, and delivery controls; MCP support alone does not replace the report runtime |
+| Run login repair from another platform | Adapt its local tool or skill environment while preserving per-request approval and account verification |
+
+Other enterprise agent products have not been validated end to end and are not listed as supported integrations. The endpoint currently retains its `workbuddy` name. Start with the [personal-token configuration template](integrations/workbuddy/mcp.example.json).
+
+Separately, [natural-language SQL](docs/nl-to-sql.md) uses a configured model provider to generate SQL and a dedicated read-only database login to execute it. AI features require configuration and send their respective inputs to the selected provider when enabled.
 
 ## Explore the workspace
 
@@ -82,16 +146,6 @@ Open **http://127.0.0.1:5180/console/** and use the simulated sign-in. The previ
 
 Imports recognize supported column layouts and normalize records for analysis. Repeated files and orders are deduplicated; later exports can refresh order statuses. Browser collectors use authorized platform sessions and may need login renewal or updates when portal pages change. See the [collector guide](docs/collector.md).
 
-## WorkBuddy and AI queries
-
-**WorkBuddy connection.** Analysts and administrators grant scoped access through OAuth or personal tokens. Read-only tools return bounded analytics and media detail, with query auditing and revocation. They do not expose customer identity fields, collector credentials, or arbitrary SQL.
-
-**Weekly report generation.** An optional WorkBuddy provider processes aggregate snapshots through a job queue, validates evidence references, and supports retries and WeCom delivery. Account owners can also authorize local browser login repair for supported collectors.
-
-**Natural-language SQL.** Ask a question in Chinese, inspect the generated SQL, and query restricted reporting views. A dedicated database login enforces read-only access.
-
-These integrations require configuration. External AI features are opt-in and send their configured inputs to the selected provider. See [WorkBuddy setup](docs/workbuddy-integration.md) and [NL-to-SQL](docs/nl-to-sql.md).
-
 ## Self-host
 
 The application uses **React + TypeScript**, **FastAPI**, and **PostgreSQL**. Docker Compose runs the database, migrations, API, and Nginx-served frontend.
@@ -125,16 +179,6 @@ Compose supplies its own database connection and persists database and backup vo
 
 Viewer, analyst, and administrator roles govern access. Audit logs cover authentication, queries, exports, and data or permission changes. Background jobs support leader election, restarts, interrupted-upload recovery, and collector health checks. Database backups include validation, retention, an optional off-site hook, and a restore-drill script.
 
-<details>
-<summary>Architecture</summary>
-
-![OmniPanel architecture](docs/images/architecture.png)
-
-The React console calls FastAPI through a same-origin proxy. The API handles ingestion, analytics, authentication, and scheduled work against PostgreSQL. SQL queries use a separate restricted login. Optional integrations add collection, AI queries, and notifications.
-
-See the [architecture guide](docs/architecture.md) for the data model and service boundaries.
-
-</details>
 
 ## Documentation
 
