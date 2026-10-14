@@ -19,25 +19,9 @@
 
 ## 系统框架
 
-```mermaid
-flowchart TB
-    Sources["平台 API · 导出文件 · 授权浏览器采集"] --> Ingest["识别 · 校验 · 去重 · 归一化"]
-    Ingest --> DB[("PostgreSQL")]
-    UI["React 分析工作台"] --> API["FastAPI · 角色权限 · 统计口径 · 审计"]
-    WB["WorkBuddy 企业智能体"] -->|"MCP · OAuth / 个人令牌"| MCP["受限只读工具"]
-    Other["其他兼容 MCP 的智能体"] -.->|"令牌接入 · 待逐端验证"| MCP
-    MCP --> API
-    API --> DB
-    API --> Jobs["周报队列 · 校验 · 重试"]
-    Jobs -->|"可选汇总快照"| Cloud["WorkBuddy Cloud Agent"]
-    Cloud -->|"分析结果"| Jobs
-    Jobs --> Reports["保存周报 · 企业微信通知"]
-    WB -->|"用户发起"| Local["本地采集登录助手"]
-    Local -->|"负责人授权 · 账号复检"| Repair["采集登录修复 API"]
-    Repair --> Sessions["采集登录态"]
-```
+![OmniPanel 系统框架](docs/images/architecture.zh-CN.png)
 
-实线表示已实现的功能路径；虚线表示可扩展的客户端接入路径。外部 AI 服务按需启用，采集登录修复需要用户确认。部署细节见[架构文档](docs/architecture.zh-CN.md)。
+实线表示已实现的核心连接；虚线表示可选服务或待验证的客户端扩展。外部 AI 服务按需启用，采集登录修复需要用户确认。部署细节见[架构文档](docs/architecture.zh-CN.md)。
 
 ![OmniPanel 经营概览：营业额趋势、渠道构成与数据覆盖状态](docs/images/screenshot_overview.png)
 

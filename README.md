@@ -19,25 +19,9 @@ Bring orders, content performance, and creator partnerships into one place. Expl
 
 ## System overview
 
-```mermaid
-flowchart TB
-    Sources["Platform APIs · Exports · Authorized browser collection"] --> Ingest["Detect · Validate · Deduplicate · Normalize"]
-    Ingest --> DB[("PostgreSQL")]
-    UI["React analytics workspace"] --> API["FastAPI · Roles · Metric definitions · Audit"]
-    WB["WorkBuddy enterprise agents"] -->|"MCP · OAuth / Personal token"| MCP["Scoped read-only tools"]
-    Other["Other compatible MCP agents"] -.->|"Token access · Client validation pending"| MCP
-    MCP --> API
-    API --> DB
-    API --> Jobs["Report queue · Validation · Retries"]
-    Jobs -->|"Optional aggregate snapshot"| Cloud["WorkBuddy Cloud Agent"]
-    Cloud -->|"Analysis result"| Jobs
-    Jobs --> Reports["Saved reports · WeCom notifications"]
-    WB -->|"User initiated"| Local["Local collector login helper"]
-    Local -->|"Owner approval · Account verification"| Repair["Collector repair API"]
-    Repair --> Sessions["Collector sessions"]
-```
+![OmniPanel system architecture](docs/images/architecture.png)
 
-Solid lines show implemented paths; the dashed line shows a client extension path. External AI is opt-in, and login repair requires user approval. See the [architecture guide](docs/architecture.md) for deployment details.
+Solid lines show implemented core connections; dashed lines show optional services or client extensions pending validation. External AI is opt-in, and login repair requires user approval. See the [architecture guide](docs/architecture.md) for deployment details.
 
 ![OmniPanel business overview: revenue trends, channel mix, and data coverage](docs/images/screenshot_overview.png)
 
