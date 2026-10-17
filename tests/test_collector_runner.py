@@ -704,7 +704,8 @@ class TestRunVerify:
 @pytest.mark.parametrize("problem", ["missing", "expired", "wrong_account"])
 def test_login_alerts_include_workbuddy_steps(mode, problem, sessions, _fake_bookkeeping, alerts):
     settings = _FakeSettings(collector_zhihu_enabled=False)
-    settings.public_base_url = "https://example.test/"
+    # A legacy .../console/ PUBLIC_BASE_URL must not produce /console/console/.
+    settings.public_base_url = "https://example.test/console/"
     api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True, "name": "阳光小铺"}])
     if problem != "missing":
         _touch(sessions / "xhs_1.json")
@@ -726,6 +727,7 @@ def test_login_alerts_include_workbuddy_steps(mode, problem, sessions, _fake_boo
     assert "帮我修复「小红书·阳光小铺」的采集登录" in message
     assert "确认已登录目标账号，更新凭证" in message
     assert "https://example.test/console/?page=workbuddy#collector-login" in message
+    assert "/console/console/" not in message
     assert "等待定时采集" in message
     assert "bootstrap-login" not in message
 

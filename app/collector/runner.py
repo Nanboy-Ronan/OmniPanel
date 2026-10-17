@@ -13,6 +13,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Callable, Literal
+from urllib.parse import urlsplit
 
 from ..config import settings as _default_settings
 from ..utils.wecom_bot import send_wecom_alert
@@ -96,7 +97,9 @@ def _login_repair_guide(targets: list[Target], settings) -> str:
         return ""
     lines = []
     if any(t.platform in _SELF_SERVICE_LOGIN_PLATFORMS for t in targets):
-        base = getattr(settings, "public_base_url", _default_settings.public_base_url).rstrip("/")
+        # Origin only: PUBLIC_BASE_URL may be a legacy .../console/ URL.
+        parsed = urlsplit(getattr(settings, "public_base_url", _default_settings.public_base_url))
+        base = f"{parsed.scheme}://{parsed.netloc}"
         lines.extend([
             "登录修复（小红书/蒲公英/视频号）：",
             "1. 账号负责人或管理员在电脑 WorkBuddy 添加企业技能「采集登录修复」，发送下方对应账号的修复指令。",
