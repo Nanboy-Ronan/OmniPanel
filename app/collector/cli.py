@@ -188,6 +188,13 @@ def _cmd_verify_all(args: argparse.Namespace) -> int:
     return run_verify(headless=(False if args.headed else None))
 
 
+def _cmd_run_requests(args: argparse.Namespace) -> int:
+    from .collect_requests import run_requests
+
+    _install_sigterm_handler()
+    return run_requests()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m app.collector")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -217,6 +224,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_verify_all.add_argument("--headed", action="store_true", help="覆盖 COLLECTOR_HEADLESS=false 用于调试")
     p_verify_all.set_defaults(func=_cmd_verify_all)
+
+    p_requests = sub.add_parser(
+        "run-requests",
+        help="执行排队中的单账号采集请求（登录修复成功后或管理员「立即采集」），需与定时采集同环境、每隔几分钟调度一次",
+    )
+    p_requests.set_defaults(func=_cmd_run_requests)
 
     return parser
 

@@ -12,12 +12,6 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _as_bool(v: str | bool) -> bool:
-    if isinstance(v, bool):
-        return v
-    return str(v).lower() in ("1", "true", "yes")
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -100,6 +94,10 @@ class Settings(BaseSettings):
 
     # ── Upload ───────────────────────────────────────────────────────────────
     max_upload_mb: int = 50
+    # Imported export files are kept as received (raw archive) for re-parsing and audit.
+    # Unset = <backup_dir>/upload_archive, next to the upload spool.
+    raw_archive_dir: str | None = None
+    raw_archive_retention_days: int = Field(730, ge=30)
 
     # ── Redis ─────────────────────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379/0"

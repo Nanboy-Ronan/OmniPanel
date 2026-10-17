@@ -2,6 +2,19 @@
 from .browser import open_context, looks_like_login, visible_text
 
 
+def browser_ready() -> bool:
+    """Whether this process can launch Playwright's Chromium (backend unit env check)."""
+    import logging
+    from pathlib import Path
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            return Path(pw.chromium.executable_path).exists()
+    except Exception:
+        logging.getLogger(__name__).warning("collector repair browser check failed", exc_info=True)
+        return False
+
+
 def verify_candidate(platform, path, expected_name):
     from .xhs import XHS_PRO_HOME_URL, XHS_SELECT_ACCOUNT_URL_MARKER, XHS_WRONG_ACCOUNT_MARKER
     from .pugongying import PGY_HOME_URL, PGY_ROLE_SELECT_URL_MARKER

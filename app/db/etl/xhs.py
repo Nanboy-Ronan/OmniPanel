@@ -28,8 +28,8 @@ import pandas as pd
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from ..models import XhsPost
-from ._upsert import coalesce_update_set, require_columns
+from ..models import XhsPost, XhsPostSnapshot
+from ._upsert import coalesce_update_set, write_snapshots, require_columns
 
 # Fields refreshed on every upsert (excludes dedup key + created_at)
 _UPSERT_UPDATE_COLS = [
@@ -117,7 +117,7 @@ def parse_xhs_xlsx(df_raw: pd.DataFrame) -> list[dict]:
     return rows
 
 
-def upsert_xhs_posts(rows: list[dict], account_id: int, session: Session) -> dict:
+def upsert_xhs_posts(rows: list[dict], account_id: int, session: Session, *, captured_on=None, source_file_id=None) -> dict:
     """Insert new posts and update existing posts; never remove posts absent from rows.
 
     Each row is matched by (account_id, title, publish_date).  On a match the
@@ -139,6 +139,8 @@ def upsert_xhs_posts(rows: list[dict], account_id: int, session: Session) -> dic
         set_=coalesce_update_set(insert, XhsPost, _UPSERT_UPDATE_COLS)
         | {"updated_at": text("NOW()")},
     )
-    session.execute(stmt)
+    returned = session.execute(stmt.returning(XhsPost.id, XhsPost.title, XhsPost.publish_date)).all()
+    snapshots = write_snapshots(session, XhsPostSnapshot, returned, rows, ("title", "publish_date"),
+                                captured_on=captured_on, source_file_id=source_file_id)
     session.commit()
-    return {"total": len(rows), "upserted": len(rows)}
+    return {"total": len(rows), "upserted": len(rows), "snapshots": snapshots}

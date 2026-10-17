@@ -49,12 +49,17 @@ it('requires account choice and explicit confirmation, then shows local login in
   fireEvent.change(screen.getByRole('combobox', { name: '采集账号' }), {
     target: { value: 'xhs:7' },
   });
+  expect(screen.getByText(/当前登录已过期/)).toBeInTheDocument();
+  // The pairing code printed by the local helper is required.
+  expect(button).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('校验码'), { target: { value: 'abcd-efgh' } });
   expect(fetch.mock.calls.some(([, o]) => o?.method === 'POST')).toBe(false);
   fireEvent.click(button);
   await waitFor(() =>
     expect(
       fetch.mock.calls.some(
-        ([, o]) => o?.body === JSON.stringify({ platform: 'xhs', account_id: 7 }),
+        ([, o]) =>
+          o?.body === JSON.stringify({ platform: 'xhs', account_id: 7, user_code: 'abcd-efgh' }),
       ),
     ).toBe(true),
   );

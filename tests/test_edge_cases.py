@@ -210,8 +210,8 @@ class TestETLEdgeCases:
         assert _parse_tmall_address("   ") == (None, None, None)
 
     def test_ingest_skips_rows_with_missing_customer_key(self):
-        """ingest() must skip rows whose ``客户标识`` resolves to ``None``."""
-        from app.db.etl import ingest
+        """ingest_upload() must skip rows whose ``客户标识`` resolves to ``None``."""
+        from app.db.etl import ingest_upload
         from unittest.mock import MagicMock
         from app.db.models import Customer, Order
 
@@ -238,11 +238,11 @@ class TestETLEdgeCases:
 
         session = MagicMock()
         session.bind = None  # avoid the postgresql advisory-lock branch
-        session.query.return_value.filter.return_value.all.return_value = []
+        session.execute.return_value.scalars.return_value.all.return_value = []
         added: list = []
         session.add.side_effect = added.append
 
-        inserted = ingest(df, session)
+        inserted = ingest_upload(df, session, filename="test-upload.csv")["inserted_orders"]
         assert inserted == 1
 
         order_adds = [o for o in added if isinstance(o, Order)]
@@ -254,8 +254,8 @@ class TestETLEdgeCases:
         assert customer_adds[0].customer_key == "13800001111"
 
     def test_ingest_skips_rows_with_missing_order_date(self):
-        """ingest() must skip rows whose date column cannot be parsed."""
-        from app.db.etl import ingest
+        """ingest_upload() must skip rows whose date column cannot be parsed."""
+        from app.db.etl import ingest_upload
         from unittest.mock import MagicMock
         from app.db.models import Order
 
@@ -274,11 +274,11 @@ class TestETLEdgeCases:
 
         session = MagicMock()
         session.bind = None
-        session.query.return_value.filter.return_value.all.return_value = []
+        session.execute.return_value.scalars.return_value.all.return_value = []
         added: list = []
         session.add.side_effect = added.append
 
-        inserted = ingest(df, session)
+        inserted = ingest_upload(df, session, filename="test-upload.csv")["inserted_orders"]
         assert inserted == 0
         assert [o for o in added if isinstance(o, Order)] == []
 
@@ -290,7 +290,7 @@ class TestETLEdgeCases:
         """
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
-        from app.db.etl import ingest
+        from app.db.etl import ingest_upload
         from app.db.models import Customer
 
         engine = create_engine(pg_sync_url, future=True)
@@ -309,7 +309,7 @@ class TestETLEdgeCases:
                         }
                     ]
                 )
-                assert ingest(later, sess) == 1
+                assert ingest_upload(later, sess, filename="test-upload.csv")["inserted_orders"] == 1
 
                 cust = sess.query(Customer).filter_by(
                     customer_key="13800009999"
@@ -328,7 +328,7 @@ class TestETLEdgeCases:
                         }
                     ]
                 )
-                assert ingest(earlier, sess) == 1
+                assert ingest_upload(earlier, sess, filename="test-upload.csv")["inserted_orders"] == 1
 
                 sess.expire_all()
                 cust = sess.query(Customer).filter_by(

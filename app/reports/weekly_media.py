@@ -64,10 +64,12 @@ WECHAT_PLATFORM = "wechat_official"
 _COUNT_FIELDS = (
     "read_user_count", "read_count", "like_user",
     "share_user_count", "comment_count", "collection_user",
+    # 在看人数 and 关注者阅读人数 (readers who already follow — not new followers).
+    "zaikan_user", "read_subscribe_user",
 )
 # Cumulative-to-date rates/averages — a week's value is the latest snapshot,
 # not a mean across the week's rows.
-_RATE_FIELDS = ("read_avg_time", "read_finish_rate")
+_RATE_FIELDS = ("read_avg_time", "read_finish_rate", "read_delivery_rate")
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,23 @@ async def _snapshots_as_of(
     )
     result = await session.execute(stmt)
     return {row.post_id: row for row in result.scalars().all()}
+
+
+def _source_counts(row) -> dict[str, int]:
+    """Cumulative readers per 阅读来源 scene in one article snapshot."""
+    raw = getattr(row, "read_user_source", None) if row is not None else None
+    result: dict[str, int] = {}
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict) and isinstance(item.get("user_count"), (int, float)):
+            scene = str(item.get("scene_desc") or "其他")[:40]
+            result[scene] = result.get(scene, 0) + int(item["user_count"])
+    return result
+
+
+def _source_shares(counts: dict[str, int]) -> list[dict[str, Any]]:
+    total = sum(counts.values())
+    return [{"scene": scene, "readers": value, "share_pct": value / total * 100}
+            for scene, value in sorted(counts.items(), key=lambda kv: -kv[1]) if value > 0] if total else []
 
 
 def _count_delta(end_row, start_row, field: str) -> int:
@@ -233,6 +252,8 @@ async def build_wechat_section(
     snap_last_baseline = await _snapshots_as_of(session, post_ids, bounds.last_week_start - timedelta(days=1))
 
     articles: list[dict[str, Any]] = []
+    # This week's readers by 阅读来源, summed over articles as end-minus-baseline per scene.
+    sources_this: dict[str, int] = {}
     totals_this = {f: 0 for f in _COUNT_FIELDS}
     totals_last = {f: 0 for f in _COUNT_FIELDS}
     first_snapshot_used: date | None = None
@@ -259,6 +280,10 @@ async def build_wechat_section(
         for f in _COUNT_FIELDS:
             totals_this[f] += this_counts[f]
             totals_last[f] += last_counts[f]
+        if complete:
+            start_sources = _source_counts(start_row)
+            for scene, value in _source_counts(end_row).items():
+                sources_this[scene] = sources_this.get(scene, 0) + max(0, value - start_sources.get(scene, 0))
 
         rates = {f: (getattr(end_row, f) if end_row is not None else None) for f in _RATE_FIELDS}
 
@@ -269,7 +294,7 @@ async def build_wechat_section(
 
         read_avg_time = getattr(end_row, "read_avg_time", None) if end_row else None
         read_finish_rate = getattr(end_row, "read_finish_rate", None) if end_row else None
-        read_subscribe_user = getattr(end_row, "read_subscribe_user", None) if end_row else None
+        read_delivery_rate = getattr(end_row, "read_delivery_rate", None) if end_row else None
 
         articles.append(
             {
@@ -283,7 +308,9 @@ async def build_wechat_section(
                 "rates_as_of_this_week": rates,
                 "read_avg_time": read_avg_time,
                 "read_finish_rate": read_finish_rate,
-                "new_followers": read_subscribe_user,
+                "read_delivery_rate": read_delivery_rate,
+                # 关注者阅读人数 this week. The platform cannot attribute new followers to an article.
+                "subscriber_reads": this_counts["read_subscribe_user"],
             }
         )
 
@@ -307,7 +334,80 @@ async def build_wechat_section(
         "older_articles": older_articles,
         "follower": follower_section,
         "snapshot_range_used": (first_snapshot_used, last_snapshot_used),
+        "read_sources": _source_shares(sources_this),
     }
+
+
+XHS_ADDITIVE = ("rise_fans_count", "loss_fans_count", "net_rise_fans_count", "view_count",
+                "view_time_total_seconds", "home_view_count", "like_count", "collect_count",
+                "comment_count", "share_count")
+
+
+async def _xhs_week_metrics(session: AsyncSession, account_id: int, start: date, end: date) -> dict[str, Any]:
+    """Account-level 数据概览 totals for one week, honest about missing days.
+
+    Rows are genuine per-day values (see XhsAccountDailyMetric), so a full week sums.
+    A missing day is never counted as zero: `totals` covers only the days present and
+    `complete` says whether that is all 7. Ratios are view-weighted, not day-averaged.
+    """
+    rows = (await session.execute(select(XhsAccountDailyMetric).where(
+        XhsAccountDailyMetric.account_id == account_id,
+        XhsAccountDailyMetric.metric_date.between(start, end),
+    ))).scalars().all()
+    expected = (end - start).days + 1
+    present = {r.metric_date for r in rows}
+    totals = {f: sum(getattr(r, f) or 0 for r in rows) if rows else None for f in XHS_ADDITIVE}
+    if rows:
+        totals["interactions"] = sum(totals[f] for f in ("like_count", "collect_count", "comment_count", "share_count"))
+    views = totals["view_count"] if rows else None
+    weighted = [(r.video_full_view_rate, r.view_count or 0) for r in rows if r.video_full_view_rate is not None]
+    weight = sum(w for _, w in weighted)
+    if weighted and weight:
+        full_view_rate = sum(rate * w for rate, w in weighted) / weight
+    elif weighted:
+        full_view_rate = sum(rate for rate, _ in weighted) / len(weighted)
+    else:
+        full_view_rate = None
+    return {
+        "days_present": len(present),
+        "days_expected": expected,
+        "complete": len(present) == expected,
+        "missing_dates": [start + timedelta(days=i) for i in range(expected) if start + timedelta(days=i) not in present],
+        "totals": totals,
+        "avg_view_time": (totals["view_time_total_seconds"] / views) if views else None,
+        "full_view_rate": full_view_rate,
+    }
+
+
+async def _xhs_week_sources(session: AsyncSession, account_id: int, bounds: WeekBounds) -> dict[str, Any]:
+    """The 7-day 来源占比 snapshot that best matches the report week.
+
+    The platform only gives a rolling window as of the collection day, so the snapshot
+    taken the day after the week ends covers it; the newest snapshot (report day) would
+    describe the following days instead.
+    """
+    target = bounds.this_week_end + timedelta(days=1)
+    snapshot_date = (await session.execute(select(func.max(XhsAudienceSourceDaily.snapshot_date)).where(
+        XhsAudienceSourceDaily.account_id == account_id,
+        XhsAudienceSourceDaily.window_label == "seven",
+        XhsAudienceSourceDaily.snapshot_date.between(bounds.this_week_start + timedelta(days=1), target),
+    ))).scalar_one_or_none()
+    if snapshot_date is None:
+        return {"snapshot_date": None, "sources": []}
+    rows = (await session.execute(select(XhsAudienceSourceDaily).where(
+        XhsAudienceSourceDaily.account_id == account_id,
+        XhsAudienceSourceDaily.snapshot_date == snapshot_date,
+        XhsAudienceSourceDaily.window_label == "seven",
+    ).order_by(XhsAudienceSourceDaily.value_pct.desc().nullslast()))).scalars().all()
+    return {"snapshot_date": snapshot_date, "sources": [
+        {"title": r.title or f"来源{r.source_type}", "value_pct": r.value_pct}
+        for r in rows if r.value_pct and r.value_pct > 0
+    ]}
+
+
+def _known_sum(values):
+    known = [v for v in values if v is not None]
+    return sum(known) if known else None
 
 
 def _avg(posts: list[XhsPost], field: str) -> float | None:
@@ -323,6 +423,11 @@ def _summarize_xhs_posts(posts: list[XhsPost]) -> dict[str, Any]:
         "avg_watch_time": _avg(posts, "avg_watch_time"),
         "avg_new_followers": _avg(posts, "new_followers"),
         "total_new_followers": sum(p.new_followers or 0 for p in posts),
+        "total_impressions": _known_sum(p.impressions for p in posts),
+        "total_views": _known_sum(p.views for p in posts),
+        # Impression-weighted 封面点击率 (percent, as exported).
+        "cover_click_rate": _weighted(posts, lambda p: p.cover_click_rate, lambda p: p.impressions),
+        "total_interactions": sum((p.likes or 0) + (p.comments or 0) + (p.collects or 0) + (p.shares or 0) for p in posts),
     }
 
 
@@ -372,82 +477,23 @@ async def build_xhs_section(session: AsyncSession, account: XhsAccount, bounds: 
         )
     ).scalars().all()
 
-    # Query XhsAccountDailyMetric for follower dynamics
-    daily_metrics_this = (
-        await session.execute(
-            select(XhsAccountDailyMetric).where(
-                XhsAccountDailyMetric.account_id == account.id,
-                XhsAccountDailyMetric.metric_date.between(bounds.this_week_start, bounds.this_week_end),
-            )
-        )
-    ).scalars().all()
+    account_metrics = {
+        "this_week": await _xhs_week_metrics(session, account.id, bounds.this_week_start, bounds.this_week_end),
+        "last_week": await _xhs_week_metrics(session, account.id, bounds.last_week_start, bounds.last_week_end),
+    }
+    this_metrics = account_metrics["this_week"]
+    # Week-over-week only between two complete weeks; partial weeks are shown, never compared.
+    account_metrics["comparable"] = this_metrics["complete"] and account_metrics["last_week"]["complete"]
+    account_metrics["available"] = this_metrics["days_present"] > 0
 
-    daily_metrics_last = (
-        await session.execute(
-            select(XhsAccountDailyMetric).where(
-                XhsAccountDailyMetric.account_id == account.id,
-                XhsAccountDailyMetric.metric_date.between(bounds.last_week_start, bounds.last_week_end),
-            )
-        )
-    ).scalars().all()
+    audience = await _xhs_week_sources(session, account.id, bounds)
 
-    follower_dynamics = None
-    if daily_metrics_this:
-        rise_fans = sum(m.rise_fans_count or 0 for m in daily_metrics_this)
-        loss_fans = sum(m.loss_fans_count or 0 for m in daily_metrics_this)
-        net_rise_fans = sum(m.net_rise_fans_count or 0 for m in daily_metrics_this)
-
-        last_rise_fans = sum(m.rise_fans_count or 0 for m in daily_metrics_last)
-        last_loss_fans = sum(m.loss_fans_count or 0 for m in daily_metrics_last)
-        last_net_rise_fans = sum(m.net_rise_fans_count or 0 for m in daily_metrics_last)
-
-        valid_full_view = [m.video_full_view_rate for m in daily_metrics_this if m.video_full_view_rate is not None]
-        avg_full_view_rate = (sum(valid_full_view) / len(valid_full_view)) if valid_full_view else None
-
-        follower_dynamics = {
-            "this_week": {
-                "rise_fans": rise_fans,
-                "loss_fans": loss_fans,
-                "net_rise_fans": net_rise_fans,
-                "avg_full_view_rate": avg_full_view_rate,
-            },
-            "last_week": {
-                "rise_fans": last_rise_fans,
-                "loss_fans": last_loss_fans,
-                "net_rise_fans": last_net_rise_fans,
-            },
-        }
-
-    # Query XhsAudienceSourceDaily for traffic source breakdown
-    latest_source_date = (
-        await session.execute(
-            select(func.max(XhsAudienceSourceDaily.snapshot_date)).where(
-                XhsAudienceSourceDaily.account_id == account.id
-            )
-        )
-    ).scalar_one_or_none()
-
-    audience_sources = []
-    if latest_source_date:
-        source_rows = (
-            await session.execute(
-                select(XhsAudienceSourceDaily).where(
-                    XhsAudienceSourceDaily.account_id == account.id,
-                    XhsAudienceSourceDaily.snapshot_date == latest_source_date,
-                    XhsAudienceSourceDaily.window_label == "seven",
-                ).order_by(XhsAudienceSourceDaily.value_pct.desc().nullslast())
-            )
-        ).scalars().all()
-        audience_sources = [
-            {"title": s.title or f"来源{s.source_type}", "value_pct": s.value_pct}
-            for s in source_rows
-            if s.value_pct and s.value_pct > 0
-        ]
-
-    not_collected = ["完播率", "无法归因单篇涨粉来源"]
-    if not follower_dynamics:
-        not_collected.extend(["取消关注", "净增关注"])
-    if not audience_sources:
+    not_collected = ["单篇笔记的涨粉来源（平台只给账号级来源占比）"]
+    if not account_metrics["available"]:
+        not_collected.append("账号数据概览（观看、主页访问、互动、粉丝增减）")
+    elif this_metrics["full_view_rate"] is None:
+        not_collected.append("完播率")
+    if not audience["sources"]:
         not_collected.append("观看来源占比")
 
     return {
@@ -455,14 +501,15 @@ async def build_xhs_section(session: AsyncSession, account: XhsAccount, bounds: 
         "this_week_posts": posts_detail,
         "this_week_summary": _summarize_xhs_posts(this_week_posts),
         "last_week_summary": _summarize_xhs_posts(last_week_posts),
-        "follower_dynamics": follower_dynamics,
-        "audience_sources": audience_sources,
+        "account_metrics": account_metrics,
+        "audience_sources": audience["sources"],
+        "audience_snapshot_date": audience["snapshot_date"],
         "top_follower_sources": [
             {"title": p.title, "publish_date": p.publish_date, "new_followers": p.new_followers}
             for p in top_follower_posts
         ],
         "not_collected": not_collected,
-        "wow_caveat": "小红书数据对比为同期发布内容表现，粉丝变动来源于数据概览采集器。",
+        "wow_caveat": "账号级观看、主页访问、互动与粉丝增减来自创作者中心「数据概览」逐日数据，两周均完整时可直接周环比；笔记卡片为当周新发布内容截至采集时的累计表现。",
         "estimated_watch_time_caveat": "观看总时长为推算值（人均观看时长 × 观看量），非平台直接给出的数值。",
         "follower_source_caveat": "单篇涨粉数值为发布至今的累计带粉数。",
     }
@@ -479,22 +526,32 @@ CUMULATIVE_COHORT_CAVEAT = "本周与上周均为「当周新发布内容」截�
 
 # ── 视频号 (WeChat Channels) ────────────────────────────────────────────────
 
+def _weighted(items, value, weight) -> float | None:
+    """Mean of `value` weighted by `weight`, ignoring rows where either is missing."""
+    pairs = [(value(i), weight(i) or 0) for i in items if value(i) is not None]
+    total = sum(w for _, w in pairs)
+    if total:
+        return sum(v * w for v, w in pairs) / total
+    return sum(v for v, _ in pairs) / len(pairs) if pairs else None
+
+
 def _summarize_channels_posts(posts: list[WxChannelsPost]) -> dict[str, Any]:
     return {
         "count": len(posts),
         "total_plays": sum(p.plays or 0 for p in posts),
         "total_recommends": sum(p.recommends or 0 for p in posts),
+        "total_likes": sum(p.likes_thumb or 0 for p in posts),
         "total_comments": sum(p.comments or 0 for p in posts),
         "total_shares": sum(p.shares or 0 for p in posts),
+        "total_forwards": sum(p.forwards_chat_moments or 0 for p in posts),
         "total_new_fans": sum(p.new_fans or 0 for p in posts),
-        "avg_completion_rate": (
-            sum(p.completion_rate or 0 for p in posts) / len(posts)
-            if posts else None
-        ),
-        "avg_watch_duration": (
-            sum(p.avg_watch_duration or 0 for p in posts) / len(posts)
-            if posts else None
-        ),
+        "total_wecom_link_clicks": _known_sum(p.wecom_link_clicks for p in posts),
+        "total_wecom_link_click_users": _known_sum(p.wecom_link_click_users for p in posts),
+        "total_added_to_contacts": _known_sum(p.added_to_contacts for p in posts),
+        "total_added_to_contacts_users": _known_sum(p.added_to_contacts_users for p in posts),
+        # Play-weighted, ignoring videos without the field (was averaging NULL as 0).
+        "avg_completion_rate": _weighted(posts, lambda p: p.completion_rate, lambda p: p.plays),
+        "avg_watch_duration": _weighted(posts, lambda p: p.avg_watch_duration, lambda p: p.plays),
     }
 
 
@@ -544,14 +601,24 @@ async def build_channels_section(
 
 # ── 知乎 ────────────────────────────────────────────────────────────────────
 
+_ZHIHU_TYPES = {"article": "文章", "qa": "回答"}
+
+
 def _summarize_zhihu_posts(posts: list[ZhihuPost]) -> dict[str, Any]:
+    by_type = {}
+    for code, label in _ZHIHU_TYPES.items():
+        subset = [p for p in posts if p.content_type == code]
+        by_type[code] = {"label": label, "count": len(subset), "reads": sum(p.reads or 0 for p in subset)}
     return {
         "count": len(posts),
         "total_reads": sum(p.reads or 0 for p in posts),
+        "total_plays": _known_sum(p.plays for p in posts),
+        "total_favorites": _known_sum(p.favorites for p in posts),  # 赞同
         "total_likes": sum(p.likes or 0 for p in posts),
         "total_comments": sum(p.comments or 0 for p in posts),
         "total_collects": sum(p.collects or 0 for p in posts),
         "total_shares": sum(p.shares or 0 for p in posts),
+        "by_type": by_type,
     }
 
 
@@ -605,19 +672,37 @@ async def build_zhihu_section(
 # ── 蒲公英 (Pugongying) ─────────────────────────────────────────────────────
 
 def _summarize_pgy_notes(notes: list[PgyNote]) -> dict[str, Any]:
+    """Cohort totals for notes published in the period (cumulative to export date).
+
+    Spend and CPE use the 蒲公英 dashboard's definition (frontend lib/pgy.ts):
+    spend = 达人报价 + 服务费 where known; CPE only over notes with both costs.
+    """
+    priced = [n for n in notes if n.blogger_quote is not None and n.service_fee is not None and n.interactions is not None]
+    priced_spend = sum(n.blogger_quote + n.service_fee for n in priced)
+    priced_interactions = sum(n.interactions for n in priced)
+    spend_values = [None if n.blogger_quote is None and n.service_fee is None
+                    else (n.blogger_quote or 0) + (n.service_fee or 0) for n in notes]
     non_null_cpr = [n.cost_per_read for n in notes if n.cost_per_read is not None]
-    non_null_cpi = [n.cost_per_interaction for n in notes if n.cost_per_interaction is not None]
     return {
         "count": len(notes),
         "total_impressions": sum(n.impressions or 0 for n in notes),
         "total_reads": sum(n.reads or 0 for n in notes),
+        "total_read_uv": _known_sum(n.read_uv for n in notes),
         "total_interactions": sum(n.interactions or 0 for n in notes),
         "total_follows": sum(n.follows or 0 for n in notes),
+        "organic_impressions": _known_sum(n.organic_impressions for n in notes),
+        "paid_impressions": _known_sum(n.paid_impressions for n in notes),
+        "boosted_impressions": _known_sum(n.boosted_impressions for n in notes),
+        "organic_reads": _known_sum(n.organic_reads for n in notes),
+        "paid_reads": _known_sum(n.paid_reads for n in notes),
+        "boosted_reads": _known_sum(n.boosted_reads for n in notes),
+        "total_blogger_quote": _known_sum(n.blogger_quote for n in notes),
+        "total_service_fee": _known_sum(n.service_fee for n in notes),
+        "total_spend": _known_sum(spend_values),
+        "missing_cost": sum(1 for n in notes if n.blogger_quote is None or n.service_fee is None),
+        "cpe": priced_spend / priced_interactions if priced_interactions > 0 else None,
         "avg_cost_per_read": (
             sum(non_null_cpr) / len(non_null_cpr) if non_null_cpr else None
-        ),
-        "avg_cost_per_interaction": (
-            sum(non_null_cpi) / len(non_null_cpi) if non_null_cpi else None
         ),
     }
 
@@ -656,15 +741,21 @@ async def build_pgy_section(
             "collects": n.collects,
             "shares": n.shares,
             "follows": n.follows,
+            "read_uv": n.read_uv,
+            "spend": None if n.blogger_quote is None and n.service_fee is None else (n.blogger_quote or 0) + (n.service_fee or 0),
             "cost_per_read": n.cost_per_read,
             "cost_per_interaction": n.cost_per_interaction,
         })
 
+    data_date = (await session.execute(select(func.max(PgyNote.data_date)).where(
+        PgyNote.account_id == account.id))).scalar_one_or_none()
     return {
         "account": account,
         "this_week_notes": notes_detail,
         "this_week_summary": _summarize_pgy_notes(this_week_notes_orm),
         "last_week_summary": _summarize_pgy_notes(last_week_notes_orm),
+        "data_date": data_date,
+        "wow_caveat": CUMULATIVE_COHORT_CAVEAT,
     }
 
 
@@ -714,12 +805,26 @@ async def build_ecommerce_section(
     if total_count == 0:
         return None
 
-    # Orders arrive by manual/batch upload. If the newest order on file is
-    # older than the report week's last day, the week isn't fully uploaded
-    # yet and a "GMV ¥0 ▼" would be an artefact of missing data, not a sales
-    # drop — the report then says how far the data goes instead.
+    # Orders arrive by manual/batch upload, per platform. A platform that sold in
+    # the recent past but whose newest order is older than the week's last day
+    # isn't fully uploaded yet: a "GMV ¥0 ▼" would be an artefact of missing data,
+    # not a sales drop. Checked per platform — a fresh 有赞 must not hide a stale 天猫.
     orders_through = (await session.execute(select(func.max(Order.order_date)))).scalar_one()
-    complete = orders_through is not None and orders_through >= bounds.this_week_end
+    recent_start = bounds.this_week_start - timedelta(days=28)
+    coverage = dict((await session.execute(
+        select(Order.platform, func.max(Order.order_date))
+        .where(Order.order_date >= recent_start)
+        .group_by(Order.platform)
+    )).all())
+    stale_platforms = sorted(
+        (_PLATFORM_LABELS.get(p, p), through) for p, through in coverage.items() if through < bounds.this_week_end
+    )
+    complete = bool(coverage) and not stale_platforms
+
+    # Same aggregation as the 经营概览 dashboard (customers, AOV, refunds, exclusions).
+    from ..services.ecommerce_metrics import commerce_metrics
+    dashboard = await commerce_metrics(session, bounds.this_week_start, bounds.this_week_end)
+    by_channel = {c["platform"]: c for c in dashboard["channels"]}
 
     this_agg = await _aggregate_orders(session, bounds.this_week_start, bounds.this_week_end)
     last_agg = await _aggregate_orders(session, bounds.last_week_start, bounds.last_week_end)
@@ -729,12 +834,19 @@ async def build_ecommerce_section(
     all_platform_names = set(p["platform"] for p in this_agg["platforms"]) | set(last_by_name.keys())
     this_by_name = {p["platform"]: p["this_week"] for p in this_agg["platforms"]}
 
+    label_to_code = {label: code for code, label in _PLATFORM_LABELS.items()}
     platforms_merged = []
     for name in sorted(all_platform_names):
+        channel = by_channel.get(label_to_code.get(name, name), {})
         platforms_merged.append({
             "platform": name,
-            "this_week": this_by_name.get(name, {"order_count": 0, "gmv": 0}),
-            "last_week": last_by_name.get(name, {"order_count": 0, "gmv": 0}),
+            "this_week": {**this_by_name.get(name, {"order_count": 0, "gmv": 0}),
+                          "customers": channel.get("current", {}).get("customers"),
+                          "aov": channel.get("current", {}).get("aov")},
+            "last_week": {**last_by_name.get(name, {"order_count": 0, "gmv": 0}),
+                          "customers": channel.get("prior", {}).get("customers"),
+                          "aov": channel.get("prior", {}).get("aov")},
+            "stale_through": next((t for label, t in stale_platforms if label == name), None),
         })
 
     # Top SKUs this week
@@ -780,15 +892,23 @@ async def build_ecommerce_section(
         for r in top_prov_rows
     ]
 
+    if complete:
+        incomplete_note = None
+    elif stale_platforms:
+        incomplete_note = "、".join(f"{label}订单截至 {through.isoformat()}" for label, through in stale_platforms) + "，未覆盖完整周"
+    else:
+        incomplete_note = f"订单数据截至 {orders_through.isoformat() if orders_through else '—'}，未覆盖完整周"
+    current, prior = dashboard["current"], dashboard["prior"]
     return {
         "complete": complete,
         "orders_through": orders_through,
-        "incomplete_note": (
-            None if complete
-            else f"订单数据截至 {orders_through.isoformat() if orders_through else '—'}，未覆盖完整周"
-        ),
-        "this_week_total": this_agg["total"],
-        "last_week_total": last_agg["total"],
+        "stale_platforms": [{"platform": label, "through": through} for label, through in stale_platforms],
+        "incomplete_note": incomplete_note,
+        "this_week_total": {**this_agg["total"], "customers": current["customers"], "aov": current["aov"]},
+        "last_week_total": {**last_agg["total"], "customers": prior["customers"], "aov": prior["aov"]},
+        # Excluded from GMV (closed/unpaid/deleted) and refunds already netted out, this week.
+        "status": dashboard["status"],
+        "daily": [(row["date"], round(row["revenue"])) for row in dashboard["series"]],
         "platforms": platforms_merged,
         "top_skus": top_skus,
         "top_provinces": top_provinces,
@@ -843,6 +963,18 @@ async def build_report_context(session: AsyncSession, reference_date: date | Non
         section = await build_xhs_section(session, account, bounds)
         xhs_sections.append(section)
     xhs_last_run = await _latest_success_time(session, CollectorRun, platform="xhs", status="success")
+    # Cross-platform chart: account-level views summed over accounts, only when every
+    # account has both complete weeks; otherwise None (shown as not collected, not zero).
+    xhs_views = {"this_week": None, "last_week": None}
+    if xhs_sections and all(sec["account_metrics"]["comparable"] for sec in xhs_sections):
+        for key in xhs_views:
+            xhs_views[key] = sum(sec["account_metrics"][key]["totals"]["view_count"] for sec in xhs_sections)
+
+    # Cross-platform chart: 公众号 summed over accounts like 小红书 (was the first account only).
+    wechat_reads = {
+        "this_week": sum(sec["totals_this_week"]["read_user_count"] for sec in wechat_sections),
+        "last_week": sum(sec["totals_last_week"]["read_user_count"] for sec in wechat_sections),
+    } if wechat_sections else {"this_week": None, "last_week": None}
 
     # ── 视频号 ──
     channels_accounts = (
@@ -860,7 +992,12 @@ async def build_report_context(session: AsyncSession, reference_date: date | Non
 
     # ── 蒲公英 ──
     pgy_sections = []
-    for account in xhs_accounts:  # PgyNote.account_id -> xhs_accounts
+    # PgyNote.account_id -> xhs_accounts. Only accounts with 蒲公英 enabled or with notes
+    # (same rule as the MCP account list), not an empty card per XHS account.
+    noted = set((await session.execute(select(PgyNote.account_id).distinct())).scalars())
+    for account in xhs_accounts:
+        if not account.pgy_enabled and account.id not in noted:
+            continue
         section = await build_pgy_section(session, account, bounds)
         pgy_sections.append(section)
 
@@ -873,6 +1010,12 @@ async def build_report_context(session: AsyncSession, reference_date: date | Non
         "wechat_sections": wechat_sections,
         "xhs_sections": xhs_sections,
         "xhs_last_collector_run": xhs_last_run,
+        "xhs_views": xhs_views,
+        "wechat_reads": wechat_reads,
+        "channels_plays": {key: sum(sec[f"{key}_summary"]["total_plays"] for sec in channels_sections) if channels_sections else None
+                           for key in ("this_week", "last_week")},
+        "pgy_impressions": {key: sum(sec[f"{key}_summary"]["total_impressions"] for sec in pgy_sections) if pgy_sections else None
+                            for key in ("this_week", "last_week")},
         "channels_sections": channels_sections,
         "zhihu_section": zhihu_section,
         "pgy_sections": pgy_sections,

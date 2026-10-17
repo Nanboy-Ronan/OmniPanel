@@ -829,3 +829,13 @@ class TestSqlConsoleRoleIsolation:
         )
         assert r.status_code == 400
         assert "过大" in r.json()["detail"]
+
+
+def test_console_examples_run_against_the_reporting_view(client, tokens):
+    """Every example shown in the SQL console executes through the real read-only path."""
+    import json
+    from pathlib import Path
+    examples = json.loads((Path(__file__).resolve().parents[1] / "frontend/src/lib/sqlExamples.json").read_text())
+    for title, sql in examples:
+        r = client.post("/analysis/sql", json={"sql": sql}, headers=_auth(tokens["analyst"]))
+        assert r.status_code == 200, (title, r.text)

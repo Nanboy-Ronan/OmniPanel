@@ -1,7 +1,7 @@
 """A small, credential-free input contract and validated, evidence-linked output."""
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -51,7 +51,23 @@ def validate_output(raw: str, snapshot: dict) -> AgentReport:
     return output
 
 
-def build_snapshot(context: dict, report_id: int) -> dict:
+def _collected_after(freshness: dict | None, source: str, week_end) -> bool | None:
+    """Whether the source's last successful collect finished after the week ended.
+
+    None when freshness was not supplied (callers that cannot tell keep the old behaviour).
+    """
+    if freshness is None:
+        return None
+    value = (freshness.get(source) or {}).get("last_collect_at")
+    if not value:
+        return False
+    collected = datetime.fromisoformat(value)
+    if collected.tzinfo is None:
+        collected = collected.replace(tzinfo=timezone.utc)  # Collector timestamps are database UTC.
+    return collected.astimezone(ZoneInfo(settings.app_timezone)).date() > week_end
+
+
+def build_snapshot(context: dict, report_id: int, freshness: dict | None = None) -> dict:
     bounds = context["bounds"]
     result = {
         "snapshot_id": f"weekly-{report_id}", "prompt_version": PROMPT_VERSION,
@@ -78,21 +94,52 @@ def build_snapshot(context: dict, report_id: int) -> dict:
             add(f"{prefix}.followers", follower["this_week"], "本周新增、取消、净增关注。")
         else:
             result["warnings"].append(f"{prefix} 关注数据暂缺。")
+    labels = {"xhs": "小红书", "channels": "视频号", "pgy": "蒲公英", "zhihu": "知乎"}
+    def collected(source):
+        fresh = _collected_after(freshness, source, bounds.this_week_end)
+        if fresh is False:
+            result["warnings"].append(f"{labels[source]}在本周结束后尚无成功采集，本周发布内容的指标可能不完整。")
+        return fresh is not False
     for source, key in [("xhs", "xhs_sections"), ("channels", "channels_sections"), ("pgy", "pgy_sections")]:
-        for index, section in enumerate(context.get(key, [])):
+        sections = context.get(key, [])
+        complete = collected(source) if sections else True
+        for index, section in enumerate(sections):
             prefix = f"{source}.{getattr(section['account'], 'id', index)}"
-            add(prefix, section["this_week_summary"], "本周发布内容截至采集时的累计表现；不是本周新增，不能直接生成环比。")
+            add(prefix, section["this_week_summary"], "本周发布内容截至采集时的累计表现；不是本周新增，不能直接生成环比。", complete)
+            am = section.get("account_metrics") if source == "xhs" else None
+            if am and am.get("available"):
+                definition = ("小红书数据概览逐日账号指标的周合计（观看、主页访问、互动、新增/取消/净增关注；"
+                              "人均观看时长单位秒，完播率为按观看加权的百分数0-100）。")
+                for period in ("this_week", "last_week"):
+                    week = am[period]
+                    if not week["days_present"]:
+                        continue
+                    values = {**week["totals"], "avg_view_time_seconds": week["avg_view_time"],
+                              "full_view_rate_pct": week["full_view_rate"]}
+                    add(f"{prefix}.account.{'current' if period == 'this_week' else 'prior'}", values,
+                        definition, week["complete"])
+                    if not week["complete"]:
+                        result["warnings"].append(
+                            f"{prefix} {'本周' if period == 'this_week' else '上周'}数据概览仅 "
+                            f"{week['days_present']}/{week['days_expected']} 天，合计不完整，不能比较涨跌。")
     if context.get("zhihu_section"):
-        add("zhihu", context["zhihu_section"]["this_week_summary"], "本周发布内容截至采集时的累计表现，不直接比较环比。")
+        add("zhihu", context["zhihu_section"]["this_week_summary"], "本周发布内容截至采集时的累计表现，不直接比较环比。",
+            collected("zhihu"))
     ecommerce = context.get("ecommerce_section")
     if ecommerce:
         complete = ecommerce.get("complete") is not False
         if complete:
             for period, key in [("current", "this_week_total"), ("prior", "last_week_total")]:
-                add(f"commerce.{period}", ecommerce[key], "剔除关闭、未付款、已删除订单，GMV扣除已记录退款；单位CNY。")
+                add(f"commerce.{period}", ecommerce[key], "剔除关闭、未付款、已删除订单，GMV扣除已记录退款；单位CNY。客户按平台customer_key去重，客单价=GMV/有金额订单数。")
+            for platform in ecommerce.get("platforms", []):
+                for period in ("this_week", "last_week"):
+                    add(f"commerce.{platform['platform']}.{'current' if period == 'this_week' else 'prior'}",
+                        platform[period], "单平台口径同商城合计。")
+            if ecommerce.get("status"):
+                add("commerce.current.status", ecommerce["status"], "本周未计入GMV的关闭/取消/未付款/已删除订单数与金额，已扣退款金额，状态未知订单数（仍计入）。")
         else:
             # Do not hand misleading partial sales numbers to the model.
-            result["warnings"].append("商城本周数据未上传完整，GMV及订单数暂不提供，不能据此判断销售涨跌。")
+            result["warnings"].append(f"商城本周数据未上传完整（{ecommerce.get('incomplete_note') or '部分平台'}），GMV及订单数暂不提供，不能据此判断销售涨跌。")
     return result
 
 

@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
-import { BellOff, BellRing, CalendarRange, FileText, Sparkles } from 'lucide-react';
+import {
+  AlertTriangle,
+  BellOff,
+  BellRing,
+  CalendarRange,
+  CheckCircle2,
+  FileText,
+  Loader2,
+  Sparkles,
+} from 'lucide-react';
 import { prepareReport, type ReportSection } from '../lib/report';
 import { useAction, useResource } from '../lib/resources';
 import { navigate, useLocationSearch } from '../lib/navigation';
@@ -18,6 +27,7 @@ const summary = z.object({
   wecom_sent: z.boolean(),
   job_state: z.string().nullish(),
   narrative_status: z.string().nullish(),
+  worker_enabled: z.boolean().nullish(),
 });
 const detail = summary.extend({
   narrative: z.string().nullable(),
@@ -27,6 +37,9 @@ const detail = summary.extend({
 });
 type Summary = z.infer<typeof summary>;
 const pendingStates = ['queued', 'preparing', 'generating', 'ready', 'sending'];
+const problemStates = ['failed', 'delivery_failed', 'delivery_unknown'];
+// Stop auto-refresh after this long; a stuck job is surfaced instead of polled forever.
+const POLL_LIMIT_MS = 15 * 60_000;
 const jobLabels: Record<string, string> = {
   queued: '等待生成',
   preparing: '整理数据',
@@ -58,6 +71,12 @@ const shortRange = (row: Summary) =>
   `${row.week_start.slice(5).replace('-', '.')} – ${row.week_end.slice(5).replace('-', '.')}`;
 const timestamp = (value?: string | null) => formatTimestamp(value);
 
+function jobTone(state: string) {
+  if (state === 'sent') return 'success';
+  if (pendingStates.includes(state)) return 'progress';
+  return state === 'delivery_unknown' ? 'warning' : 'danger';
+}
+
 function StatusBadge({ status }: { status: string }) {
   return (
     <span className={`badge tone-${statusTone('status', status) ?? 'neutral'}`}>
@@ -72,11 +91,26 @@ export default function ReportsPage({ admin }: { admin: boolean }) {
   const requested = Number(new URLSearchParams(search).get('report')) || null;
   const action = useAction({ success: '周报请求已处理，请查看报告状态', error: '周报请求失败' });
   const rows = list.data ?? [];
-  const pending = rows.some((row) => pendingStates.includes(row.job_state ?? ''));
+  // Only poll while a WorkBuddy worker can actually advance the job.
+  const pending = rows.some(
+    (row) => pendingStates.includes(row.job_state ?? '') && row.worker_enabled !== false,
+  );
   const { refetch } = list;
+  const [pollExpired, setPollExpired] = useState(false);
   useEffect(() => {
-    if (!pending) return;
-    const timer = window.setInterval(() => void refetch(), 3000);
+    if (!pending) {
+      setPollExpired(false);
+      return;
+    }
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      if (Date.now() - started > POLL_LIMIT_MS) {
+        window.clearInterval(timer);
+        setPollExpired(true);
+        return;
+      }
+      void refetch();
+    }, 3000);
     return () => window.clearInterval(timer);
   }, [pending, refetch]);
   const id = rows.some((row) => row.id === requested) ? requested! : rows[0]?.id;
@@ -100,6 +134,11 @@ export default function ReportsPage({ admin }: { admin: boolean }) {
         }
       />
       {action.isError && <ErrorState error={action.error} />}
+      {pollExpired && (
+        <p className="stale-notice">
+          已停止自动刷新：任务处理时间超过 15 分钟，请稍后手动刷新页面。
+        </p>
+      )}
       <QueryView query={list}>
         {(data) =>
           data.length ? (
@@ -128,6 +167,12 @@ export default function ReportsPage({ admin }: { admin: boolean }) {
                         <span className="report-week-range">
                           {row.week_start.slice(0, 4)} · {shortRange(row)}
                         </span>
+                        {row.job_state && problemStates.includes(row.job_state) && (
+                          <span className="report-week-alert">
+                            <AlertTriangle size={12} aria-hidden />
+                            {jobLabels[row.job_state]}
+                          </span>
+                        )}
                       </button>
                     </li>
                   ))}
@@ -181,47 +226,84 @@ function Report({ row, admin }: { row: Summary; admin: boolean }) {
           </p>
         </div>
       </header>
-      {state && <p role="status">{jobLabels[state] ?? state}</p>}
-      {query.data?.narrative_status === 'unavailable' && <p>智能解读暂缺，数据报告仍可查看。</p>}
-      {query.data?.delivery_error && <p className="stale-notice">{query.data.delivery_error}</p>}
-      {delivery.isError && <ErrorState error={delivery.error} />}
-      {admin && (state === 'delivery_failed' || uncertain) && (
-        <div className="toolbar">
-          <ConfirmAction
-            title="重试推送"
-            description={
-              uncertain
-                ? '请先核对企业微信是否已收到。确认重试可能造成重复推送。'
-                : '修正企业微信配置后，将向原收件人重新发送已保存的报告。'
-            }
-            busy={delivery.isPending}
-            onConfirm={() =>
-              delivery.mutate({
-                path: `/admin/reports/weekly/${row.id}/delivery`,
-                body: { action: 'retry', acknowledged_uncertain_delivery: uncertain },
-              })
-            }
-          />
-          {uncertain && (
-            <ConfirmAction
-              title="确认已收到"
-              description="确认收件人已经收到本份周报，标记为已推送。"
-              busy={delivery.isPending}
-              onConfirm={() =>
-                delivery.mutate({
-                  path: `/admin/reports/weekly/${row.id}/delivery`,
-                  body: { action: 'mark_sent', acknowledged_uncertain_delivery: true },
-                })
-              }
-            />
+      {state && (
+        <div className={`report-job tone-${jobTone(state)}`}>
+          <span className="report-job-icon" aria-hidden>
+            {state === 'sent' ? (
+              <CheckCircle2 size={16} />
+            ) : pending ? (
+              <Loader2 size={16} />
+            ) : (
+              <AlertTriangle size={16} />
+            )}
+          </span>
+          <div className="report-job-body">
+            <p role="status">{jobLabels[state] ?? state}</p>
+            {pending && row.worker_enabled === false && (
+              <small>周报任务暂停：当前未启用 WorkBuddy 周报 worker，切回后会继续处理。</small>
+            )}
+            {query.data?.narrative_status === 'unavailable' && (
+              <small>智能解读暂缺，数据报告仍可查看。</small>
+            )}
+            {query.data?.delivery_error && <small>{query.data.delivery_error}</small>}
+            {state === 'failed' && query.data?.error_message && (
+              <small>{query.data.error_message}</small>
+            )}
+          </div>
+          {admin && (state === 'delivery_failed' || uncertain || state === 'failed') && (
+            <div className="report-job-actions">
+              {state === 'failed' ? (
+                <ConfirmAction
+                  title="重新生成"
+                  description="重新整理这一周的数据并生成解读，完成后按配置推送企业微信。"
+                  busy={delivery.isPending}
+                  onConfirm={() =>
+                    delivery.mutate({
+                      path: `/admin/reports/weekly/${row.id}/delivery`,
+                      body: { action: 'regenerate' },
+                    })
+                  }
+                />
+              ) : (
+                <ConfirmAction
+                  title="重试推送"
+                  description={
+                    uncertain
+                      ? '请先核对企业微信是否已收到。确认重试可能造成重复推送。'
+                      : '修正企业微信配置后，将向原收件人重新发送已保存的报告。'
+                  }
+                  busy={delivery.isPending}
+                  onConfirm={() =>
+                    delivery.mutate({
+                      path: `/admin/reports/weekly/${row.id}/delivery`,
+                      body: { action: 'retry', acknowledged_uncertain_delivery: uncertain },
+                    })
+                  }
+                />
+              )}
+              {uncertain && (
+                <ConfirmAction
+                  title="确认已收到"
+                  description="确认收件人已经收到本份周报，标记为已推送。"
+                  busy={delivery.isPending}
+                  onConfirm={() =>
+                    delivery.mutate({
+                      path: `/admin/reports/weekly/${row.id}/delivery`,
+                      body: { action: 'mark_sent', acknowledged_uncertain_delivery: true },
+                    })
+                  }
+                />
+              )}
+            </div>
           )}
         </div>
       )}
+      {delivery.isError && <ErrorState error={delivery.error} />}
       <QueryView query={query}>
         {(data) =>
           !prepared ? (
             pending ? (
-              <p>周报正在后台处理，完成后此页面会自动更新。</p>
+              <p className="report-pending">周报正在后台处理，完成后此页面会自动更新。</p>
             ) : (
               <ErrorState error={new Error(data.error_message ?? '报告尚未生成成功。')} />
             )

@@ -251,12 +251,184 @@ payloads['/api/upload/batches'].push({
     },
   ];
 }
-Object.assign(payloads, {
-  '/api/integrations/workbuddy/status': { mcp_enabled: true, report_api_ready: false },
-  '/api/integrations/workbuddy/tokens': [],
-  '/api/integrations/workbuddy/queries': [],
-  '/api/collector/repair/targets': [],
-});
+{
+  // WorkBuddy connection, repair and consent pages (synthetic).
+  const future = '2026-12-31T09:00:00+08:00';
+  payloads['/api/integrations/workbuddy/status'] = { mcp_enabled: true, report_api_ready: false };
+  payloads['/api/integrations/workbuddy/tokens'] = [
+    {
+      id: 'tok-1',
+      name: 'WorkBuddy 自动授权',
+      scopes: ['metadata:read', 'analytics:ecommerce', 'analytics:media', 'reports:read'],
+      created_at: '2026-10-10T09:00:00+08:00',
+      expires_at: '2026-10-15T10:00:00+08:00',
+      revoked_at: null,
+      authorization_expires_at: future,
+    },
+    {
+      id: 'tok-2',
+      name: '旧版手动令牌',
+      scopes: ['metadata:read'],
+      created_at: '2026-09-01T09:00:00+08:00',
+      expires_at: '2026-10-01T09:00:00+08:00',
+      revoked_at: '2026-09-20T09:00:00+08:00',
+      authorization_expires_at: null,
+    },
+  ];
+  payloads['/api/integrations/workbuddy/queries'] = [
+    {
+      timestamp: '2026-10-14 10:21:00',
+      request_id: 'a1b2c3',
+      tool: 'query_media_posts',
+      outcome: 'success',
+      duration_ms: 182,
+      returned_rows: 50,
+    },
+    {
+      timestamp: '2026-10-14 10:20:30',
+      request_id: 'd4e5f6',
+      tool: 'query_ecommerce_metrics',
+      outcome: 'denied',
+      duration_ms: 4,
+      returned_rows: null,
+    },
+    {
+      timestamp: '2026-10-14 10:20:00',
+      request_id: '0789ab',
+      tool: 'get_metric_definitions',
+      outcome: 'rate_limited',
+      duration_ms: 1,
+      returned_rows: null,
+    },
+  ];
+  payloads['/api/admin/integrations/workbuddy/tokens'] = [
+    {
+      ...payloads['/api/integrations/workbuddy/tokens'][0],
+      user_id: 'u1',
+      user_email: 'analyst@example.test',
+      user_name: '示例分析员',
+      kind: 'oauth',
+    },
+    {
+      id: 'tok-3',
+      name: '周报脚本',
+      scopes: ['reports:read'],
+      created_at: '2026-10-01T09:00:00+08:00',
+      expires_at: future,
+      revoked_at: null,
+      authorization_expires_at: null,
+      user_id: 'u2',
+      user_email: 'admin@example.test',
+      user_name: null,
+      kind: 'token',
+    },
+  ];
+  payloads['/api/collector/repair/readiness'] = {
+    ready: false,
+    browser_ready: false,
+    sessions_writable: true,
+    browsers_path_configured: false,
+  };
+  const targets = [
+    {
+      platform: 'xhs',
+      account_id: 1,
+      name: '品牌主账号',
+      label: '小红书 · 品牌主账号',
+      owner_id: 'u1',
+      can_repair: true,
+      verify_status: 'session_expired',
+      verified_at: '2026-10-14T06:10:00',
+      login_missing: false,
+    },
+    {
+      platform: 'pugongying',
+      account_id: 2,
+      name: '产品实验室',
+      label: '蒲公英 · 产品实验室',
+      owner_id: null,
+      can_repair: true,
+      verify_status: 'success',
+      verified_at: '2026-10-14T06:12:00',
+      login_missing: false,
+    },
+    {
+      platform: 'channels',
+      account_id: 3,
+      name: '生活方式',
+      label: '视频号 · 生活方式',
+      owner_id: 'u-off',
+      can_repair: true,
+      verify_status: null,
+      verified_at: null,
+      login_missing: true,
+    },
+  ];
+  payloads['/api/collector/repair/targets'] = targets;
+  targets[0].collect_pending = true;
+  payloads['/api/admin/collector/requests'] = [];
+  payloads['/api/collector/repair/requests/demo'] = {
+    status: 'pending',
+    targets,
+    requested_at: '2026-10-14T10:00:00+08:00',
+    expires_at: '2026-10-14T10:15:00+08:00',
+  };
+  payloads['/api/integrations/workbuddy/oauth/requests/demo'] = {
+    scopes: ['metadata:read', 'analytics:media', 'reports:read'],
+    can_authorize: true,
+    client: 'WorkBuddy 桌面客户端',
+    requested_at: '2026-10-14T10:00:00+08:00',
+    expires_at: '2026-10-14T10:10:00+08:00',
+  };
+  payloads['/api/admin/users'] = [
+    {
+      id: 'u1',
+      email: 'analyst@example.test',
+      display_name: '示例分析员',
+      role: 'analyst',
+      is_active: true,
+      wecom_userid: 'analyst',
+      wecom_alert_enabled: true,
+    },
+    {
+      id: 'u2',
+      email: 'admin@example.test',
+      display_name: null,
+      role: 'admin',
+      is_active: true,
+      wecom_userid: null,
+      wecom_alert_enabled: false,
+    },
+    {
+      id: 'u-off',
+      email: 'former@example.test',
+      display_name: '已离职同事',
+      role: 'viewer',
+      is_active: false,
+      wecom_userid: null,
+      wecom_alert_enabled: false,
+    },
+  ];
+  const weekly = payloads['/api/reports/weekly'];
+  Object.assign(weekly[0], {
+    job_state: 'delivery_unknown',
+    narrative_status: 'success',
+    worker_enabled: true,
+  });
+  Object.assign(weekly[3], {
+    job_state: 'failed',
+    narrative_status: 'pending',
+    worker_enabled: true,
+  });
+  for (const row of weekly)
+    Object.assign(
+      payloads['/api/reports/weekly/' + row.id],
+      row,
+      row.job_state === 'delivery_unknown'
+        ? { delivery_error: '发送结果未确认，请核对企业微信是否已收到再决定重试。' }
+        : {},
+    );
+}
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',

@@ -5,18 +5,25 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import current_analyst_user
+from ..auth import current_admin_user, current_analyst_user
 from ..config import settings
 from ..db import get_session
-from ..db.models import IntegrationToken, OperationLog, WorkBuddyOAuthGrant
+from ..db.models import IntegrationToken, OperationLog, User, WorkBuddyOAuthGrant
 from ..integrations.workbuddy.auth import token_hash
+from ..utils.logger import request_context
 
 router = APIRouter(prefix="/integrations/workbuddy", tags=["workbuddy"])
+admin_router = APIRouter(prefix="/admin/integrations/workbuddy", tags=["workbuddy"])
+
+
+def audit(session, request, user_id, action, **detail):
+    session.add(OperationLog(user_id=user_id, action=action,
+                             detail=json.dumps({**detail, **request_context(request)}, ensure_ascii=False, default=str)))
 Scope = Literal["metadata:read", "analytics:ecommerce", "analytics:media", "reports:read"]
 
 
@@ -68,7 +75,7 @@ async def list_tokens(response: Response, user=Depends(current_analyst_user), se
 
 
 @router.post("/tokens", response_model=CreatedToken, status_code=201)
-async def create_token(body: TokenCreate, response: Response, user=Depends(current_analyst_user), session: AsyncSession = Depends(get_session)):
+async def create_token(body: TokenCreate, request: Request, response: Response, user=Depends(current_analyst_user), session: AsyncSession = Depends(get_session)):
     if not settings.workbuddy_mcp_enabled:
         raise HTTPException(503, "WorkBuddy 接入尚未启用，请联系管理员。")
     raw = "rpa_wb_" + secrets.token_urlsafe(32)
@@ -77,7 +84,7 @@ async def create_token(body: TokenCreate, response: Response, user=Depends(curre
         scopes=sorted(set(body.scopes)), expires_at=datetime.now(timezone.utc) + timedelta(days=body.expires_in_days),
     )
     session.add(credential)
-    session.add(OperationLog(user_id=user.id, action="workbuddy_token_created", detail=json.dumps({"token_id": str(credential.id), "scopes": credential.scopes})))
+    audit(session, request, user.id, "workbuddy_token_created", token_id=str(credential.id), scopes=credential.scopes)
     await session.commit()
     await session.refresh(credential)
     response.headers["Cache-Control"] = "no-store"
@@ -85,7 +92,7 @@ async def create_token(body: TokenCreate, response: Response, user=Depends(curre
 
 
 @router.delete("/tokens/{token_id}", status_code=204)
-async def revoke_token(token_id: uuid.UUID, user=Depends(current_analyst_user), session: AsyncSession = Depends(get_session)):
+async def revoke_token(token_id: uuid.UUID, request: Request, user=Depends(current_analyst_user), session: AsyncSession = Depends(get_session)):
     credential = (await session.execute(select(IntegrationToken).where(
         IntegrationToken.id == token_id, IntegrationToken.user_id == user.id,
     ))).scalar_one_or_none()
@@ -93,7 +100,7 @@ async def revoke_token(token_id: uuid.UUID, user=Depends(current_analyst_user), 
         raise HTTPException(404, "访问令牌不存在")
     if credential.revoked_at is None:
         credential.revoked_at = datetime.now(timezone.utc)
-        session.add(OperationLog(user_id=user.id, action="workbuddy_token_revoked", detail=json.dumps({"token_id": str(token_id)})))
+        audit(session, request, user.id, "workbuddy_token_revoked", token_id=str(token_id))
         await session.commit()
 
 
@@ -111,3 +118,43 @@ async def query_history(response: Response, user=Depends(current_analyst_user), 
             "request_id", "tool", "parameters", "outcome", "duration_ms", "returned_rows", "required_scope"
         )}})
     return result
+
+
+class AdminTokenSummary(TokenSummary):
+    user_id: uuid.UUID
+    user_email: str
+    user_name: str | None = None
+    kind: Literal["oauth", "token"]
+
+
+@admin_router.get("/tokens", response_model=list[AdminTokenSummary])
+async def list_all_tokens(response: Response, include_inactive: bool = False,
+                          _admin=Depends(current_admin_user), session: AsyncSession = Depends(get_session)):
+    """Every employee's connections, so a leaked one can be revoked without disabling the person."""
+    response.headers["Cache-Control"] = "no-store"
+    now = datetime.now(timezone.utc)
+    stmt = (select(IntegrationToken, WorkBuddyOAuthGrant.expires_at, User.email, User.display_name)
+            .join(User, User.id == IntegrationToken.user_id)
+            .outerjoin(WorkBuddyOAuthGrant, WorkBuddyOAuthGrant.token_id == IntegrationToken.id)
+            .order_by(IntegrationToken.created_at.desc()).limit(500))
+    if not include_inactive:
+        stmt = stmt.where(IntegrationToken.revoked_at.is_(None)).where(
+            (IntegrationToken.expires_at > now) | (WorkBuddyOAuthGrant.expires_at > now))
+    rows = (await session.execute(stmt)).all()
+    return [AdminTokenSummary(**TokenSummary.model_validate(row).model_dump(exclude={"authorization_expires_at"}),
+                              authorization_expires_at=grant_expiry, user_id=row.user_id, user_email=email,
+                              user_name=name, kind="oauth" if grant_expiry else "token")
+            for row, grant_expiry, email, name in rows]
+
+
+@admin_router.delete("/tokens/{token_id}", status_code=204)
+async def admin_revoke_token(token_id: uuid.UUID, request: Request, admin=Depends(current_admin_user),
+                             session: AsyncSession = Depends(get_session)):
+    credential = await session.get(IntegrationToken, token_id, with_for_update=True)
+    if credential is None:
+        raise HTTPException(404, "访问令牌不存在")
+    if credential.revoked_at is None:
+        credential.revoked_at = datetime.now(timezone.utc)
+        audit(session, request, admin.id, "workbuddy_token_admin_revoked",
+              token_id=str(token_id), target_user=str(credential.user_id))
+        await session.commit()

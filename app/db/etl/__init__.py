@@ -31,12 +31,11 @@ from .normalize import (
     COL_COUPON,
     COL_DISTRIB,
 )
-from .load import ingest, ingest_upload
+from .load import ingest_upload
 
 __all__ = [
     "detect_platform",
     "normalize_dataframe",
-    "ingest",
     "ingest_upload",
     "_normalise",
     "_parse_tmall_address",

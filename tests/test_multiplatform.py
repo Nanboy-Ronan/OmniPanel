@@ -455,23 +455,22 @@ class TestUnifiedSchema:
 
 
 # ===========================================================================
-# 5. ingest() — Customer-key based deduplication
+# 5. ingest_upload() — Customer-key based deduplication
 # ===========================================================================
 
 class TestIngestCustomerKey:
-    """After normalization, ingest() should use customer_key (not mobile) to
+    """After normalization, ingest_upload() should use customer_key (not mobile) to
     look up/create Customer records."""
 
     def _make_session(self):
         """Return a minimal SQLAlchemy-like mock session."""
         session = MagicMock()
-        session.query.return_value.filter_by.return_value.first.return_value = None
+        session.execute.return_value.scalars.return_value.all.return_value = []
         return session
 
     def test_ingest_jd_creates_customers_by_address(self, jd_df):
         """Two JD orders with the same address → one Customer record created."""
-        from app.db.etl import normalize_dataframe, ingest
-        norm_df, _ = normalize_dataframe(jd_df)
+        from app.db.etl import ingest_upload
 
         session = self._make_session()
         # Track Customer objects added
@@ -480,7 +479,7 @@ class TestIngestCustomerKey:
         session.flush = MagicMock()
         session.commit = MagicMock()
 
-        ingest(norm_df, session)
+        ingest_upload(jd_df, session, filename="test-upload.csv")
 
         # Collect only Customer instances
         from app.db.models import Customer
@@ -493,8 +492,7 @@ class TestIngestCustomerKey:
 
     def test_ingest_tmall_creates_customers_by_address(self, tmall_df):
         """Two Tmall orders with different addresses → two Customer records."""
-        from app.db.etl import normalize_dataframe, ingest
-        norm_df, _ = normalize_dataframe(tmall_df)
+        from app.db.etl import ingest_upload
 
         session = self._make_session()
         added = []
@@ -502,7 +500,7 @@ class TestIngestCustomerKey:
         session.flush = MagicMock()
         session.commit = MagicMock()
 
-        ingest(norm_df, session)
+        ingest_upload(tmall_df, session, filename="test-upload.csv")
 
         from app.db.models import Customer
         customer_adds = [o for o in added if isinstance(o, Customer)]
@@ -511,8 +509,7 @@ class TestIngestCustomerKey:
 
     def test_ingest_jd_stores_platform(self, jd_df):
         """Ingested Order records should carry platform='jd'."""
-        from app.db.etl import normalize_dataframe, ingest
-        norm_df, _ = normalize_dataframe(jd_df)
+        from app.db.etl import ingest_upload
 
         session = self._make_session()
         added = []
@@ -520,7 +517,7 @@ class TestIngestCustomerKey:
         session.flush = MagicMock()
         session.commit = MagicMock()
 
-        ingest(norm_df, session)
+        ingest_upload(jd_df, session, filename="test-upload.csv")
 
         from app.db.models import Order
         order_adds = [o for o in added if isinstance(o, Order)]
@@ -530,8 +527,7 @@ class TestIngestCustomerKey:
 
     def test_ingest_tmall_stores_platform(self, tmall_df):
         """Ingested Order records should carry platform='tmall'."""
-        from app.db.etl import normalize_dataframe, ingest
-        norm_df, _ = normalize_dataframe(tmall_df)
+        from app.db.etl import ingest_upload
 
         session = self._make_session()
         added = []
@@ -539,21 +535,20 @@ class TestIngestCustomerKey:
         session.flush = MagicMock()
         session.commit = MagicMock()
 
-        ingest(norm_df, session)
+        ingest_upload(tmall_df, session, filename="test-upload.csv")
 
         from app.db.models import Order
         order_adds = [o for o in added if isinstance(o, Order)]
         assert all(o.platform == "tmall" for o in order_adds)
 
     def test_ingest_returns_inserted_count(self, jd_df):
-        from app.db.etl import normalize_dataframe, ingest
-        norm_df, _ = normalize_dataframe(jd_df)
+        from app.db.etl import ingest_upload
 
         session = self._make_session()
         session.flush = MagicMock()
         session.commit = MagicMock()
 
-        count = ingest(norm_df, session)
+        count = ingest_upload(jd_df, session, filename="test-upload.csv")["inserted_orders"]
         assert count == len(jd_df), (
             f"Expected {len(jd_df)} insertions, got {count}"
         )
@@ -1106,27 +1101,26 @@ class TestNormalizeYouzanTabStripping:
 
 
 class TestNormalizeYouzanIngestIntegration:
-    """Verify that after tab-stripping, ingest() writes clean values to
+    """Verify that after tab-stripping, ingest_upload() writes clean values to
     Customer and Order ORM objects."""
 
     def _make_session(self):
         session = MagicMock()
-        session.query.return_value.filter.return_value.all.return_value = []
+        session.execute.return_value.scalars.return_value.all.return_value = []
         session.flush = MagicMock()
         session.commit = MagicMock()
         return session
 
     def test_ingest_customer_key_no_tab(self, youzan_df_with_tabs):
         """Customer.customer_key must not contain a tab after ingest."""
-        from app.db.etl import normalize_dataframe, ingest
+        from app.db.etl import ingest_upload
         from app.db.models import Customer
 
-        norm_df, _ = normalize_dataframe(youzan_df_with_tabs)
         session = self._make_session()
         added = []
         session.add.side_effect = added.append
 
-        ingest(norm_df, session)
+        ingest_upload(youzan_df_with_tabs, session, filename="test-upload.csv")
 
         customers = [o for o in added if isinstance(o, Customer)]
         assert customers, "Expected at least one Customer to be created"
@@ -1137,15 +1131,14 @@ class TestNormalizeYouzanIngestIntegration:
 
     def test_ingest_receiver_phone_no_tab(self, youzan_df_with_tabs):
         """Order.receiver_phone must not contain a tab after ingest."""
-        from app.db.etl import normalize_dataframe, ingest
+        from app.db.etl import ingest_upload
         from app.db.models import Order
 
-        norm_df, _ = normalize_dataframe(youzan_df_with_tabs)
         session = self._make_session()
         added = []
         session.add.side_effect = added.append
 
-        ingest(norm_df, session)
+        ingest_upload(youzan_df_with_tabs, session, filename="test-upload.csv")
 
         orders = [o for o in added if isinstance(o, Order)]
         assert orders, "Expected at least one Order to be created"
@@ -1157,15 +1150,14 @@ class TestNormalizeYouzanIngestIntegration:
 
     def test_ingest_full_address_no_trailing_space(self, youzan_df_with_tabs):
         """Order.full_address must have no trailing whitespace."""
-        from app.db.etl import normalize_dataframe, ingest
+        from app.db.etl import ingest_upload
         from app.db.models import Order
 
-        norm_df, _ = normalize_dataframe(youzan_df_with_tabs)
         session = self._make_session()
         added = []
         session.add.side_effect = added.append
 
-        ingest(norm_df, session)
+        ingest_upload(youzan_df_with_tabs, session, filename="test-upload.csv")
 
         orders = [o for o in added if isinstance(o, Order)]
         for o in orders:
@@ -1176,15 +1168,14 @@ class TestNormalizeYouzanIngestIntegration:
 
     def test_ingest_full_address_content_correct(self, youzan_df_with_tabs):
         """Order.full_address must still contain the real address text."""
-        from app.db.etl import normalize_dataframe, ingest
+        from app.db.etl import ingest_upload
         from app.db.models import Order
 
-        norm_df, _ = normalize_dataframe(youzan_df_with_tabs)
         session = self._make_session()
         added = []
         session.add.side_effect = added.append
 
-        ingest(norm_df, session)
+        ingest_upload(youzan_df_with_tabs, session, filename="test-upload.csv")
 
         orders = [o for o in added if isinstance(o, Order)]
         addresses = {o.full_address for o in orders if o.full_address}
@@ -1195,15 +1186,14 @@ class TestNormalizeYouzanIngestIntegration:
     def test_ingest_creates_two_distinct_customers(self, youzan_df_with_tabs):
         """Two rows with different (tab-prefixed) phones → two distinct
         Customer records with clean, distinct customer_keys."""
-        from app.db.etl import normalize_dataframe, ingest
+        from app.db.etl import ingest_upload
         from app.db.models import Customer
 
-        norm_df, _ = normalize_dataframe(youzan_df_with_tabs)
         session = self._make_session()
         added = []
         session.add.side_effect = added.append
 
-        ingest(norm_df, session)
+        ingest_upload(youzan_df_with_tabs, session, filename="test-upload.csv")
 
         customers = [o for o in added if isinstance(o, Customer)]
         keys = {c.customer_key for c in customers}
@@ -1287,37 +1277,35 @@ class TestRealYouzanFileTabStripping:
 # ===========================================================================
 
 def _ingest_to_orders(df):
-    """Normalise *df*, run ingest() against a mock session, and return the
+    """Normalise *df*, run ingest_upload() against a mock session, and return the
     list of Order ORM objects that were added."""
-    from app.db.etl import normalize_dataframe, ingest
+    from app.db.etl import ingest_upload
     from app.db.models import Order
 
-    norm_df, _ = normalize_dataframe(df)
     session = MagicMock()
-    session.query.return_value.filter.return_value.all.return_value = []
+    session.execute.return_value.scalars.return_value.all.return_value = []
     session.flush = MagicMock()
     session.commit = MagicMock()
     added = []
     session.add.side_effect = added.append
 
-    ingest(norm_df, session)
+    ingest_upload(df, session, filename="test-upload.csv")
     return [o for o in added if isinstance(o, Order)]
 
 
 def _ingest_to_customers(df):
     """Same as _ingest_to_orders but returns Customer objects."""
-    from app.db.etl import normalize_dataframe, ingest
+    from app.db.etl import ingest_upload
     from app.db.models import Customer
 
-    norm_df, _ = normalize_dataframe(df)
     session = MagicMock()
-    session.query.return_value.filter.return_value.all.return_value = []
+    session.execute.return_value.scalars.return_value.all.return_value = []
     session.flush = MagicMock()
     session.commit = MagicMock()
     added = []
     session.add.side_effect = added.append
 
-    ingest(norm_df, session)
+    ingest_upload(df, session, filename="test-upload.csv")
     return [o for o in added if isinstance(o, Customer)]
 
 
@@ -1584,7 +1572,7 @@ class TestRealTmallFileFieldMapping:
     """Field-level tests for tmall-example.xlsx.
 
     The example file has sparse data (date and sku columns are empty), so
-    ingest() skips all rows (order_date is required).  Tests verify that:
+    ingest_upload() skips all rows (order_date is required).  Tests verify that:
       1. The normalize pipeline maps every available column correctly.
       2. The *normalized* DataFrame has the right values before ingest.
       3. The known-empty columns are documented.
@@ -1701,19 +1689,18 @@ class TestRealTmallFileFieldMapping:
         )
 
     def test_ingest_skips_rows_when_date_missing(self):
-        """Because order_date is required, ingest() must return 0 inserted rows
+        """Because order_date is required, ingest_upload() must return 0 inserted rows
         when all dates are missing (as in the current example file)."""
-        from app.db.etl import normalize_dataframe, ingest
+        from app.db.etl import ingest_upload
 
-        norm_df, _ = normalize_dataframe(self._df)
         session = MagicMock()
-        session.query.return_value.filter.return_value.all.return_value = []
+        session.execute.return_value.scalars.return_value.all.return_value = []
         session.flush = MagicMock()
         session.commit = MagicMock()
         added = []
         session.add.side_effect = added.append
 
-        count = ingest(norm_df, session)
+        count = ingest_upload(self._df, session, filename="test-upload.csv")["inserted_orders"]
         assert count == 0, (
             f"Expected 0 inserts (all dates missing), got {count}"
         )
@@ -1722,7 +1709,7 @@ class TestRealTmallFileFieldMapping:
         """A Tmall row that HAS a date and SKU must be fully ingested.
         Uses the inline tmall_df fixture (which has all required fields).
         This verifies the full ingest path, not just the normalize step."""
-        from app.db.etl import normalize_dataframe, ingest
+        from app.db.etl import ingest_upload
         from app.db.models import Order, Customer
 
         # Build a complete Tmall row (same schema as the real file)
@@ -1734,15 +1721,14 @@ class TestRealTmallFileFieldMapping:
             "商品标题": "商品丁",
         }], dtype=str)
 
-        norm_df, _ = normalize_dataframe(complete_df)
         session = MagicMock()
-        session.query.return_value.filter.return_value.all.return_value = []
+        session.execute.return_value.scalars.return_value.all.return_value = []
         session.flush = MagicMock()
         session.commit = MagicMock()
         added = []
         session.add.side_effect = added.append
 
-        count = ingest(norm_df, session)
+        count = ingest_upload(complete_df, session, filename="test-upload.csv")["inserted_orders"]
         assert count == 1, f"Expected 1 insert, got {count}"
 
         orders = [o for o in added if isinstance(o, Order)]

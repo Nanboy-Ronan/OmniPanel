@@ -3,6 +3,7 @@
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..collector.runs import LOGIN_CHECK_TRIGGERS
 from ..db.models import (
     CollectorRun,
     Order,
@@ -25,8 +26,8 @@ ORDERS_STALE_LAG_DAYS = 3
 # CollectorRun.platform for each collected media source.
 _COLLECTOR_PLATFORM = {"xhs": "xhs", "zhihu": "zhihu", "channels": "channels", "pgy": "pugongying"}
 
-# Verify runs only check a login session; they never bring in data.
-_DATA_RUN = CollectorRun.triggered_by != "verify"
+# Verify and login-repair runs only check a login session; they never bring in data.
+_DATA_RUN = CollectorRun.triggered_by.not_in(LOGIN_CHECK_TRIGGERS)
 
 
 async def _order_platform_freshness(session: AsyncSession) -> dict:

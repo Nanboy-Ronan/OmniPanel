@@ -2,7 +2,6 @@
 
     {collector_dir}/
     ├── sessions/    xhs_{account_id}.json, zhihu.json, jd.json  (chmod 700 dir, 0600 files)
-    ├── downloads/   per-run scratch, safe to clear any time
     └── debug/       failure screenshot+HTML pairs, pruned to collector_debug_keep
 """
 from __future__ import annotations
@@ -27,12 +26,6 @@ def sessions_dir() -> Path:
         os.chmod(d, 0o700)
     except OSError:
         pass  # best-effort on filesystems that don't support chmod (e.g. some CI runners)
-    return d
-
-
-def downloads_dir() -> Path:
-    d = _base_dir() / "downloads"
-    d.mkdir(parents=True, exist_ok=True)
     return d
 
 

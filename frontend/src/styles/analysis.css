@@ -1603,3 +1603,90 @@
     margin-left: 0;
   }
 }
+
+/* WorkBuddy job status bar on a weekly report. */
+.report-job {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.report-job-icon {
+  display: grid;
+  place-items: center;
+  margin-top: 2px;
+}
+.report-job-body {
+  flex: 1;
+  min-width: 200px;
+  display: grid;
+  gap: 2px;
+}
+.report-job-body p {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+}
+.report-job-body small {
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.report-job-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.report-job-actions .confirm-action {
+  margin: 0;
+}
+.report-job.tone-success {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+}
+.report-job.tone-success .report-job-icon,
+.report-job.tone-success p {
+  color: var(--success);
+}
+.report-job.tone-progress {
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+}
+.report-job.tone-progress .report-job-icon,
+.report-job.tone-progress p {
+  color: var(--primary-text);
+}
+.report-job.tone-warning {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+}
+.report-job.tone-warning .report-job-icon,
+.report-job.tone-warning p {
+  color: var(--warning);
+}
+.report-job.tone-danger {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+.report-job.tone-danger .report-job-icon,
+.report-job.tone-danger p {
+  color: var(--danger);
+}
+.report-week-alert {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  color: var(--warning);
+  font-size: 11px;
+}
+.report-pending {
+  color: var(--text-3);
+  font-size: 13px;
+}

@@ -19,8 +19,8 @@ import pandas as pd
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from ..models import ZhihuPost
-from ._upsert import coalesce_update_set, require_columns
+from ..models import ZhihuPost, ZhihuPostSnapshot
+from ._upsert import coalesce_update_set, write_snapshots, require_columns
 
 _UPSERT_UPDATE_COLS = [
     "url", "reads", "plays", "likes", "favorites",
@@ -92,7 +92,7 @@ def parse_zhihu_csv(df: pd.DataFrame, content_type: str) -> list[dict]:
     return rows
 
 
-def upsert_zhihu_posts(rows: list[dict], session: Session) -> dict:
+def upsert_zhihu_posts(rows: list[dict], session: Session, *, captured_on=None, source_file_id=None) -> dict:
     """Upsert parsed rows into zhihu_posts.  Returns summary counts."""
     if not rows:
         return {"total": 0, "upserted": 0}
@@ -105,6 +105,8 @@ def upsert_zhihu_posts(rows: list[dict], session: Session) -> dict:
         set_=coalesce_update_set(insert, ZhihuPost, _UPSERT_UPDATE_COLS)
         | {"updated_at": text("NOW()")},
     )
-    session.execute(stmt)
+    returned = session.execute(stmt.returning(ZhihuPost.id, ZhihuPost.content_type, ZhihuPost.title, ZhihuPost.publish_date)).all()
+    snapshots = write_snapshots(session, ZhihuPostSnapshot, returned, rows, ("content_type", "title", "publish_date"),
+                                captured_on=captured_on, source_file_id=source_file_id)
     session.commit()
-    return {"total": len(rows), "upserted": len(rows)}
+    return {"total": len(rows), "upserted": len(rows), "snapshots": snapshots}

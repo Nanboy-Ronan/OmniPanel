@@ -4,7 +4,7 @@ No ORM serialization, raw payloads, credentials or customer records cross this b
 Account IDs select business accounts; they never select an authorization identity.
 """
 from datetime import date, timedelta
-from sqlalchemy import select, func
+from sqlalchemy import exists, or_, select, func
 from mcp.server.fastmcp.exceptions import ToolError
 from ...db.models import (MediaAccount, MediaPost, MediaPostMetricDaily, XhsAccount,
     XhsPost, XhsAccountDailyMetric, XhsAudienceSourceDaily, WxChannelsAccount,
@@ -34,14 +34,19 @@ async def account_ids(session, source, account_id=None):
             raise ToolError("知乎为平台单账号数据，请省略 account_id。")
         return None
     model = ACCOUNTS[source]
-    stmt = select(model.id).where(model.is_active.is_(True))
+    # Same scope as the dashboards and query_media_metrics: a deactivated account's
+    # history is still company data, so details and totals add up.
+    stmt = select(model.id)
     if source == "wechat":
         stmt = stmt.where(model.platform == "wechat_official")
+    if source == "pgy":
+        # 蒲公英 is enabled per XHS account; keep accounts that already have notes.
+        stmt = stmt.where(or_(model.pgy_enabled.is_(True), exists().where(PgyNote.account_id == model.id)))
     if account_id is not None:
         stmt = stmt.where(model.id == account_id)
     ids = list((await session.execute(stmt)).scalars())
     if account_id is not None and not ids:
-        raise ToolError("账号不存在或已停用，请先查询可用账号列表。")
+        raise ToolError("账号不存在，请先查询可用账号列表。")
     return ids
 
 
@@ -53,9 +58,10 @@ async def accounts(session, source):
             result.append({"source": src, "account_id": None, "name": "知乎（平台单账号）"})
         else:
             model = ACCOUNTS[src]
-            rows = (await session.execute(select(model.id, model.name).where(model.id.in_(ids)).order_by(model.id))).all()
-            result.extend({"source": src, "account_id": r.id, "name": r.name} for r in rows)
-    return {"data": result, "permission": "平台管理员/分析员 + analytics:media；可查询启用的公司媒体账号。采集负责人仅约束登录修复，不约束业务数据读取。"}
+            rows = (await session.execute(select(model.id, model.name, model.is_active)
+                                          .where(model.id.in_(ids)).order_by(model.id))).all()
+            result.extend({"source": src, "account_id": r.id, "name": r.name, "is_active": r.is_active} for r in rows)
+    return {"data": result, "permission": "平台管理员/分析员 + analytics:media；可查询公司媒体账号，含已停用账号的历史数据（is_active=false）。采集负责人仅约束登录修复，不约束业务数据读取。"}
 
 
 async def snapshots(session, post_ids, end):
@@ -128,11 +134,12 @@ async def sources(session, account_id, as_of, window):
 async def wechat_period(session, start, end, account_id, offset, limit):
     ids = await account_ids(session, "wechat", account_id)
     active = select(MediaPostMetricDaily.post_id).where(MediaPostMetricDaily.metric_date.between(start, end))
-    filters = [MediaPost.account_id.in_(ids), MediaPost.publish_date <= end,
+    # Articles without a publish date still count when they have snapshots in the period.
+    filters = [MediaPost.account_id.in_(ids), or_(MediaPost.publish_date <= end, MediaPost.publish_date.is_(None)),
                (MediaPost.id.in_(active) | (MediaPost.publish_date >= start))]
     total = (await session.execute(select(func.count()).select_from(MediaPost).where(*filters))).scalar_one()
     rows = [dict(r) for r in (await session.execute(select(MediaPost.id, MediaPost.account_id, MediaPost.title,
-            MediaPost.url, MediaPost.publish_date).where(*filters).order_by(MediaPost.publish_date.desc(), MediaPost.id)
+            MediaPost.url, MediaPost.publish_date).where(*filters).order_by(MediaPost.publish_date.desc().nulls_last(), MediaPost.id)
             .offset(offset).limit(limit))).mappings()]
     pids = [r["id"] for r in rows]
     baseline_day = start - timedelta(days=1)
@@ -140,7 +147,7 @@ async def wechat_period(session, start, end, account_id, offset, limit):
     ending = await snapshots(session, pids, end)
     for r in rows:
         b, e = baseline.get(r["id"]), ending.get(r["id"])
-        is_new = start <= r["publish_date"] <= end
+        is_new = r["publish_date"] is not None and start <= r["publish_date"] <= end
         exact = bool(e and e["metric_date"] == end and (is_new or (b and b["metric_date"] == baseline_day)))
         delta = {}
         for f in COUNTERS:

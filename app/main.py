@@ -33,6 +33,7 @@ configure_logging()
 
 from .db import Base, engine, sync_engine
 from . import db as db_module
+from .db import sql_console
 from .db.maintenance import recover_uploads
 import app.db.models  # noqa: F401 — register models with Base.metadata
 from .auth import fastapi_users, auth_backend, UserRead, UserCreate
@@ -59,7 +60,7 @@ from .views.saved_queries import router as saved_queries_router  # GET/POST/DELE
 from .views.data_freshness import router as data_freshness_router
 from .views.reports import router as reports_router, admin_router as reports_admin_router  # /reports/weekly, /admin/reports/weekly/run
 from .views.audit import router as audit_router  # /auth/logout, /audit/export
-from .views.workbuddy import router as workbuddy_router
+from .views.workbuddy import router as workbuddy_router, admin_router as workbuddy_admin_router
 from .views.workbuddy_oauth import router as workbuddy_oauth_router
 from .views.collector_repair import router as collector_repair_router
 
@@ -98,7 +99,10 @@ async def lifespan(app: FastAPI):
         while not try_become_leader():
             await asyncio.sleep(30)
         app.state.background_leader = True
-        tasks = [asyncio.create_task(supervise("upload_recovery", upload_recovery_loop))]
+        from .integrations.workbuddy.retention import retention_loop
+        tasks = [asyncio.create_task(supervise("upload_recovery", upload_recovery_loop)),
+                 # Expired OAuth/token/repair state; unauthenticated registration must not grow forever.
+                 asyncio.create_task(supervise("connector_retention", retention_loop))]
         if not settings.rap_disable_monthly_backup:
             tasks.append(asyncio.create_task(supervise("daily_backup", lambda: daily_backup_loop(settings))))
             tasks.append(asyncio.create_task(supervise("backup", lambda: monthly_backup_loop(settings))))
@@ -132,6 +136,7 @@ async def lifespan(app: FastAPI):
         leader_task.cancel()
         await asyncio.gather(leader_task, return_exceptions=True)
         release_leader()
+        await sql_console.dispose_engine()
         await engine.dispose()
         await asyncio.to_thread(sync_engine.dispose)
 
@@ -266,6 +271,7 @@ app.include_router(reports_router)        # /reports/weekly
 app.include_router(reports_admin_router)  # /admin/reports/weekly/run
 app.include_router(audit_router)          # /auth/logout, /audit/export
 app.include_router(workbuddy_router)
+app.include_router(workbuddy_admin_router)
 app.include_router(workbuddy_oauth_router)
 app.include_router(collector_repair_router)
 app.state.workbuddy_mcp = None

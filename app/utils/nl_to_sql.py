@@ -142,6 +142,11 @@ SCHEMA_DOC = """\
   id, title, publish_date(date), genre, impressions(曝光), views(观看量),
   likes(点赞), comments(评论), collects(收藏), new_followers(涨粉), shares(分享)
 
+表 xhs_post_snapshots（小红书笔记指标的每日快照，xhs_posts 只保留最新值）:
+  post_id(→ xhs_posts.id), captured_on(date, 采集日), 其余指标列同 xhs_posts。
+  指标是截至 captured_on 的累计值；某段时间的增长 = 两个采集日的差值。
+  同类快照表：zhihu_post_snapshots、wx_channels_post_snapshots、pgy_note_snapshots（post_id → pgy_notes.id）。
+
 只能查询 reporting 模式提供的脱敏业务视图。用户、密钥、客户标识和审计日志不可查询。
 
 口径要点:

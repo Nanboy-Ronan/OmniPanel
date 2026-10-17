@@ -25,6 +25,7 @@ from ...db.etl.channels import parse_channels_api_json, parse_channels_xlsx, ups
 from ...db.models import WxChannelsAccount, WxChannelsPost
 from ...utils.logger import log_operation
 from ...utils.spreadsheet import read_excel_safely
+from ...db.raw_archive import archived_upload
 from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/channels", tags=["channels"])
@@ -55,7 +56,7 @@ async def create_channels_account(
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
     await log_operation(str(_u.id), "channels_account_create", {"account_id": acc.id, "name": acc.name}, request=request)
-    return {"id": acc.id, "name": acc.name, "is_active": acc.is_active}
+    return {"id": acc.id, "name": acc.name, "is_active": acc.is_active, "portal_name": acc.portal_name}
 
 
 @router.get("/accounts")
@@ -66,12 +67,13 @@ async def list_channels_accounts(
     rows = (await session.execute(
         select(WxChannelsAccount).order_by(WxChannelsAccount.created_at)
     )).scalars().all()
-    return [{"id": a.id, "name": a.name, "is_active": a.is_active} for a in rows]
+    return [{"id": a.id, "name": a.name, "is_active": a.is_active, "portal_name": a.portal_name} for a in rows]
 
 
 class ChannelsAccountUpdate(BaseModel):
     name: str | None = None
     is_active: bool | None = None
+    portal_name: str | None = None
 
 
 @router.patch("/accounts/{account_id}")
@@ -90,14 +92,17 @@ async def update_channels_account(
         acc.name = body.name.strip()
     if body.is_active is not None:
         acc.is_active = body.is_active
+    if "portal_name" in body.model_fields_set:
+        # "" clears the override; the login re-check then matches the account name.
+        acc.portal_name = (body.portal_name or "").strip()[:200] or None
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
-    await log_operation(str(_u.id), "channels_account_update", {"account_id": acc.id, "changed": sorted(body.model_dump(exclude_none=True))}, request=request)
-    return {"id": acc.id, "name": acc.name, "is_active": acc.is_active}
+    await log_operation(str(_u.id), "channels_account_update", {"account_id": acc.id, "changed": sorted(body.model_fields_set)}, request=request)
+    return {"id": acc.id, "name": acc.name, "is_active": acc.is_active, "portal_name": acc.portal_name}
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -111,6 +116,10 @@ async def delete_channels_account(
     if acc is None:
         raise HTTPException(status_code=404, detail="Account not found")
     name = acc.name
+    # collector_owners has no FK (shared by two account tables); drop this account's owners.
+    from sqlalchemy import delete as sql_delete
+    from ...db.models import CollectorOwner
+    await session.execute(sql_delete(CollectorOwner).where(CollectorOwner.platform.in_(("channels",)), CollectorOwner.account_id == account_id))
     await session.delete(acc)
     await session.commit()
     await log_operation(str(_u.id), "channels_account_delete", {"account_id": account_id, "name": name}, request=request)
@@ -162,8 +171,10 @@ async def upload_channels(
                 rows = parse_channels_xlsx(df_raw, account_id)
             if not rows:
                 raise ValueError("文件中未解析到有效行，请确认格式正确（列名可能与预期不符，见 app/db/etl/channels.py）。")
-            with _db_mod.SyncSessionLocal() as sync_sess:
-                return upsert_channels_posts(rows, account_id, sync_sess)
+            with _db_mod.SyncSessionLocal() as sync_sess, archived_upload(
+                    sync_sess, path, source="wx_channels_posts", filename=filename,
+                    account_id=account_id, uploaded_by=str(_user.id)) as raw_file:
+                return upsert_channels_posts(rows, account_id, sync_sess, source_file_id=raw_file.id)
 
         result = await asyncio.to_thread(_process, tmp_path)
 
@@ -246,7 +257,7 @@ class ChannelsOverview(BaseModel):
     new_fans: int
     forwards_chat_moments: int
     engagement: int
-    avg_completion_rate: float
+    avg_completion_rate: float | None
     avg_plays_per_post: float
 
 

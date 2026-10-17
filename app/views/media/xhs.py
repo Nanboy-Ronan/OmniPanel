@@ -27,6 +27,7 @@ from ...db.models import XhsAccount, XhsPost
 from ...config import settings
 from ...utils.logger import log_operation
 from ...utils.spreadsheet import read_excel_safely
+from ...db.raw_archive import archived_upload, write_temp
 from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/xhs", tags=["xhs"])
@@ -37,6 +38,16 @@ _logger = logging.getLogger(__name__)
 # ── Account CRUD ──────────────────────────────────────────────────────────────
 
 _VALID_ACCOUNT_TYPES = {"company", "self_media"}
+
+
+def _account_json(a):
+    return {"id": a.id, "name": a.name, "account_type": a.account_type, "is_active": a.is_active,
+            "pgy_enabled": a.pgy_enabled, "portal_name": a.portal_name, "pgy_portal_name": a.pgy_portal_name}
+
+
+def _optional_name(value):
+    # "" clears the override; the login re-check then matches the account name.
+    return (value or "").strip()[:200] or None
 
 
 class XhsAccountCreate(BaseModel):
@@ -63,7 +74,7 @@ async def create_xhs_account(
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
     await log_operation(str(_u.id), "xhs_account_create", {"account_id": acc.id, "name": acc.name}, request=request)
-    return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active, "pgy_enabled": acc.pgy_enabled}
+    return _account_json(acc)
 
 
 @router.get("/accounts")
@@ -75,14 +86,15 @@ async def list_xhs_accounts(
         select(XhsAccount).order_by(XhsAccount.created_at)
     )).scalars().all()
     return [
-        {"id": a.id, "name": a.name, "account_type": a.account_type, "is_active": a.is_active, "pgy_enabled": a.pgy_enabled}
-        for a in rows
+        _account_json(a) for a in rows
     ]
 
 
 class XhsAccountUpdate(BaseModel):
     name: str | None = None
     pgy_enabled: bool | None = None
+    portal_name: str | None = None
+    pgy_portal_name: str | None = None
 
 
 @router.patch("/accounts/{account_id}")
@@ -101,14 +113,17 @@ async def update_xhs_account(
         acc.name = body.name.strip()
     if body.pgy_enabled is not None:
         acc.pgy_enabled = body.pgy_enabled
+    for field in ("portal_name", "pgy_portal_name"):
+        if field in body.model_fields_set:
+            setattr(acc, field, _optional_name(getattr(body, field)))
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail=f"Account '{body.name.strip()}' already exists")
     await session.refresh(acc)
-    await log_operation(str(_u.id), "xhs_account_update", {"account_id": acc.id, "changed": sorted(body.model_dump(exclude_none=True))}, request=request)
-    return {"id": acc.id, "name": acc.name, "account_type": acc.account_type, "is_active": acc.is_active, "pgy_enabled": acc.pgy_enabled}
+    await log_operation(str(_u.id), "xhs_account_update", {"account_id": acc.id, "changed": sorted(body.model_fields_set)}, request=request)
+    return _account_json(acc)
 
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -122,6 +137,10 @@ async def delete_xhs_account(
     if acc is None:
         raise HTTPException(status_code=404, detail="Account not found")
     name = acc.name
+    # collector_owners has no FK (shared by two account tables); drop this account's owners.
+    from sqlalchemy import delete as sql_delete
+    from ...db.models import CollectorOwner
+    await session.execute(sql_delete(CollectorOwner).where(CollectorOwner.platform.in_(("xhs", "pugongying")), CollectorOwner.account_id == account_id))
     await session.delete(acc)
     await session.commit()
     await log_operation(str(_u.id), "xhs_account_delete", {"account_id": account_id, "name": name}, request=request)
@@ -160,8 +179,10 @@ async def upload_xhs(
             rows = parse_xhs_xlsx(df_raw)
             if not rows:
                 raise ValueError("文件中未解析到有效行，请确认格式正确。")
-            with _db_mod.SyncSessionLocal() as sync_sess:
-                return upsert_xhs_posts(rows, account_id, sync_sess)
+            with _db_mod.SyncSessionLocal() as sync_sess, archived_upload(
+                    sync_sess, path, source="xhs_posts", filename=filename,
+                    account_id=account_id, uploaded_by=str(_user.id)) as raw_file:
+                return upsert_xhs_posts(rows, account_id, sync_sess, source_file_id=raw_file.id)
 
         result = await asyncio.to_thread(_process, tmp_path)
 
@@ -218,13 +239,20 @@ async def upload_xhs_overview(
         raise HTTPException(status_code=400, detail="文件中未解析到有效行，请确认格式正确。")
 
     def _process() -> dict:
-        with _db_mod.SyncSessionLocal() as sync_sess:
-            daily_written = upsert_xhs_daily_metrics(daily_rows, account_id, sync_sess)
-            source_written = upsert_xhs_audience_source(
-                source_rows, account_id, sync_sess, snapshot_date=snapshot_date,
-            )
-            return {"total": daily_written + source_written, "upserted": daily_written + source_written,
-                    "daily_upserted": daily_written, "audience_source_upserted": source_written}
+        tmp = write_temp(raw, ".json")
+        try:
+            with _db_mod.SyncSessionLocal() as sync_sess, archived_upload(
+                    sync_sess, tmp, source="xhs_overview", filename=file.filename or "overview.json",
+                    account_id=account_id, uploaded_by=str(_user.id)):
+                daily_written = upsert_xhs_daily_metrics(daily_rows, account_id, sync_sess)
+                source_written = upsert_xhs_audience_source(
+                    source_rows, account_id, sync_sess, snapshot_date=snapshot_date,
+                )
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        return {"total": daily_written + source_written, "upserted": daily_written + source_written,
+                "daily_upserted": daily_written, "audience_source_upserted": source_written}
 
     result = await asyncio.to_thread(_process)
 
@@ -245,7 +273,7 @@ class XhsOverview(BaseModel):
     views: int
     engagement: int
     new_followers: int
-    avg_cover_click_rate: float
+    avg_cover_click_rate: float | None
 
 
 @router.get("/overview", response_model=XhsOverview)

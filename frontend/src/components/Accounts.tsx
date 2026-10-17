@@ -73,6 +73,65 @@ export function AccountManager({
     </details>
   );
 }
+/**
+ * The name the creator portal shows after login, when the internal account name differs
+ * (for example it carries a note). WorkBuddy login repair matches it exactly; empty means
+ * the account name.
+ */
+function PortalNames({ row, path, xhs }: { row: Row; path: string; xhs: boolean }) {
+  const action = useAction({ success: '门户显示名已保存', error: '门户显示名保存失败' });
+  const [portal, setPortal] = useState(row.portal_name == null ? '' : text(row.portal_name));
+  const [pgy, setPgy] = useState(row.pgy_portal_name == null ? '' : text(row.pgy_portal_name));
+  const showPgy = xhs && row.pgy_enabled === true;
+  return (
+    <details className="portal-names">
+      <summary>
+        门户显示名
+        {row.portal_name ? `：${text(row.portal_name)}` : '（同账号名称）'}
+      </summary>
+      <p className="footnote">
+        登录修复复检时，平台要求门户页面上出现与此完全一致的名称。账号名称带备注或与门户不同时填写；留空表示与账号名称相同。
+      </p>
+      <label>
+        {xhs ? '小红书门户显示名' : '视频号门户显示名'}
+        <input
+          aria-label={`门户显示名 ${row.id}`}
+          value={portal}
+          maxLength={200}
+          placeholder={text(row.name)}
+          onChange={(e) => setPortal(e.target.value)}
+        />
+      </label>
+      {showPgy && (
+        <label>
+          蒲公英门户显示名
+          <input
+            aria-label={`蒲公英门户显示名 ${row.id}`}
+            value={pgy}
+            maxLength={200}
+            placeholder={portal || text(row.name)}
+            onChange={(e) => setPgy(e.target.value)}
+          />
+        </label>
+      )}
+      <button
+        disabled={action.isPending}
+        onClick={() =>
+          action.mutate({
+            path: `${path}/${row.id}`,
+            method: 'PATCH',
+            body: showPgy
+              ? { portal_name: portal.trim(), pgy_portal_name: pgy.trim() }
+              : { portal_name: portal.trim() },
+          })
+        }
+      >
+        保存门户显示名
+      </button>
+      {action.isError && <ErrorState error={action.error} />}
+    </details>
+  );
+}
 function AccountEditor({ row, path, xhs }: { row: Row; path: string; xhs: boolean }) {
   const action = useAction({ success: '账号已更新', error: '账号更新失败' });
   const [name, setName] = useState(text(row.name));
@@ -117,6 +176,7 @@ function AccountEditor({ row, path, xhs }: { row: Row; path: string; xhs: boolea
               启用蒲公英
             </label>
           )}
+          <PortalNames row={row} path={path} xhs={xhs} />
           <ConfirmAction
             title="删除账号"
             danger

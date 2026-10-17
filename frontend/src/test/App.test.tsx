@@ -35,6 +35,15 @@ function setup(overrides: Record<string, unknown> = {}, role = 'analyst') {
   return { fetch, payloads, client, ...view };
 }
 describe('working console', () => {
+  it('allows viewers to open the WorkBuddy repair guide without analyst API calls', async () => {
+    window.history.replaceState({}, '', '/console/?page=workbuddy#collector-login');
+    const { fetch } = setup({}, 'viewer');
+    await screen.findByRole('heading', { name: '收到巡检异常：如何更新采集登录' });
+    expect(fetch.mock.calls.some(([path]) => path.includes('/integrations/workbuddy/'))).toBe(
+      false,
+    );
+  });
+
   it('renders real metrics and changes the period without reloading data', async () => {
     const { fetch } = setup();
     await screen.findByText('30,960.00', { selector: '.metric-value' });

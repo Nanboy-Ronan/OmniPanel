@@ -54,7 +54,7 @@ function Page({ page, user }: { page: string; user: User }) {
     case 'tasks':
       return <TasksPage />;
     case 'orders':
-      return <OrdersPage />;
+      return <OrdersPage canExport={user.role !== 'viewer'} />;
     case 'upload':
       return <UploadPage />;
     case 'analysis':
@@ -72,7 +72,7 @@ function Page({ page, user }: { page: string; user: User }) {
     case 'reports':
       return <ReportsPage admin={admin} />;
     case 'workbuddy':
-      return <WorkBuddyPage />;
+      return <WorkBuddyPage role={user.role} />;
     case 'wechat':
     case 'traffic':
     case 'xhs':

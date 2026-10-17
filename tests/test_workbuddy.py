@@ -193,3 +193,102 @@ def test_audit_failure_does_not_return_data(client, tokens, monkeypatch):
     result = call(client, issue(client, tokens)["token"], "get_metric_definitions")
     assert result["isError"] and "structuredContent" not in result
     assert "private detail" not in json.dumps(result)
+
+
+def _analyst_id(client, tokens):
+    users = client.get("/admin/users", headers=jwt_headers(tokens, "admin")).json()
+    return next(u["id"] for u in users if u["email"] == "analyst@test.com")
+
+
+@pytest.mark.parametrize("change", ["active", "role"])
+def test_disable_or_downgrade_revokes_so_restoring_does_not_revive(client, tokens, change):
+    issued = issue(client, tokens)
+    admin, user_id = jwt_headers(tokens, "admin"), _analyst_id(client, tokens)
+    if change == "active":
+        assert client.put(f"/admin/users/{user_id}/active", json={"is_active": False}, headers=admin).status_code == 200
+        assert client.put(f"/admin/users/{user_id}/active", json={"is_active": True}, headers=admin).status_code == 200
+    else:
+        assert client.put(f"/admin/users/{user_id}/role", json={"role": "viewer"}, headers=admin).status_code == 200
+        assert client.put(f"/admin/users/{user_id}/role", json={"role": "analyst"}, headers=admin).status_code == 200
+    assert rpc(client, issued["token"], "tools/list").status_code == 401
+    listed = client.get(BASE + "/tokens", headers=jwt_headers(tokens)).json()
+    assert listed[0]["revoked_at"] is not None
+
+
+def test_admin_promotion_keeps_credentials(client, tokens):
+    issued = issue(client, tokens)
+    user_id = _analyst_id(client, tokens)
+    assert client.put(f"/admin/users/{user_id}/role", json={"role": "admin"}, headers=jwt_headers(tokens, "admin")).status_code == 200
+    assert rpc(client, issued["token"], "tools/list").status_code == 200
+
+
+def test_admin_lists_and_revokes_any_connection(client, tokens, pg_sync_url):
+    issued = issue(client, tokens)
+    path = "/admin/integrations/workbuddy/tokens"
+    assert client.get(path, headers=jwt_headers(tokens)).status_code == 403
+    listed = client.get(path, headers=jwt_headers(tokens, "admin")).json()
+    assert [(t["id"], t["user_email"], t["kind"]) for t in listed] == [(issued["id"], "analyst@test.com", "token")]
+    assert "token" not in listed[0] and "token_hash" not in listed[0]
+    assert client.delete(path + "/" + issued["id"], headers=jwt_headers(tokens)).status_code == 403
+    assert client.delete(path + "/" + issued["id"], headers=jwt_headers(tokens, "admin")).status_code == 204
+    assert rpc(client, issued["token"], "tools/list").status_code == 401
+    assert client.get(path, headers=jwt_headers(tokens, "admin")).json() == []
+    assert len(client.get(path + "?include_inactive=true", headers=jwt_headers(tokens, "admin")).json()) == 1
+    engine = create_engine(pg_sync_url)
+    with engine.connect() as connection:
+        detail = connection.execute(text("SELECT detail FROM operation_log WHERE action='workbuddy_token_admin_revoked'")).scalar_one()
+    engine.dispose()
+    assert '"target_user"' in detail and '"ip"' in detail
+
+
+def test_tool_calls_record_client_ip_and_are_throttled_per_credential(client, tokens, pg_sync_url, monkeypatch):
+    from app.integrations.workbuddy import server
+    from app.utils.rate_limiter import LoginRateLimiter
+    monkeypatch.setattr(server, "tool_rate_limiter", LoginRateLimiter(max_attempts=2))
+    issued, other = issue(client, tokens), issue(client, tokens)
+    for _ in range(2):
+        assert not call(client, issued["token"], "get_metric_definitions").get("isError")
+    limited = call(client, issued["token"], "get_metric_definitions")
+    assert limited.get("isError") and "过于频繁" in limited["content"][0]["text"]
+    assert not call(client, other["token"], "get_metric_definitions").get("isError")
+    engine = create_engine(pg_sync_url)
+    with engine.connect() as connection:
+        details = [json.loads(d) for d in connection.execute(text(
+            "SELECT detail FROM operation_log WHERE action='workbuddy_query' ORDER BY id")).scalars()]
+    engine.dispose()
+    assert all(d.get("ip") for d in details)
+    assert [d["outcome"] for d in details].count("rate_limited") == 1
+
+
+def test_retention_purges_only_expired_state(client, tokens, pg_sync_url):
+    from datetime import datetime, timedelta, timezone
+    from app import db
+    from app.integrations.workbuddy.retention import purge_once
+    keep, drop = issue(client, tokens), issue(client, tokens)
+    engine = create_engine(pg_sync_url)
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE integration_tokens SET revoked_at=now()-interval '31 days' WHERE id=:id"), {"id": drop["id"]})
+        connection.execute(text("INSERT INTO workbuddy_oauth_clients (id, redirect_uris, created_at) VALUES "
+                                "('stale', '[]', now()-interval '2 days'), ('fresh', '[]', now())"))
+    async def run():
+        async with db.AsyncSessionLocal() as session:
+            return await purge_once(session, datetime.now(timezone.utc))
+    counts = asyncio.run(run())
+    with engine.connect() as connection:
+        ids = set(connection.execute(text("SELECT id::text FROM integration_tokens")).scalars())
+        clients = set(connection.execute(text("SELECT id FROM workbuddy_oauth_clients")).scalars())
+    engine.dispose()
+    assert ids == {keep["id"]} and clients == {"fresh"}
+    assert counts["credentials"] == 1 and counts["clients"] == 1
+
+
+def test_stale_repair_candidates_are_removed(tmp_path):
+    from app.integrations.workbuddy.retention import purge_repair_candidates
+    old, new, real = tmp_path / ".repair-a.json", tmp_path / ".repair-b.json", tmp_path / "xhs_1.json"
+    for path in (old, new, real):
+        path.write_text("{}")
+    import os
+    os.utime(old, (0, 0))
+    os.utime(real, (0, 0))
+    assert purge_repair_candidates(tmp_path) == 1
+    assert not old.exists() and new.exists() and real.exists()

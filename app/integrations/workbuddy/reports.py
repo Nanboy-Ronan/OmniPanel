@@ -28,7 +28,12 @@ def make_client():
 
 
 async def cleanup_runtime(runtime_id: str) -> bool:
-    client = make_client()
+    try:
+        client = make_client()
+    except WorkBuddyError:
+        # Key removed after the runtime was created: keep cleanup pending, do not crash the worker.
+        logger.warning("WorkBuddy cleanup skipped runtime=%s: not configured", runtime_id)
+        return False
     try:
         async with asyncio.timeout(20):
             runtime = await client.runtimes.get(runtime_id)

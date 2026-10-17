@@ -803,7 +803,7 @@ def test_same_order_number_on_two_platforms_is_not_a_duplicate(sync_engine):
     有赞 order's number is a different order and must still be inserted."""
     from sqlalchemy.orm import Session
 
-    from app.db.etl.load import ingest, ingest_upload
+    from app.db.etl.load import ingest_upload
 
     youzan = pd.DataFrame([{
         "订单号": "SHARED-1", "买家付款时间": "2026-02-01 10:00:00",
@@ -826,15 +826,15 @@ def test_same_order_number_on_two_platforms_is_not_a_duplicate(sync_engine):
     with Session(sync_engine) as session:
         assert ingest_upload(tmall, session, filename="t.xlsx")["duplicate_rows"] == 1
 
-    # The legacy ingest() path dedups on (platform, order_id) as well.
-    legacy = pd.DataFrame([{
-        "订单号": "SHARED-1", "买家付款时间": "2026-02-02", "客户标识": "jd-customer",
-        "全部商品名称": "x", "商品种类数": "1", "订单实付金额": "10", "平台": "jd",
+    # JD uses the same production upload path and platform-scoped deduplication.
+    jd = pd.DataFrame([{
+        "订单号": "SHARED-1", "下单时间": "2026-02-02", "客户地址": "jd-customer",
+        "商品名称": "x", "订购数量": "1", "订单金额": "10", "京东价": "10",
     }], dtype=str)
     with Session(sync_engine) as session:
-        assert ingest(legacy, session) == 1
+        assert ingest_upload(jd, session, filename="jd.csv")["inserted_orders"] == 1
     with Session(sync_engine) as session:
-        assert ingest(legacy, session) == 0
+        assert ingest_upload(jd, session, filename="jd.csv")["duplicate_rows"] == 1
 
     assert _scalar(sync_engine, "SELECT count(*) FROM orders WHERE order_id = 'SHARED-1'") == 3
     assert _scalar(

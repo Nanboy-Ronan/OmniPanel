@@ -55,7 +55,7 @@
       "nullable": true
     },
     "quantity": {
-      "zh": "购买数量",
+      "zh": "商品数量（有赞为商品种类数，京东/天猫为订购数量）",
       "type": "integer",
       "example": "2",
       "youzan": "（从商品名称解析）",

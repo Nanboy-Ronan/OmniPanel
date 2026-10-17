@@ -42,6 +42,10 @@ def _summarize_for_prompt(context: dict[str, Any]) -> str:
             lines.append(f"本周新增关注 {tw['new_user']}，取消关注 {tw['cancel_user']}，净增 {tw['net']}")
         else:
             lines.append(f"关注数据获取失败：{follower.get('error')}")
+        totals = section["totals_this_week"]
+        lines.append(f"本周在看 {totals.get('zaikan_user', 0)}，关注者阅读人数 {totals.get('read_subscribe_user', 0)}（已关注用户的阅读，不是新增关注）")
+        if section.get("read_sources"):
+            lines.append("本周阅读来源：" + "、".join(f"{x['scene']} {x['share_pct']:.0f}%" for x in section["read_sources"][:4]))
         top_articles = section["articles"][:5]
         if top_articles:
             lines.append("本周阅读量最高的文章：" + "、".join(a["title"] for a in top_articles))
@@ -50,7 +54,25 @@ def _summarize_for_prompt(context: dict[str, Any]) -> str:
         account = section["account"]
         lines.append(f"\n【小红书】{account.name}")
         s = section["this_week_summary"]
-        lines.append(f"本周新发布 {s['count']} 篇，平均观看量 {s['avg_views']}，累计涨粉 {s['total_new_followers']}")
+        lines.append(f"本周新发布 {s['count']} 篇，平均观看量 {s['avg_views']}，新发笔记累计带粉 {s['total_new_followers']}")
+        am = section.get("account_metrics") or {}
+        tw = am.get("this_week") or {}
+        if am.get("available"):
+            totals = tw["totals"]
+            scope = "完整一周" if tw["complete"] else f"仅 {tw['days_present']}/{tw['days_expected']} 天，不完整"
+            lines.append(
+                f"账号数据概览（{scope}）：观看 {totals['view_count']}，主页访问 {totals['home_view_count']}，"
+                f"互动 {totals['interactions']}，新增关注 {totals['rise_fans_count']}，取消关注 {totals['loss_fans_count']}，"
+                f"净增关注 {totals['net_rise_fans_count']}"
+            )
+            if am.get("comparable"):
+                last = am["last_week"]["totals"]
+                lines.append(f"上周：观看 {last['view_count']}，净增关注 {last['net_rise_fans_count']}（两周均完整，可比较）")
+            else:
+                lines.append("上周或本周数据概览不完整，不要比较涨跌。")
+        if section.get("audience_sources"):
+            top = "、".join(f"{x['title']} {x['value_pct']:.0f}%" for x in section["audience_sources"][:3])
+            lines.append(f"观看来源（{section['audience_snapshot_date']} 采集的近7天窗口）：{top}")
 
     for section in context.get("channels_sections", []):
         account = section["account"]
@@ -61,6 +83,12 @@ def _summarize_for_prompt(context: dict[str, Any]) -> str:
             f"本周新发布 {s['count']} 条视频（上周 {ls['count']} 条），截至目前累计播放 {s['total_plays']}，新增粉丝 {s['total_new_fans']}。"
             "注意：上周内容的累计播放多积累了约 7 天，不可与本周累计数直接比较涨跌。"
         )
+        extra = f"点赞 {s['total_likes']}，转发聊天/朋友圈 {s['total_forwards']}"
+        if s.get("total_wecom_link_clicks") is not None:
+            extra += f"，企微链接点击 {s['total_wecom_link_clicks']}"
+        if s.get("total_added_to_contacts") is not None:
+            extra += f"，添加联系人 {s['total_added_to_contacts']}"
+        lines.append(extra)
 
     zhihu = context.get("zhihu_section")
     if zhihu:
@@ -71,12 +99,19 @@ def _summarize_for_prompt(context: dict[str, Any]) -> str:
             f"本周新发布 {s['count']} 篇（上周 {ls['count']} 篇），截至目前累计阅读 {s['total_reads']}。"
             "注意：上周内容的累计阅读多积累了约 7 天，不可与本周累计数直接比较涨跌。"
         )
+        lines.append("其中 " + "，".join(f"{t['label']} {t['count']} 篇阅读 {t['reads']}" for t in s["by_type"].values()))
 
     for section in context.get("pgy_sections", []):
         if section["this_week_summary"]["count"] > 0:
             lines.append(f"\n【蒲公英】{section['account'].name}")
             s = section["this_week_summary"]
-            lines.append(f"本周 {s['count']} 篇笔记，总曝光 {s['total_impressions']}，总互动 {s['total_interactions']}")
+            lines.append(f"本周 {s['count']} 篇笔记，截至导出累计曝光 {s['total_impressions']}，阅读 {s['total_reads']}，互动 {s['total_interactions']}，关注 {s['total_follows']}")
+            if s.get("total_spend") is not None:
+                cpe = f"，互动成本 ¥{s['cpe']:.2f}" if s.get("cpe") is not None else ""
+                lines.append(f"合作花费 ¥{s['total_spend']:,.0f}（达人报价+服务费，{s['missing_cost']} 篇缺费用）{cpe}")
+            if s.get("organic_impressions") is not None or s.get("paid_impressions") is not None:
+                lines.append(f"曝光构成：自然 {s.get('organic_impressions')}，付费 {s.get('paid_impressions')}，加热 {s.get('boosted_impressions')}")
+            lines.append("注意：蒲公英为当周发布笔记截至导出时的累计数，与上周笔记不可直接比较涨跌。")
 
     ecom = context.get("ecommerce_section")
     if ecom:
@@ -88,6 +123,13 @@ def _summarize_for_prompt(context: dict[str, Any]) -> str:
         elif tw["order_count"] > 0 or lw["order_count"] > 0:
             lines.append("\n【商城】")
             lines.append(f"本周总 GMV ¥{tw['gmv']:,.0f}（上周 ¥{lw['gmv']:,.0f}），订单 {tw['order_count']} 笔（上周 {lw['order_count']}）")
+            if tw.get("customers") is not None:
+                lines.append(f"下单客户 {tw['customers']} 人（上周 {lw.get('customers')}），客单价 ¥{tw.get('aov') or 0:,.0f}（上周 ¥{lw.get('aov') or 0:,.0f}）")
+            for p in ecom.get("platforms", []):
+                lines.append(f"{p['platform']}：GMV ¥{p['this_week']['gmv']:,.0f}（上周 ¥{p['last_week']['gmv']:,.0f}），订单 {p['this_week']['order_count']}")
+            st = ecom.get("status") or {}
+            if st:
+                lines.append(f"未计入 GMV 的关闭/未付款/删除订单 {st['excluded_orders']} 单，已扣退款 ¥{st['refunds']:,.0f}，状态未知 {st['unknown_orders']} 单")
             lines.append("口径：GMV 与订单数不含已关闭、已取消、未付款和京东已删除订单，有赞订单已扣除退款；上周数字按同一口径计算。")
 
     return "\n".join(lines)

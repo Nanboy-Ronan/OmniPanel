@@ -36,29 +36,45 @@ export default function CollectorOwners() {
       setBusy(false);
     }
   }
+  const active = users.data?.filter((u) => u.is_active) ?? [];
+  const byId = new Map(users.data?.map((u) => [u.id, u]) ?? []);
   return (
     <Panel title="采集账号负责人">
-      <p>负责人可在 WorkBuddy 发起本地登录修复；管理员始终可以操作。未分配的账号仅管理员可修复。</p>
-      {targets.data?.map((t) => (
-        <label key={`${t.platform}:${t.account_id}`} style={{ display: 'block', marginBottom: 12 }}>
-          {t.label}
-          <select
-            aria-label={`${t.label}负责人`}
-            disabled={busy || !users.data}
-            value={t.owner_id ?? ''}
-            onChange={(e) => void save(t.platform, t.account_id, e.target.value)}
-          >
-            <option value="">仅管理员</option>
-            {users.data
-              ?.filter((u) => u.is_active)
-              .map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.email}
-                </option>
-              ))}
-          </select>
-        </label>
-      ))}
+      <p className="owner-intro">
+        负责人可在 WorkBuddy 发起本地登录修复；管理员始终可以操作。未分配的账号仅管理员可修复。
+      </p>
+      <div className="owner-list">
+        {targets.data?.map((t) => {
+          const owner = t.owner_id ? byId.get(t.owner_id) : undefined;
+          const inactive = owner !== undefined && !owner.is_active;
+          return (
+            <label key={`${t.platform}:${t.account_id}`} className="owner-row">
+              <span>
+                {t.label}
+                {inactive && <small className="owner-warning">负责人已停用，请重新指定</small>}
+              </span>
+              <select
+                aria-label={`${t.label}负责人`}
+                disabled={busy || !users.data}
+                value={t.owner_id ?? ''}
+                onChange={(e) => void save(t.platform, t.account_id, e.target.value)}
+              >
+                <option value="">仅管理员</option>
+                {inactive && (
+                  <option value={owner.id} disabled>
+                    {owner.email}（已停用）
+                  </option>
+                )}
+                {active.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.email}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
+      </div>
       {(error || targets.error || users.error) && (
         <ErrorState error={error || targets.error || users.error!} />
       )}

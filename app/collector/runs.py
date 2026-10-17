@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from sqlalchemy import func
 
+# Runs that only check a login session (scheduled precheck, employee login repair);
+# they never bring in data, so freshness and "last collect" must skip them.
+LOGIN_CHECK_TRIGGERS = ("verify", "repair")
+
 
 def start_run(
     platform: str,

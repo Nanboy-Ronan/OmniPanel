@@ -176,7 +176,14 @@ def test_delivery_acknowledgement_and_explicit_recipient(monkeypatch, outcome, b
 
 
 @pytest.fixture
-def queue(async_session_factory, config, monkeypatch):
+def alerts(monkeypatch):
+    sent = []
+    monkeypatch.setattr(jobs, "send_wecom_alert", lambda message: sent.append(message) or True)
+    return sent
+
+
+@pytest.fixture
+def queue(async_session_factory, config, monkeypatch, alerts):
     monkeypatch.setattr(db, "AsyncSessionLocal", async_session_factory)
     async def seed():
         async with async_session_factory() as session:
@@ -350,3 +357,168 @@ def test_cloud_creation_network_failure_is_not_retried(config):
                 await provider.generate(SNAPSHOT, "agent-test", "1.0", AsyncMock(), AsyncMock(), client_factory=factory)
     asyncio.run(run())
     assert len(requests) == 1
+
+
+def test_generation_failure_and_missing_narrative_alert(queue, monkeypatch, alerts):
+    async def agent(snapshot, agent_id, version, on_runtime, on_cleanup):
+        raise provider.WorkBuddyError("invalid_output")
+    monkeypatch.setattr(provider, "generate", agent)
+    async def run():
+        report_id = await enqueue_test(queue)
+        assert await jobs.process_one()
+        async with queue() as session:
+            report = await session.get(WeeklyReportRun, report_id)
+            db_now = (await session.execute(text("SELECT LOCALTIMESTAMP"))).scalar_one()
+            # Same clock as the legacy upsert and the column default.
+            assert abs((db_now - report.generated_at).total_seconds()) < 120
+    asyncio.run(run())
+    assert len(alerts) == 1 and "智能解读未生成" in alerts[0] and "invalid_output" in alerts[0]
+
+
+def test_preparation_failure_alerts(queue, monkeypatch, alerts):
+    async def broken(*a, **k):
+        raise RuntimeError("data source down")
+    monkeypatch.setattr(jobs, "build_report_context", broken)
+    async def run():
+        report_id = await enqueue_test(queue)
+        assert await jobs.process_one()
+        async with queue() as session:
+            assert (await session.get(WorkBuddyReportJob, report_id)).state == "failed"
+    asyncio.run(run())
+    assert len(alerts) == 1 and "生成失败" in alerts[0]
+
+
+@pytest.mark.parametrize("outcome,word", [("failed", "推送失败"), ("unknown", "未确认")])
+def test_delivery_problems_alert_once(queue, monkeypatch, alerts, outcome, word):
+    monkeypatch.setattr(jobs, "send_report", lambda *a: outcome)
+    async def run():
+        report_id = await enqueue_test(queue)
+        async with queue() as session:
+            (await session.get(WorkBuddyReportJob, report_id)).state = "ready"
+            report = await session.get(WeeklyReportRun, report_id)
+            report.status, report.notification_text = "success", "saved message"
+            await session.commit()
+        await jobs.process_one()
+        await enqueue_test(queue)
+        await jobs.process_one()
+    asyncio.run(run())
+    assert len(alerts) == 1 and word in alerts[0]
+
+
+def test_interrupted_send_alerts_and_bad_archive_does_not_block_recovery(queue, alerts):
+    async def run():
+        first = await enqueue_test(queue)
+        async with queue() as session:
+            second = await jobs.enqueue(session, date(2026, 9, 22))
+            for report_id, state in ((first, "generating"), (second.id, "sending")):
+                job = await session.get(WorkBuddyReportJob, report_id)
+                job.state, job.lease_token, job.lease_until = state, uuid.uuid4(), jobs.now() - timedelta(minutes=1)
+                report = await session.get(WeeklyReportRun, report_id)
+                report.html_content, report.notification_text = "<html>no slot</html>", "摘要"
+            await session.commit()
+        await jobs.recover_expired()
+        async with queue() as session:
+            assert (await session.get(WorkBuddyReportJob, first)).state == "ready"
+            assert (await session.get(WorkBuddyReportJob, second.id)).state == "delivery_unknown"
+    asyncio.run(run())
+    assert len(alerts) == 1 and "未确认" in alerts[0]
+
+
+def test_repeated_preparation_crashes_stop_requeueing(queue, alerts):
+    async def run():
+        report_id = await enqueue_test(queue)
+        for _ in range(jobs.MAX_PREPARE_ATTEMPTS):
+            claim = await jobs._claim()
+            assert claim and claim[2] == "preparing"
+            async with queue() as session:
+                (await session.get(WorkBuddyReportJob, report_id)).lease_until = jobs.now() - timedelta(minutes=1)
+                await session.commit()
+            await jobs.recover_expired()
+        async with queue() as session:
+            job = await session.get(WorkBuddyReportJob, report_id)
+            assert job.state == "failed" and job.prepare_attempts == jobs.MAX_PREPARE_ATTEMPTS
+        # An explicit retry resets the budget, including for an older week.
+        async with queue() as session:
+            await jobs.regenerate(session, report_id)
+            await session.commit()
+            job = await session.get(WorkBuddyReportJob, report_id)
+            assert job.state == "queued" and job.prepare_attempts == 0
+    asyncio.run(run())
+    assert len(alerts) == 1 and "多次中断" in alerts[0]
+
+
+def test_legacy_report_left_unsent_is_delivered_after_switch(queue, monkeypatch):
+    sends = []
+    monkeypatch.setattr(jobs, "send_report", lambda message, recipients: sends.append(message) or "sent")
+    async def run():
+        bounds = week_bounds(date(2026, 9, 15))
+        async with queue() as session:
+            session.add(WeeklyReportRun(week_start=bounds.this_week_start, week_end=bounds.this_week_end,
+                                        status="success", html_content="<html>legacy</html>",
+                                        notification_text="旧版周报摘要", wecom_sent=False))
+            await session.commit()
+        report_id = await enqueue_test(queue)
+        async with queue() as session:
+            job = await session.get(WorkBuddyReportJob, report_id)
+            assert job.state == "ready" and job.narrative_status == "legacy"
+        assert await jobs.process_one()
+        async with queue() as session:
+            report = await session.get(WeeklyReportRun, report_id)
+            assert report.wecom_sent and report.html_content == "<html>legacy</html>"
+        # Already delivered legacy reports are still never touched.
+        assert await enqueue_test(queue) == report_id
+        assert not await jobs.process_one()
+    asyncio.run(run())
+    assert sends == ["旧版周报摘要"]
+
+
+def test_override_outside_platform_is_rejected_by_name(queue, monkeypatch):
+    monkeypatch.setenv("WECOM_ALERT_TOUSER", "alice|boss_only_in_wecom")
+    async def run():
+        async with queue() as session:
+            with pytest.raises(ValueError, match="boss_only_in_wecom"):
+                await jobs.enqueue(session, date(2026, 9, 15))
+            assert (await session.execute(select(WorkBuddyReportJob))).first() is None
+    asyncio.run(run())
+
+
+def test_cleanup_backs_off_failing_runtime_and_survives_missing_key(queue, monkeypatch):
+    calls = []
+    async def cleanup(runtime_id):
+        calls.append(runtime_id)
+        return runtime_id != "bad"
+    monkeypatch.setattr(provider, "cleanup_runtime", cleanup)
+    jobs._cleanup_backoff.clear()
+    async def run():
+        first = await enqueue_test(queue)
+        async with queue() as session:
+            second = (await jobs.enqueue(session, date(2026, 9, 22))).id
+            for report_id, runtime in ((first, "bad"), (second, "good")):
+                job = await session.get(WorkBuddyReportJob, report_id)
+                job.state, job.runtime_id, job.cleanup_pending = "sent", runtime, True
+            await session.commit()
+        clock = iter([0, 1, 2])
+        assert await jobs.cleanup_one(lambda: next(clock))
+        assert await jobs.cleanup_one(lambda: next(clock))  # "bad" is backing off; "good" is reached.
+        assert not await jobs.cleanup_one(lambda: next(clock))
+        async with queue() as session:
+            assert not (await session.get(WorkBuddyReportJob, second)).cleanup_pending
+            assert (await session.get(WorkBuddyReportJob, first)).cleanup_pending
+    asyncio.run(run())
+    assert calls == ["bad", "good"]
+    jobs._cleanup_backoff.clear()
+
+
+def test_cleanup_without_key_keeps_pending_instead_of_crashing(config, monkeypatch):
+    monkeypatch.setattr(settings, "workbuddy_api_key", None)
+    assert asyncio.run(provider.cleanup_runtime("runtime-1")) is False
+
+
+def test_snapshot_marks_media_incomplete_until_collected_after_week():
+    account = NS(id=3)
+    context = {"bounds": week_bounds(date(2026, 9, 15)),
+               "xhs_sections": [{"account": account, "this_week_summary": {"views": 10}}]}
+    stale = build_snapshot(context, 1, {"xhs": {"last_collect_at": "2026-09-13T10:00:00"}})
+    fresh = build_snapshot(context, 1, {"xhs": {"last_collect_at": "2026-09-15T00:30:00"}})
+    assert stale["metrics"][0]["complete"] is False and any("小红书" in w for w in stale["warnings"])
+    assert fresh["metrics"][0]["complete"] is True

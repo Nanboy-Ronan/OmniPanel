@@ -25,8 +25,12 @@ click-download-upload sequence a human already does.
 ## Architecture
 
 - `app/collector/` — a standalone package. Uses [Playwright](https://playwright.dev/python/)
-  (sync API). **Nothing outside `app/collector/` imports Playwright** — the
-  FastAPI backend and React UI never load a browser.
+  (sync API). **Nothing outside `app/collector/` imports Playwright.** One
+  exception to "the backend never launches a browser": the WorkBuddy login
+  repair (`app/views/collector_repair.py` → `app.collector.repair.verify_candidate`)
+  re-checks an uploaded login headless inside the backend process before
+  installing it, so the backend needs `PLAYWRIGHT_BROWSERS_PATH` like the
+  collector. See [workbuddy-integration.md](workbuddy-integration.md).
 - Runs as a separate process (`python -m app.collector collect`), independent
   of the web app process — trigger it however fits your deployment (cron,
   systemd timer, a scheduled CI job, manually).
@@ -287,7 +291,34 @@ python -m app.collector verify-session --platform xhs --account-id 3
 # meant to run on its own, earlier schedule than `collect` so a dead session
 # is caught with lead time to fix before the next collect window:
 python -m app.collector verify-all
+
+# Run queued single-account collects (after a login repair or an admin's 「立即采集」);
+# schedule it every couple of minutes with the same environment as `collect`:
+python -m app.collector run-requests
 ```
+
+### run-requests: on-demand single-account collects
+
+The backend never collects by itself. It only inserts a `collector_requests` row
+when a WorkBuddy login repair succeeds (`reason=repair`) or an admin clicks
+「立即采集」 on the 自动采集 page (`reason=admin`). `run-requests` drains that queue
+one target at a time through the normal collect path.
+
+At most one open (queued/running) request exists per target. Requests older than
+6 h, or for a platform whose `COLLECTOR_*_ENABLED` is off, are marked `skipped`;
+a request stuck `running` for 1 h (killed process) becomes `failed`. Runs are
+recorded with `triggered_by=request` and count as real collects for freshness.
+A queue nobody drains shows as 「有排队超过 15 分钟的立即采集请求」 in the admin
+section of the WorkBuddy page.
+
+### Portal display name
+
+The login repair re-check requires the exact account name to appear on the
+portal page. When the platform shows a different name (a note such as
+「（主号）」, or a brand name on 蒲公英), set 「门户显示名」 in the 小红书/视频号
+account editor; 蒲公英 has its own field and falls back to the 小红书 one. Empty
+means the account name. Changing it during a running re-check ends that repair
+as `revoked`.
 
 ## Selector maintenance (things will break)
 

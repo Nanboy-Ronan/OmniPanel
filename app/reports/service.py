@@ -51,7 +51,21 @@ def _summary_lines(context: dict) -> list[str]:
         lines.append(line)
     for section in context.get("xhs_sections", []):
         s = section["this_week_summary"]
-        lines.append(f"【{section['account'].name}】新发布 {s['count']} 篇，累计涨粉 {s['total_new_followers']}")
+        am = section.get("account_metrics") or {}
+        tw = am.get("this_week") or {}
+        if am.get("available") and tw.get("complete"):
+            totals = tw["totals"]
+            if am.get("comparable"):
+                last = am["last_week"]["totals"]
+                views = f"观看 {totals['view_count']}（{_wow_arrow(totals['view_count'] - last['view_count'])}）"
+                fans = f"净增关注 {totals['net_rise_fans_count']}（{_wow_arrow(totals['net_rise_fans_count'] - last['net_rise_fans_count'])}）"
+            else:
+                views, fans = f"观看 {totals['view_count']}", f"净增关注 {totals['net_rise_fans_count']}"
+            lines.append(f"【{section['account'].name}】{views}，{fans}，新发布 {s['count']} 篇")
+        elif am.get("available"):
+            lines.append(f"【{section['account'].name}】新发布 {s['count']} 篇；数据概览仅 {tw['days_present']}/{tw['days_expected']} 天，观看与粉丝暂不汇总")
+        else:
+            lines.append(f"【{section['account'].name}】新发布 {s['count']} 篇，新发笔记累计带粉 {s['total_new_followers']}")
     for section in context.get("channels_sections", []):
         s = section["this_week_summary"]
         # Cumulative totals of different post cohorts — no ▲/▼ (see
@@ -67,7 +81,8 @@ def _summary_lines(context: dict) -> list[str]:
     for section in context.get("pgy_sections", []):
         s = section["this_week_summary"]
         if s["count"] > 0:
-            lines.append(f"【蒲公英·{section['account'].name}】曝光 {s['total_impressions']}，互动 {s['total_interactions']}，笔记 {s['count']} 篇")
+            spend = f"，花费 ¥{s['total_spend']:,.0f}" if s.get("total_spend") is not None else ""
+            lines.append(f"【蒲公英·{section['account'].name}】笔记 {s['count']} 篇，累计曝光 {s['total_impressions']}，互动 {s['total_interactions']}{spend}")
     ecom = context.get("ecommerce_section")
     if ecom:
         tw = ecom["this_week_total"]
@@ -78,14 +93,17 @@ def _summary_lines(context: dict) -> list[str]:
             # would read as a sales drop that is really missing data.
             lines.append(f"【商城】{ecom['incomplete_note']}，本周 GMV 暂不统计")
         elif tw["order_count"] > 0 or lw["order_count"] > 0:
-            lines.append(f"【商城】本周 GMV ¥{tw['gmv']:,.0f}（{_wow_arrow(int(diff))}），订单 {tw['order_count']} 笔（不含关闭/未付款/已删除，已扣退款）")
+            aov = f"，客单价 ¥{tw['aov']:,.0f}" if tw.get("aov") is not None else ""
+            customers = f"，客户 {tw['customers']} 人" if tw.get("customers") is not None else ""
+            lines.append(f"【商城】本周 GMV ¥{tw['gmv']:,.0f}（{_wow_arrow(int(diff))}），订单 {tw['order_count']} 笔{customers}{aov}（不含关闭/未付款/已删除，已扣退款）")
     return lines
 
 
-async def generate_weekly_report(session: AsyncSession, reference_date: date | None = None) -> WeeklyReportRun:
+async def generate_weekly_report(session: AsyncSession, reference_date: date | None = None, *,
+                                 trigger: str = "schedule") -> WeeklyReportRun:
     if settings.report_provider == "workbuddy":
         from .workbuddy_jobs import enqueue
-        return await enqueue(session, reference_date)
+        return await enqueue(session, reference_date, trigger=trigger)
     reference_date = reference_date or date.today()
     bounds = week_bounds(reference_date)
     # Serialize generation for the same week across manual and scheduled runs.

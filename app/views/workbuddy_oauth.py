@@ -25,9 +25,12 @@ from ..db.models import (IntegrationToken, OperationLog, User, WorkBuddyOAuthCli
                          WorkBuddyOAuthRequest as Authorization, WorkBuddyOAuthGrant as Grant,
                          WorkBuddyOAuthRefresh as Refresh)
 from ..integrations.workbuddy.auth import SCOPES, token_hash
+from ..utils.logger import request_context
 from ..utils.rate_limiter import get_client_ip, LoginRateLimiter
 
 oauth_rate_limiter = LoginRateLimiter(max_attempts=60)
+# Token exchange/refresh is keyed per client: WorkBuddy's servers share one egress IP.
+token_rate_limiter = LoginRateLimiter(max_attempts=30)
 
 router = APIRouter(tags=["workbuddy-oauth"])
 PREFIX = "/integrations/workbuddy/oauth"
@@ -59,11 +62,27 @@ def enabled():
         raise HTTPException(503, "WorkBuddy 接入尚未启用")
 
 
-async def throttle(request, kind):
+async def throttle(request, kind, key=None, limiter=None):
     # Count all public registrations/authorization starts, not only failures.
-    key = get_client_ip(request)
-    await oauth_rate_limiter.check(key, "workbuddy_oauth_" + kind)
-    await oauth_rate_limiter.record_failure(key, "workbuddy_oauth_" + kind)
+    key = key or get_client_ip(request)
+    limiter = limiter or oauth_rate_limiter
+    await limiter.check(key, "workbuddy_oauth_" + kind)
+    await limiter.record_failure(key, "workbuddy_oauth_" + kind)
+
+
+def audit(session, request, user_id, action, **detail):
+    """Same shape as utils.logger.log_operation (IP/UA included), inside the caller's transaction."""
+    session.add(OperationLog(user_id=user_id, action=action,
+                             detail=json.dumps({**detail, **request_context(request)}, ensure_ascii=False, default=str)))
+
+
+def callback_kind(uri):
+    """What an employee can recognise on the consent page; never the raw query."""
+    if uri.startswith("https://www.workbuddy.cn/"):
+        return "WorkBuddy 网页版"
+    if uri.startswith("workbuddy://"):
+        return "WorkBuddy 桌面客户端"
+    return "本机 WorkBuddy（127.0.0.1 回调）"
 
 
 def valid_redirect(value):
@@ -148,6 +167,7 @@ async def register(request: Request, session: AsyncSession = Depends(get_session
         return error("invalid_client_metadata")
     client_id = secrets.token_urlsafe(24)
     session.add(Client(id=client_id, redirect_uris=uris))
+    audit(session, request, None, "workbuddy_oauth_registered", client=sorted({callback_kind(u) for u in uris}))
     await session.commit()
     return JSONResponse({"client_id": client_id, "client_id_issued_at": int(now().timestamp()),
                          "redirect_uris": uris, "token_endpoint_auth_method": "none",
@@ -193,7 +213,11 @@ async def pending(session, request_id, lock=False):
 async def consent_details(request_id: str, user=Depends(current_active_user), session: AsyncSession = Depends(get_session)):
     enabled()
     row = await pending(session, request_id)
-    return JSONResponse({"scopes": row.scopes, "can_authorize": user.role in {"analyst", "admin"}}, headers=NO_STORE)
+    # Enough for an employee to recognise a connection they started themselves.
+    return JSONResponse({"scopes": row.scopes, "can_authorize": user.role in {"analyst", "admin"},
+                         "client": callback_kind(row.redirect_uri),
+                         "requested_at": row.created_at.isoformat() if row.created_at else None,
+                         "expires_at": row.expires_at.isoformat()}, headers=NO_STORE)
 
 
 class Decision(BaseModel):
@@ -201,7 +225,7 @@ class Decision(BaseModel):
 
 
 @router.post(PREFIX + "/requests/{request_id}")
-async def consent(request_id: str, body: Decision, user=Depends(current_active_user), session: AsyncSession = Depends(get_session)):
+async def consent(request_id: str, body: Decision, request: Request, user=Depends(current_active_user), session: AsyncSession = Depends(get_session)):
     enabled()
     row = await pending(session, request_id, lock=True)
     if body.approve and user.role not in {"analyst", "admin"}:
@@ -214,7 +238,8 @@ async def consent(request_id: str, body: Decision, user=Depends(current_active_u
         result["code"] = code
     else:
         result["error"] = "access_denied"
-    session.add(OperationLog(user_id=user.id, action="workbuddy_oauth_consent", detail=json.dumps({"approved": body.approve, "scopes": row.scopes})))
+    audit(session, request, user.id, "workbuddy_oauth_consent", approved=body.approve, scopes=row.scopes,
+          client=callback_kind(row.redirect_uri))
     await session.commit()
     return JSONResponse({"redirect_url": row.redirect_uri + "?" + urlencode(result)}, headers=NO_STORE)
 
@@ -235,12 +260,23 @@ async def token(request: Request, session: AsyncSession = Depends(get_session)):
     p = await payload(request, form=True)
     if not p or p.get("resource", resource()) != resource():
         return error()
+    await throttle(request, "token", key=str(p.get("client_id", ""))[:64] or get_client_ip(request), limiter=token_rate_limiter)
     if p.get("grant_type") == "authorization_code":
         row = (await session.execute(select(Authorization).where(
             Authorization.code_hash == token_hash(p.get("code", ""))).with_for_update())).scalar_one_or_none()
+        if row is not None and row.consumed_at is not None:
+            # A replayed code means it leaked: revoke what it minted (RFC 6749 §4.1.2).
+            if row.issued_token_id:
+                credential = await session.get(IntegrationToken, row.issued_token_id, with_for_update=True)
+                if credential is not None and credential.revoked_at is None:
+                    credential.revoked_at = now()
+                    audit(session, request, credential.user_id, "workbuddy_oauth_replay_revoked",
+                          token_id=str(credential.id), kind="authorization_code")
+                    await session.commit()
+            return error("invalid_grant")
         verifier = p.get("code_verifier", "")
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
-        if (row is None or row.consumed_at or row.expires_at <= now() or row.client_id != p.get("client_id")
+        if (row is None or row.expires_at <= now() or row.client_id != p.get("client_id")
                 or row.redirect_uri != p.get("redirect_uri") or not re.fullmatch(r"[A-Za-z0-9._~-]{43,128}", verifier)
                 or not hmac.compare_digest(row.challenge, challenge)):
             return error("invalid_grant")
@@ -253,10 +289,12 @@ async def token(request: Request, session: AsyncSession = Depends(get_session)):
                                       expires_at=now() + timedelta(hours=1))
         session.add(credential)
         await session.flush()
+        row.issued_token_id = credential.id
         grant = Grant(token_id=credential.id, client_id=row.client_id, expires_at=now() + timedelta(days=90))
         session.add(grant)
         await session.flush()
-        session.add(OperationLog(user_id=user.id, action="workbuddy_oauth_connected", detail=json.dumps({"token_id": str(credential.id)})))
+        audit(session, request, user.id, "workbuddy_oauth_connected", token_id=str(credential.id),
+              client=callback_kind(row.redirect_uri))
         return await issue(session, credential, grant)
     if p.get("grant_type") == "refresh_token":
         refresh = await session.get(Refresh, token_hash(p.get("refresh_token", "")))
@@ -269,7 +307,11 @@ async def token(request: Request, session: AsyncSession = Depends(get_session)):
         if grant.client_id != p.get("client_id"):
             return error("invalid_grant")
         if refresh.used_at is not None:
-            credential.revoked_at = now()
+            # Reuse of a rotated refresh token is a leak signal; record it, not only revoke.
+            if credential.revoked_at is None:
+                credential.revoked_at = now()
+                audit(session, request, credential.user_id, "workbuddy_oauth_replay_revoked",
+                      token_id=str(credential.id), kind="refresh_token")
             await session.commit()
             return error("invalid_grant", "授权已失效，请重新连接。")
         user = await session.get(User, credential.user_id)
@@ -285,6 +327,8 @@ async def token(request: Request, session: AsyncSession = Depends(get_session)):
 
 @router.post(PREFIX + "/revoke")
 async def revoke(request: Request, session: AsyncSession = Depends(get_session)):
+    enabled()
+    await throttle(request, "revoke")
     p = await payload(request, form=True)
     if not p:
         return error()
@@ -295,6 +339,8 @@ async def revoke(request: Request, session: AsyncSession = Depends(get_session))
     row = (await session.execute(query.with_for_update(of=Grant))).first()
     if row:
         credential = await session.get(IntegrationToken, row[0].id, with_for_update=True)
-        credential.revoked_at = now()
+        if credential.revoked_at is None:
+            credential.revoked_at = now()
+            audit(session, request, credential.user_id, "workbuddy_oauth_revoked", token_id=str(credential.id))
         await session.commit()
     return JSONResponse({}, headers=NO_STORE)

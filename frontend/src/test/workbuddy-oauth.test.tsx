@@ -9,7 +9,12 @@ function mount(allowed: boolean) {
   const fetch = vi.fn(async (_path: string, options?: RequestInit) =>
     options?.method === 'POST'
       ? response({ detail: 'expired' }, 400)
-      : response({ scopes: ['metadata:read', 'analytics:media'], can_authorize: allowed }),
+      : response({
+          scopes: ['metadata:read', 'analytics:media'],
+          can_authorize: allowed,
+          client: 'WorkBuddy 桌面客户端',
+          requested_at: '2026-10-14T02:00:00Z',
+        }),
   );
   vi.stubGlobal('fetch', fetch);
   render(
@@ -32,6 +37,7 @@ it('requires an explicit click before authorizing and displays requested data sc
   const fetch = mount(true);
   const approve = await screen.findByRole('button', { name: '授权并连接 WorkBuddy' });
   expect(await screen.findByText('公司媒体账号、内容明细、逐日指标与来源分析')).toBeInTheDocument();
+  expect(screen.getByText('请求来自 WorkBuddy 桌面客户端')).toBeInTheDocument();
   expect(fetch.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
   fireEvent.click(approve);
   await waitFor(() =>

@@ -30,8 +30,13 @@ async def validate_recipients(session, recipients: list[str]) -> None:
         User.wecom_userid.in_(recipients), User.is_active.is_(True), User.role.in_(["analyst", "admin"]),
     ))).scalars().all())
     current = set(await configured_recipients(session))
-    if not recipients or set(recipients) != allowed or not set(recipients) <= current:
-        raise ValueError("周报收件人必须全部是已绑定企微、已激活的分析员或管理员。")
+    # WECOM_ALERT_TOUSER may only narrow the audience; it never reaches people outside the platform.
+    invalid = sorted(set(recipients) - allowed)
+    if invalid:
+        raise ValueError("以下企微账号不是已激活且绑定企微的分析员/管理员，周报不会发送给平台外人员："
+                         + "、".join(invalid[:10]) + "。请在用户管理中开通，或从 WECOM_ALERT_TOUSER 中移除。")
+    if not recipients or not set(recipients) <= current:
+        raise ValueError("周报收件人已不在当前通知设置中，请在用户管理中检查企微通知勾选。")
 
 
 def send_report(message: str, recipients: list[str]) -> str:

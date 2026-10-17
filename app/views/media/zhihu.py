@@ -20,6 +20,7 @@ from ...db.etl.zhihu import parse_zhihu_csv, upsert_zhihu_posts, VALID_CONTENT_T
 from ...db.models import ZhihuPost
 from ...utils.logger import log_operation
 from ...utils.spreadsheet import read_excel_safely
+from ...db.raw_archive import archived_upload
 from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/zhihu", tags=["zhihu"])
@@ -67,8 +68,10 @@ async def upload_zhihu(
             rows = parse_zhihu_csv(df, content_type)
             if not rows:
                 raise ValueError("文件中未解析到有效行，请确认格式正确。")
-            with _db_mod.SyncSessionLocal() as sync_sess:
-                return upsert_zhihu_posts(rows, sync_sess)
+            with _db_mod.SyncSessionLocal() as sync_sess, archived_upload(
+                    sync_sess, path, source="zhihu_posts", filename=filename,
+                    account_id=None, uploaded_by=str(_user.id)) as raw_file:
+                return upsert_zhihu_posts(rows, sync_sess, source_file_id=raw_file.id)
 
         result = await asyncio.to_thread(_process, tmp_path)
 

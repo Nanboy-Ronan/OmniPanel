@@ -63,3 +63,21 @@ def test_uncertain_delivery_requires_acknowledgement_and_records_admin_action(cl
         async with db.AsyncSessionLocal() as session:
             assert (await session.execute(select(OperationLog).where(OperationLog.action == "workbuddy_delivery_action"))).scalar_one()
     asyncio.run(audit())
+
+
+def test_failed_job_of_any_week_can_be_regenerated(client, tokens, monkeypatch):
+    report_id, headers = setup_job(client, tokens, monkeypatch)
+    path = f"/admin/reports/weekly/{report_id}/delivery"
+    assert client.post(path, json={"action": "regenerate"}, headers=headers).status_code == 409
+    async def fail():
+        async with db.AsyncSessionLocal() as session:
+            job = await session.get(WorkBuddyReportJob, report_id)
+            job.state, job.prepare_attempts = "failed", 3
+            await session.commit()
+    asyncio.run(fail())
+    result = client.post(path, json={"action": "regenerate"}, headers=headers)
+    assert result.status_code == 200, result.text
+    assert result.json()["job_state"] == "queued" and result.json()["worker_enabled"] is True
+    monkeypatch.setattr(settings, "report_provider", "legacy")
+    listed = client.get("/reports/weekly", headers=headers).json()
+    assert listed[0]["worker_enabled"] is False

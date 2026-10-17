@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import ReportsPage from '../pages/ReportsPage';
 import { response } from './fixtures';
 
-function mount(state: string, admin = true) {
+function mount(state: string, admin = true, workerEnabled = true) {
   const row = {
     id: 1,
     week_start: '2026-09-07',
@@ -12,6 +12,7 @@ function mount(state: string, admin = true) {
     status: 'queued',
     wecom_sent: false,
     job_state: state,
+    worker_enabled: workerEnabled,
     narrative_status: 'pending',
     html_content: null,
     narrative: null,
@@ -62,6 +63,34 @@ it('asks the admin to acknowledge an uncertain send before retrying', async () =
 
 it('does not expose delivery mutations to non-admin readers', async () => {
   mount('delivery_unknown', false);
-  await screen.findByText('推送结果待确认');
+  await screen.findByText('推送结果待确认', { selector: '[role=status]' });
   expect(screen.queryByRole('button', { name: '重试推送' })).not.toBeInTheDocument();
+});
+
+it('offers regeneration for a failed job of any week', async () => {
+  const { fetch } = mount('failed');
+  fireEvent.click(await screen.findByRole('button', { name: '重新生成' }));
+  fireEvent.click(screen.getByRole('button', { name: '确认重新生成' }));
+  await waitFor(() =>
+    expect(
+      fetch.mock.calls.some(
+        ([url, options]) =>
+          url.endsWith('/1/delivery') && JSON.parse(String(options?.body)).action === 'regenerate',
+      ),
+    ).toBe(true),
+  );
+  expect(screen.getAllByText('生成失败').length).toBeGreaterThan(0);
+});
+
+it('does not poll queued work when no WorkBuddy worker is running', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const { fetch } = mount('queued', true, false);
+    await screen.findByText(/当前未启用 WorkBuddy 周报 worker/);
+    const before = fetch.mock.calls.filter(([url]) => url.includes('?limit=')).length;
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(fetch.mock.calls.filter(([url]) => url.includes('?limit=')).length).toBe(before);
+  } finally {
+    vi.useRealTimers();
+  }
 });

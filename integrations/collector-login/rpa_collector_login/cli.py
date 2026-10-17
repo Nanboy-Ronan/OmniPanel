@@ -22,6 +22,12 @@ def validate_origin(value):
         raise ValueError("Configure your deployment origin before pairing")
     return value
 
+
+try:
+    from . import __version__
+except ImportError:  # Loaded as a standalone file (tests).
+    __version__ = "dev"
+
 PORTALS = {
     "xhs": "https://pro.xiaohongshu.com/login",
     "pugongying": "https://pgy.xiaohongshu.com/",
@@ -56,13 +62,20 @@ def restricted_state(context, platform):
             "origins": [o for o in state["origins"] if allowed(urlsplit(o["origin"]).hostname or "")]}
 
 
+def verification_url(pair):
+    """The server's link, but never a destination outside the trusted deployment console."""
+    url = pair.get("verification_url") or ""
+    return url if url.startswith(BASE + "/console/") else BASE + "/console/?repair=" + pair["id"]
+
+
 def repair():
     validate_origin(BASE)
     pair = api("/pair", {})
-    url = BASE + "/console/?repair=" + pair["id"]
-    # Only public pairing id is printed; secret and cookies never leave memory
-    # except in HTTPS requests to the fixed company origin.
-    print("请在公司平台选择账号并确认本次修复：\n" + url, flush=True)
+    url = verification_url(pair)
+    # Only the public pairing id and the confirmation code are printed; secret and
+    # cookies never leave memory except in HTTPS requests to the trusted deployment origin.
+    print("请在公司平台选择账号，输入校验码并确认本次修复：\n" + url, flush=True)
+    print("校验码：" + pair["user_code"] + "。请在上面的公司页面输入此校验码后确认；别人发给你的修复链接不要确认。", flush=True)
     webbrowser.open(url)
     deadline = time.monotonic() + 14 * 60
     path = "/local/" + pair["id"]
@@ -98,8 +111,8 @@ def repair():
                 raise RuntimeError("登录超时，请重新发起。")
             result = api(path, restricted_state(context, platform), secret=pair["secret"])
             messages = {"success": "登录态已更新并通过复检，后续自动采集会使用新登录态。",
-                "collector_busy": "采集器正在运行，原登录态未替换，请稍后重新发起。",
-                "verification_failed": "无法确认登录有效或账号名称一致，原登录态未替换。请确认账号后重新发起。"}
+                "collector_busy": "该账号的采集一直在运行，原登录态未替换，请稍后重新发起。",
+                "verification_failed": "无法确认登录有效或账号名称一致，原登录态未替换。请确认账号后重新发起；多次失败请联系管理员查看服务日志。"}
             print(json.dumps({"status": result["status"], "message": messages.get(result["status"], "请重新发起修复")}, ensure_ascii=False), flush=True)
             return 0 if result["status"] == "success" else 1
         finally:
@@ -112,14 +125,16 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "version":
-            print("1.0.0")
+            print(__version__)
             return 0
         if args.command == "status":
             print(json.dumps({"ready": True, "credential_storage": "none", "authorization": "required_per_repair"}))
             return 0
         return repair()
     except urllib.error.HTTPError as exc:
-        messages = {401: "请求无效，请重新发起。", 403: "你已不再是该账号负责人，请联系管理员。", 409: "请求已使用，请重新发起。", 410: "请求已过期，请重新发起。", 422: "登录凭证不正确，原登录态未替换。"}
+        messages = {401: "请求无效，请重新发起。", 403: "你已不再是该账号负责人，或账号已停用/改名，原登录态未替换，请联系管理员。",
+                    409: "请求已使用，请重新发起。", 410: "请求已过期，请重新发起。", 422: "登录凭证不正确，原登录态未替换。",
+                    429: "请求过于频繁，请稍后重新发起。"}
         print(messages.get(exc.code, "平台暂时无法完成修复，请稍后重试。"), file=sys.stderr)
         return 1
     except (Exception, KeyboardInterrupt):

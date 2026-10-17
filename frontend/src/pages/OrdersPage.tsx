@@ -36,7 +36,7 @@ const fields = [
   'customer_key',
 ];
 type Filter = { field: string; value?: string; min?: string; max?: string };
-export default function OrdersPage() {
+export default function OrdersPage({ canExport = true }: { canExport?: boolean }) {
   const search = useLocationSearch();
   const params = new URLSearchParams(search);
   const offset = Math.max(0, Number(params.get('offset')) || 0);
@@ -81,29 +81,31 @@ export default function OrdersPage() {
         title="订单明细"
         description="服务端搜索、字段筛选和分页，查看原始平台记录。"
         action={
-          <button
-            disabled={exporting}
-            onClick={async () => {
-              setExporting(true);
-              setError(null);
-              try {
-                await download(
-                  endpoint('/orders_all/export', {
-                    search: q,
-                    platform,
-                    column_filters: params.get('columns'),
-                  }),
-                  '订单明细.csv',
-                );
-              } catch (e) {
-                setError(e as Error);
-              } finally {
-                setExporting(false);
-              }
-            }}
-          >
-            {exporting ? '正在导出…' : '导出全部筛选结果'}
-          </button>
+          canExport && (
+            <button
+              disabled={exporting}
+              onClick={async () => {
+                setExporting(true);
+                setError(null);
+                try {
+                  await download(
+                    endpoint('/orders_all/export', {
+                      search: q,
+                      platform,
+                      column_filters: params.get('columns'),
+                    }),
+                    '订单明细.csv',
+                  );
+                } catch (e) {
+                  setError(e as Error);
+                } finally {
+                  setExporting(false);
+                }
+              }}
+            >
+              {exporting ? '正在导出…' : '导出全部筛选结果'}
+            </button>
+          )
         }
       />
       <form

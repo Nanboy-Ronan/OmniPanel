@@ -697,6 +697,59 @@ class TestRunVerify:
         assert rc == 1
         assert _fake_bookkeeping["finished"][0]["status"] == "error"
         assert "巡检本身出错" in alerts[0]
+        assert "添加企业技能" not in alerts[0]
+
+
+@pytest.mark.parametrize("mode", ["collect", "verify"])
+@pytest.mark.parametrize("problem", ["missing", "expired", "wrong_account"])
+def test_login_alerts_include_workbuddy_steps(mode, problem, sessions, _fake_bookkeeping, alerts):
+    settings = _FakeSettings(collector_zhihu_enabled=False)
+    settings.public_base_url = "https://example.test/"
+    api = _FakeAPI(xhs_accounts=[{"id": 1, "is_active": True, "name": "阳光小铺"}])
+    if problem != "missing":
+        _touch(sessions / "xhs_1.json")
+
+    def check(*args, **kwargs):
+        if problem == "wrong_account":
+            raise WrongAccountError("wrong account")
+        if mode == "collect":
+            raise SessionExpiredError("expired")
+        return False
+
+    if mode == "collect":
+        code = runner.run_collect(settings=settings, api_client=api, collect_fns={"xhs": check})
+    else:
+        code = runner.run_verify(settings=settings, api_client=api, verify_fns={"xhs": check})
+    assert code == 1
+    message = alerts[0]
+    assert "添加企业技能「采集登录修复」" in message
+    assert "帮我修复「小红书·阳光小铺」的采集登录" in message
+    assert "确认已登录目标账号，更新凭证" in message
+    assert "https://example.test/console/?page=workbuddy#collector-login" in message
+    assert "等待定时采集" in message
+    assert "bootstrap-login" not in message
+
+
+@pytest.mark.parametrize("platform", ["zhihu", "jd"])
+def test_unsupported_platform_guidance_routes_to_admin(platform):
+    target = runner.Target(platform=platform, session_file=Path("unused.json"))
+    hint = runner._login_repair_hint(target)
+    guide = runner._login_repair_guide([target], _FakeSettings())
+    assert "请联系管理员" in hint
+    assert "暂不支持 WorkBuddy 自助修复" in guide
+    assert "添加企业技能" not in guide
+
+
+def test_long_alert_keeps_repair_steps_and_help_link_before_truncated_details():
+    from app.utils.wecom_bot import truncate_utf8
+
+    target = runner.Target(platform="xhs", session_file=Path("unused.json"), account_id=1)
+    guide = runner._login_repair_guide([target], _FakeSettings())
+    message = truncate_utf8("[采集巡检]\n" + guide + ("账号登录异常\n" * 300))
+    assert len(message.encode("utf-8")) <= 2048
+    assert "确认已登录目标账号，更新凭证" in message
+    assert "?page=workbuddy#collector-login" in message
+    assert "内容过长已截断" in message
 
 
 class TestTargetLabel:

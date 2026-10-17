@@ -114,7 +114,8 @@ describe('complete workbench data contracts', () => {
       expect(allowed('admin', route.role)).toBe(true);
     }
     expect(allowed('viewer', resolveRoute('SQL 控制台')!.role)).toBe(false);
-    expect(allowed('viewer', resolveRoute('workbuddy')!.role)).toBe(false);
+    // Viewers can read repair guidance; analyst-only queries remain gated in the page and API.
+    expect(allowed('viewer', resolveRoute('workbuddy')!.role)).toBe(true);
     expect(allowed('analyst', resolveRoute('workbuddy')!.role)).toBe(true);
     expect(allowed('analyst', resolveRoute('自动采集')!.role)).toBe(false);
     expect(allowed('viewer', resolveRoute('数据浏览')!.role)).toBe(true);

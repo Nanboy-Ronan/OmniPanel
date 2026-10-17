@@ -1,5 +1,6 @@
 """Stateless Streamable HTTP using the official MCP SDK, with read-only tools."""
 import asyncio
+import contextvars
 import logging
 import uuid
 import time
@@ -7,6 +8,7 @@ from datetime import date, datetime, timezone
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
+from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from mcp.server.auth.middleware.auth_context import AuthContextMiddleware, get_access_token
 from mcp.server.auth.middleware.bearer_auth import BearerAuthBackend, RequireAuthMiddleware
@@ -25,10 +27,16 @@ from . import data as detail_data
 from ...services.data_freshness import get_data_freshness as freshness
 from ...services.ecommerce_metrics import commerce_metrics
 from ...services.media_metrics import wechat_metrics, xhs_metrics, channels_metrics
-from ...utils.logger import log_operation
+from ...utils.logger import log_operation, request_context
+from ...utils.rate_limiter import LoginRateLimiter
 from .auth import PlatformTokenVerifier
 
 logger = logging.getLogger(__name__)
+# Client IP/UA of the current MCP HTTP request, for the audit row (tools get no Request).
+_client = contextvars.ContextVar("workbuddy_client", default={})
+# Per credential, burst budget: the window restarts on every call, so this caps calls made
+# without any 60 s pause. Generous for a report agent paginating; stops a runaway loop.
+tool_rate_limiter = LoginRateLimiter(max_attempts=300)
 DEFINITIONS = {
     "commerce": "订单数与GMV排除关闭、取消、未付款、已删除订单；GMV扣除已记录退款。未知状态仍计入，并返回未知状态订单数。客户按平台既有customer_key去重，跨平台不代表自然人去重。",
     "wechat": "日期筛选快照日期；每篇文章取区间内最后一份累计快照，再按文章汇总。不是区间新增阅读，文章间阅读人数也不是跨文章去重人数。周增量请查看已生成周报。",
@@ -56,6 +64,12 @@ async def _execute(name, required_scope, parameters, operation):
     started = time.monotonic()
     row_count = None
     try:
+        try:
+            await tool_rate_limiter.check(token.client_id, "workbuddy_tool")
+        except HTTPException:
+            outcome = "rate_limited"
+            raise ToolError("查询过于频繁，请稍后再试。") from None
+        await tool_rate_limiter.record_failure(token.client_id, "workbuddy_tool")
         if required_scope not in token.scopes:
             outcome = "denied"
             raise ToolError("当前连接未授权此数据类别，请在平台重新授权所需权限。")
@@ -83,7 +97,7 @@ async def _execute(name, required_scope, parameters, operation):
                 "request_id": request_id, "token_id": token.client_id,
                 "tool": name, "parameters": parameters, "outcome": outcome,
                 "required_scope": required_scope, "duration_ms": round((time.monotonic()-started)*1000),
-                "returned_rows": row_count,
+                "returned_rows": row_count, **_client.get(),
             })
         except Exception:
             logger.exception("WorkBuddy audit failed request_id=%s", request_id)
@@ -163,7 +177,7 @@ def create_mcp_server():
 
     @mcp.tool(annotations=READ_ONLY)
     async def list_media_accounts(source: Literal["wechat", "xhs", "channels", "zhihu", "pgy"] | None = None) -> dict[str, Any]:
-        """写周报先调用：列出启用的公司媒体账号及ID，不含凭据。按账号分别查询，避免把品牌账号混合。"""
+        """写周报先调用：列出公司媒体账号及ID（is_active=false 为已停用账号，仅有历史数据），不含凭据。按账号分别查询，避免把品牌账号混合。"""
         async def operation(session):
             return {**await detail_data.accounts(session, source), "source_url": _link("workbuddy")}
         return await _execute("list_media_accounts", "analytics:media", {"source": source}, operation)
@@ -235,7 +249,18 @@ def create_mcp_server():
                     "source_url": _link("reports") + f"&report={run.id}"}
         return await _execute("get_weekly_report", "reports:read", {"week_start": str(week_start) if week_start else None, "full_content": full_content, "offset": offset}, operation)
 
-    transport = mcp.streamable_http_app()
+    streamable = mcp.streamable_http_app()
+
+    async def transport(scope, receive, send):
+        if scope["type"] == "http":
+            from starlette.requests import Request
+            reset = _client.set(request_context(Request(scope)))
+            try:
+                await streamable(scope, receive, send)
+            finally:
+                _client.reset(reset)
+        else:
+            await streamable(scope, receive, send)
     # Advertise OAuth discovery while continuing to accept existing PATs.
     protected = AuthenticationMiddleware(
         AuthContextMiddleware(RequireAuthMiddleware(transport, [], resource_metadata_url=

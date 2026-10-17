@@ -258,6 +258,7 @@ const LOG_CATEGORIES = [
   ['auth', '登录与账号'],
   ['failed', '登录失败'],
   ['access', '数据访问与导出'],
+  ['integration', 'WorkBuddy 与采集修复'],
   ['data', '数据变更'],
   ['admin', '权限管理'],
 ] as const;
@@ -275,6 +276,18 @@ const ACTION_LABELS: Record<string, string> = {
   view_order_raw: '查看订单原始记录',
   sql_query: 'SQL 查询',
   nl_sql_query: '中文问数',
+  workbuddy_query: 'WorkBuddy 问数',
+  workbuddy_token_created: '创建 WorkBuddy 访问令牌',
+  workbuddy_token_revoked: '吊销 WorkBuddy 访问令牌',
+  workbuddy_token_admin_revoked: '管理员吊销 WorkBuddy 连接',
+  workbuddy_oauth_registered: 'WorkBuddy 客户端注册',
+  workbuddy_oauth_consent: 'WorkBuddy 授权确认',
+  workbuddy_oauth_connected: 'WorkBuddy 连接成功',
+  workbuddy_oauth_revoked: 'WorkBuddy 断开连接',
+  workbuddy_oauth_replay_revoked: 'WorkBuddy 凭证重放，已自动吊销',
+  collector_owner_update: '设置采集账号负责人',
+  collector_repair_approve: '授权采集登录修复',
+  collector_repair_finish: '采集登录修复结果',
   upload: '上传订单',
   xhs_upload: '导入小红书数据',
   xhs_upload_overview: '导入小红书概览',
@@ -284,6 +297,10 @@ const ACTION_LABELS: Record<string, string> = {
   wechat_sync: '同步公众号',
   clear_db: '清空商城数据',
   weekly_report_run: '手动生成周报',
+  workbuddy_delivery_action: '处理周报投递',
+  workbuddy_report_queued: '周报任务入队',
+  workbuddy_report_generated: '周报生成完成',
+  workbuddy_report_delivery: '周报推送结果',
   media_account_create: '新增公众号账号',
   xhs_account_create: '新增小红书账号',
   xhs_account_update: '修改小红书账号',
@@ -293,6 +310,7 @@ const ACTION_LABELS: Record<string, string> = {
   channels_account_delete: '删除视频号账号',
   collector_session_upload: '更新采集登录态',
   collector_session_delete: '删除采集登录态',
+  collector_request: '立即采集',
   saved_query_create: '保存筛选视图',
   saved_query_delete: '删除筛选视图',
   create_user: '创建账号',
@@ -332,6 +350,16 @@ const DETAIL_LABELS: Record<string, string> = {
   week_start: '周报周期',
   status: '状态',
   rows: '行数',
+  tool: '工具',
+  outcome: '结果',
+  returned_rows: '返回行数',
+  report_id: '周报编号',
+  event: '事件',
+  trigger: '触发方式',
+  action: '操作',
+  approved: '同意',
+  revoked_workbuddy_credentials: '吊销 WorkBuddy 凭证数',
+  client: '客户端',
 };
 const LOG_PAGE = 50;
 function summarize(action: string, detail: unknown): string {
@@ -342,6 +370,10 @@ function summarize(action: string, detail: unknown): string {
     return `${FAILURE_REASONS[d.reason] ?? d.reason}${who ? ` · ${who}` : ''}`;
   }
   if (action === 'export_client') return `${d.source ?? ''} · ${d.rows ?? 0} 行`;
+  if (action === 'workbuddy_query')
+    return [d.tool, d.outcome, d.returned_rows != null ? `${d.returned_rows} 行` : null]
+      .filter(Boolean)
+      .join(' · ');
   if (action === 'sql_query' || action === 'nl_sql_query')
     return String(d.question ?? d.sql ?? '').slice(0, 120);
   return Object.entries(d)
@@ -607,6 +639,21 @@ export function CollectorPage() {
                   <span>
                     验证：{text(row.last_verify_status)} · 采集：{text(row.last_run_status)}
                   </span>
+                  <ConfirmAction
+                    title="立即采集"
+                    description="排队采集该账号一次（由采集定时任务在几分钟内执行），结果会出现在下方采集记录中。"
+                    busy={action.isPending}
+                    onConfirm={() =>
+                      action.mutate({
+                        path: '/admin/collector/requests',
+                        body: {
+                          platform: text(row.platform),
+                          account_id: (row.account_id as number | null) ?? null,
+                        },
+                        success: '已排队，几分钟内开始采集',
+                      })
+                    }
+                  />
                   <ConfirmAction
                     title="删除登录态"
                     danger

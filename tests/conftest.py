@@ -286,3 +286,11 @@ def upload_and_poll(client, auth_headers, file_bytes, filename="data.csv"):
     batch = r2.json()
     batch.setdefault("inserted_rows", batch.get("inserted_orders", 0))
     return batch
+
+
+@pytest.fixture(autouse=True)
+def _raw_archive_dir(tmp_path, monkeypatch):
+    """Archive imported files under the test's tmp dir, never the checkout."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "raw_archive_dir", str(tmp_path / "raw-archive"))

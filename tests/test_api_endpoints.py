@@ -89,12 +89,12 @@ def sample_data(client):
     from sqlalchemy import create_engine as _sync_engine
     from sqlalchemy.orm import sessionmaker as _sync_sessionmaker
 
-    df_raw, _platform = etl.normalize_dataframe(synthetic_youzan_df())
+    df_raw = synthetic_youzan_df()
     sync_url = db.DATABASE_URL.replace("postgresql+asyncpg", "postgresql+psycopg2")
     engine = _sync_engine(sync_url)
     Session = _sync_sessionmaker(bind=engine)
     with Session() as sess:
-        etl.ingest(df_raw, sess)
+        etl.ingest_upload(df_raw, sess, filename="test-upload.csv")
     engine.dispose()
 
 
@@ -669,6 +669,8 @@ def test_orders_search_and_export_cover_all_matches(client, tokens, sample_data)
     assert int(page.headers["X-Total-Count"]) == len(expected)
     assert page.json() == expected[:2]
 
+    viewer_export = client.get("/orders_all/export", headers=_auth(tokens["viewer"]))
+    assert viewer_export.status_code == 403
     exported = client.get("/orders_all/export", params={"platform": platform}, headers=headers)
     assert exported.status_code == 200
     assert exported.content.startswith(b"\xef\xbb\xbf")

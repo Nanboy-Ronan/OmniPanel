@@ -172,18 +172,6 @@ def _existing_order_ids(session: Session, platform: str, order_ids: set[str]) ->
     )
 
 
-def _existing_platform_order_ids(session: Session, order_ids: set[str]) -> set[tuple[str, str]]:
-    """(platform, order_id) pairs already stored, for mixed-platform input."""
-    if not order_ids:
-        return set()
-    return {
-        (row.platform, row.order_id)
-        for row in session.execute(
-            select(Order.platform, Order.order_id).where(Order.order_id.in_(order_ids))
-        ).all()
-    }
-
-
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def ingest_upload(
@@ -343,88 +331,3 @@ def ingest_upload(
         "updated_orders": updated_orders,
         "invalid_rows": invalid_rows,
     }
-
-
-def ingest(df: pd.DataFrame, session: Session) -> int:
-    """Ingest a normalized DataFrame of order rows into the database.
-
-    Uses bulk pre-fetching to avoid N+1 queries.  Only one ``commit()`` is
-    issued at the end.  Skips rows with missing customer_key or order_date.
-    """
-    from .normalize import (  # local import avoids circular at module load
-        COL_ORDER_ID, COL_DATE, COL_CUSTOMER_KEY, COL_SKU, COL_QTY,
-        COL_PRICE, COL_PLATFORM, COL_RECEIVER, COL_PHONE,
-        COL_PROVINCE, COL_AREA, COL_ADDRESS, COL_NICK, COL_COUPON, COL_DISTRIB,
-        _str_or_none, _int_or_none, _float_or_none, _date_or_none,
-    )
-
-    df = df.copy()
-    if COL_CUSTOMER_KEY not in df.columns:
-        df, _platform = normalize_dataframe(df)
-    df = _normalise(df)
-
-    parsed: list[dict] = []
-    for _, row in df.iterrows():
-        order_id     = _str_or_none(row.get(COL_ORDER_ID))
-        order_date   = _date_or_none(row.get(COL_DATE))
-        customer_key = _str_or_none(row.get(COL_CUSTOMER_KEY))
-        if customer_key is None or order_date is None:
-            continue
-        parsed.append(dict(
-            order_id=order_id,
-            order_date=order_date,
-            customer_key=customer_key,
-            sku=_str_or_none(row.get(COL_SKU)),
-            quantity=_int_or_none(row.get(COL_QTY)),
-            price=_float_or_none(row.get(COL_PRICE)),
-            platform=_str_or_none(row.get(COL_PLATFORM)) or "youzan",
-            receiver=_str_or_none(row.get(COL_RECEIVER)),
-            receiver_phone=_str_or_none(row.get(COL_PHONE)),
-            province=_str_or_none(row.get(COL_PROVINCE)),
-            area=_str_or_none(row.get(COL_AREA)),
-            full_address=_str_or_none(row.get(COL_ADDRESS)),
-            buyer_nick=_str_or_none(row.get(COL_NICK)),
-            coupon_name=_str_or_none(row.get(COL_COUPON)),
-            distributor=_str_or_none(row.get(COL_DISTRIB)),
-        ))
-
-    if not parsed:
-        return 0
-
-    if session.bind is not None and session.bind.dialect.name == "postgresql":
-        session.execute(text("SELECT pg_advisory_xact_lock(77881101)"))
-
-    _ensure_customers_for_orders(parsed, session)
-
-    incoming_order_ids = {r["order_id"] for r in parsed if r["order_id"]}
-    existing_keys = _existing_platform_order_ids(session, incoming_order_ids)
-
-    inserted = 0
-    for r in parsed:
-        oid = r["order_id"]
-        key = (r["platform"], oid)
-        if oid is not None and key in existing_keys:
-            continue
-        session.add(Order(
-            order_id=oid,
-            order_date=r["order_date"],
-            customer_key=r["customer_key"],
-            platform=r["platform"],
-            sku=r["sku"],
-            quantity=r["quantity"],
-            price=r["price"],
-            receiver=r["receiver"],
-            receiver_phone=r["receiver_phone"],
-            province=r["province"],
-            area=r["area"],
-            full_address=r["full_address"],
-            buyer_nick=r["buyer_nick"],
-            coupon_name=r["coupon_name"],
-            distributor=r["distributor"],
-        ))
-        if oid is not None:
-            existing_keys.add(key)
-        inserted += 1
-
-    session.commit()
-    return inserted

@@ -34,6 +34,8 @@ class WeeklyReportSummary(BaseModel):
     wecom_sent: bool
     job_state: str | None = None
     narrative_status: str | None = None
+    # False when queued WorkBuddy jobs have no worker (provider switched back): clients stop polling.
+    worker_enabled: bool = False
 
     class Config:
         from_attributes = True
@@ -49,6 +51,7 @@ class WeeklyReportDetail(WeeklyReportSummary):
 def report_json(run, job=None, *, detail=False):
     schema = WeeklyReportDetail if detail else WeeklyReportSummary
     result = schema.model_validate(run).model_dump()
+    result["worker_enabled"] = settings.report_provider == "workbuddy"
     if job:
         result.update(job_state=job.state, narrative_status=job.narrative_status)
         if detail: result["delivery_error"] = job.delivery_error
@@ -90,7 +93,7 @@ async def trigger_weekly_report(
     full pipeline (including the real WeCom push) without waiting for the
     scheduled loop to fire."""
     try:
-        run = await generate_weekly_report(session)
+        run = await generate_weekly_report(session, trigger="manual")
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     await log_operation(str(_user.id), "weekly_report_run", {"report_id": run.id, "week_start": run.week_start, "status": run.status, "wecom_sent": run.wecom_sent}, request=request)
@@ -98,7 +101,7 @@ async def trigger_weekly_report(
 
 
 class DeliveryAction(BaseModel):
-    action: Literal["retry", "mark_sent"]
+    action: Literal["retry", "mark_sent", "regenerate"]
     acknowledged_uncertain_delivery: bool = False
 
 
@@ -109,6 +112,17 @@ async def resolve_delivery(run_id: int, body: DeliveryAction, request: Request,
     if job is None:
         raise HTTPException(404, "未找到 WorkBuddy 周报任务")
     run = await session.get(WeeklyReportRun, run_id)
+    if body.action == "regenerate":
+        # Any failed week, including ones before the current reference week.
+        if settings.report_provider != "workbuddy":
+            raise HTTPException(409, "请先启用 WorkBuddy 周报 worker")
+        from ..reports.workbuddy_jobs import regenerate
+        try:
+            run, job = await regenerate(session, run_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        await log_operation(str(user.id), "workbuddy_delivery_action", {"report_id": run_id, "action": body.action}, session=session, request=request)
+        return report_json(run, job, detail=True)
     if job.state not in {"delivery_failed", "delivery_unknown"}:
         raise HTTPException(409, "当前状态不允许重试或确认投递")
     if job.state == "delivery_unknown" and not body.acknowledged_uncertain_delivery:

@@ -38,3 +38,17 @@ class PlatformTokenVerifier:
                 scopes=[s for s in credential.scopes if s in SCOPES],
                 expires_at=int(credential.expires_at.timestamp()),
             )
+
+
+async def revoke_user_credentials(session, user_id) -> int:
+    """Revoke every live WorkBuddy credential of a user, in the caller's transaction.
+
+    Verification already rejects a disabled or downgraded user on each call, but
+    without this a later re-enable or re-promotion would silently revive tokens and
+    OAuth grants issued before. Refresh is refused once the credential is revoked.
+    """
+    from sqlalchemy import update
+    result = await session.execute(update(IntegrationToken).where(
+        IntegrationToken.user_id == user_id, IntegrationToken.revoked_at.is_(None),
+    ).values(revoked_at=datetime.now(timezone.utc)))
+    return result.rowcount or 0

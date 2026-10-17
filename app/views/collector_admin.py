@@ -12,13 +12,15 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import current_admin_user
 from ..db import get_session
 from ..db.models import CollectorRun, WxChannelsAccount, XhsAccount
+from ..collector.runs import LOGIN_CHECK_TRIGGERS
 from ..collector.paths import session_path, sessions_dir
 from ..utils.logger import log_operation
 
@@ -143,9 +145,9 @@ async def list_collector_sessions(
             # "last actual collect attempt" and surface precheck results
             # separately as last_verify_status, rather than mixing the two.
             if verify:
-                stmt = stmt.where(CollectorRun.triggered_by == "verify")
+                stmt = stmt.where(CollectorRun.triggered_by.in_(LOGIN_CHECK_TRIGGERS))
             else:
-                stmt = stmt.where(CollectorRun.triggered_by != "verify")
+                stmt = stmt.where(CollectorRun.triggered_by.not_in(LOGIN_CHECK_TRIGGERS))
             return stmt
 
         last_run = (await session.execute(_run_stmt(verify=False))).scalars().first()
@@ -175,7 +177,13 @@ async def delete_collector_session(
     path = session_path(platform, account_id if platform in ("xhs", "pugongying", "channels") else None)
     if not path.exists():
         raise HTTPException(status_code=404, detail="登录态文件不存在")
-    path.unlink()
+    from ..collector.session_lock import session_lock
+    try:
+        # A running collector writes the session back on exit and would undo the delete.
+        with session_lock(path, blocking=False):
+            path.unlink(missing_ok=True)
+    except BlockingIOError:
+        raise HTTPException(status_code=409, detail="该账号正在采集，请稍后再删除登录态") from None
     await log_operation(
         str(_user.id),
         "collector_session_delete",
@@ -223,3 +231,42 @@ async def list_collector_runs(
         }
         for r in rows
     ]
+
+
+class CollectRequestBody(BaseModel):
+    platform: Literal["xhs", "zhihu", "pugongying", "channels", "jd"]
+    account_id: int | None = None
+
+
+@router.post("/requests", status_code=status.HTTP_202_ACCEPTED)
+async def request_collect(
+    body: CollectRequestBody,
+    request: Request,
+    _user=Depends(current_admin_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Collect one target now. Executed by the scheduled `run-requests` command, not by the backend."""
+    from .collector_repair import queue_collect
+
+    per_account = body.platform in ("xhs", "pugongying", "channels")
+    if per_account != (body.account_id is not None):
+        raise HTTPException(status_code=422, detail="该平台需要（或不接受）账号编号")
+    if not await queue_collect(session, body.platform, body.account_id, "admin", _user.id):
+        raise HTTPException(status_code=409, detail="该平台的自动采集未启用")
+    await session.commit()
+    await log_operation(str(_user.id), "collector_request", body.model_dump(), session=session, request=request)
+    return {"status": "queued"}
+
+
+@router.get("/requests")
+async def list_collect_requests(
+    limit: int = Query(20, ge=1, le=100),
+    _user=Depends(current_admin_user),
+    session: AsyncSession = Depends(get_session),
+):
+    from ..db.models import CollectorRequest
+
+    rows = (await session.execute(select(CollectorRequest).order_by(CollectorRequest.id.desc()).limit(limit))).scalars()
+    return [{"id": r.id, "platform": r.platform, "account_id": r.account_id, "reason": r.reason,
+             "status": r.status, "exit_code": r.exit_code, "created_at": r.created_at,
+             "started_at": r.started_at, "finished_at": r.finished_at} for r in rows]

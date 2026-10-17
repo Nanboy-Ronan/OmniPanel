@@ -38,3 +38,58 @@ def test_upgrade_existing_platform_preserves_users(fresh_pg_db):
             assert cursor.fetchone()[0] == 0
     result = _alembic(["check"], async_url)
     assert result.returncode == 0, result.stderr
+
+
+def _columns(sync_url, table):
+    with psycopg2.connect(sync_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name=%s", (table,))
+            return {row[0] for row in cursor.fetchall()}
+
+
+def test_hardening_columns_round_trip_and_keep_rows(fresh_pg_db):
+    async_url, sync_url, _ = fresh_pg_db
+    assert _alembic(["upgrade", "0026_collector_repair"], async_url).returncode == 0
+    with psycopg2.connect(sync_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("INSERT INTO collector_repairs (id,secret_hash,expires_at) VALUES ('r1',%s,now())", ("a" * 64,))
+    result = _alembic(["upgrade", "head"], async_url)
+    assert result.returncode == 0, result.stderr
+    assert {"issued_token_id", "created_at"} <= _columns(sync_url, "workbuddy_oauth_requests")
+    assert {"created_at", "user_code"} <= _columns(sync_url, "collector_repairs")
+    assert "prepare_attempts" in _columns(sync_url, "workbuddy_report_jobs")
+    with psycopg2.connect(sync_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT created_at IS NOT NULL FROM collector_repairs WHERE id='r1'")
+            assert cursor.fetchone()[0] is True
+    result = _alembic(["downgrade", "0026_collector_repair"], async_url)
+    assert result.returncode == 0, result.stderr
+    assert "user_code" not in _columns(sync_url, "collector_repairs")
+    assert "issued_token_id" not in _columns(sync_url, "workbuddy_oauth_requests")
+    assert _alembic(["upgrade", "head"], async_url).returncode == 0
+    assert _alembic(["check"], async_url).returncode == 0
+
+
+def test_collector_requests_round_trip_and_single_open_request(fresh_pg_db):
+    async_url, sync_url, _ = fresh_pg_db
+    result = _alembic(["upgrade", "head"], async_url)
+    assert result.returncode == 0, result.stderr
+    assert {"portal_name", "pgy_portal_name"} <= _columns(sync_url, "xhs_accounts")
+    assert "portal_name" in _columns(sync_url, "wx_channels_accounts")
+    with psycopg2.connect(sync_url) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("INSERT INTO collector_requests (platform, account_id, reason) VALUES ('xhs', 1, 'repair')")
+            cursor.execute("INSERT INTO collector_requests (platform, account_id, reason, status) VALUES ('xhs', 1, 'repair', 'done')")
+            cursor.execute("INSERT INTO collector_requests (platform, account_id, reason) VALUES ('zhihu', NULL, 'admin')")
+            try:
+                cursor.execute("INSERT INTO collector_requests (platform, account_id, reason) VALUES ('zhihu', NULL, 'admin')")
+                raise AssertionError("second open request for the same target was accepted")
+            except psycopg2.errors.UniqueViolation:
+                pass
+    result = _alembic(["downgrade", "0027_workbuddy_hardening"], async_url)
+    assert result.returncode == 0, result.stderr
+    assert "collector_requests" not in _table_names(sync_url)
+    assert "portal_name" not in _columns(sync_url, "xhs_accounts")
+    assert _alembic(["upgrade", "head"], async_url).returncode == 0
+    check = _alembic(["check"], async_url)
+    assert check.returncode == 0, check.stderr + check.stdout

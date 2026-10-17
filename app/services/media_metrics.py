@@ -1,6 +1,6 @@
 """Shared media overview calculations; cumulative snapshots are not weekly deltas."""
 from datetime import date
-from sqlalchemy import select, func
+from sqlalchemy import case, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.models import MediaPost, MediaPostMetricDaily, XhsPost, WxChannelsPost
 
@@ -36,6 +36,16 @@ def _latest_metric_subquery(
         ranked = ranked.where(MediaPostMetricDaily.metric_date <= end_date)
     ranked_subq = ranked.subquery()
     return select(ranked_subq).where(ranked_subq.c.rn == 1).subquery()
+
+def _weighted_rate(rate, weight):
+    """Rate weighted by its volume (impressions/plays), ignoring posts without the rate.
+
+    Same definition as the weekly report. Falls back to the plain mean of known rates when
+    no post has a weight, and is NULL (not 0) when no post has the rate at all.
+    """
+    weighted = func.sum(rate * weight) / func.nullif(func.sum(case((rate.isnot(None), weight))), 0)
+    return func.coalesce(weighted, func.avg(rate))
+
 
 async def wechat_metrics(session: AsyncSession, start_date: date | None = None, end_date: date | None = None, account_id: int | None = None):
     metric_subq = _latest_metric_subquery(start_date, end_date)
@@ -75,7 +85,7 @@ async def xhs_metrics(session: AsyncSession, start_date: date | None = None, end
         func.sum(func.coalesce(XhsPost.likes, 0) + func.coalesce(XhsPost.comments, 0)
                  + func.coalesce(XhsPost.collects, 0) + func.coalesce(XhsPost.shares, 0)),
         func.sum(XhsPost.new_followers),
-        func.avg(func.coalesce(XhsPost.cover_click_rate, 0)),
+        _weighted_rate(XhsPost.cover_click_rate, XhsPost.impressions),
     )
     if account_id is not None:
         stmt = stmt.where(XhsPost.account_id == account_id)
@@ -87,7 +97,7 @@ async def xhs_metrics(session: AsyncSession, start_date: date | None = None, end
     return dict(
         posts=posts or 0, impressions=impressions or 0, views=views or 0,
         engagement=engagement or 0, new_followers=followers or 0,
-        avg_cover_click_rate=float(cover_rate or 0),
+        avg_cover_click_rate=float(cover_rate) if cover_rate is not None else None,
     )
 
 async def channels_metrics(session: AsyncSession, start_date: date | None = None, end_date: date | None = None, account_id: int | None = None):
@@ -100,7 +110,7 @@ async def channels_metrics(session: AsyncSession, start_date: date | None = None
         func.sum(WxChannelsPost.shares).label("shares"),
         func.sum(WxChannelsPost.new_fans).label("new_fans"),
         func.sum(WxChannelsPost.forwards_chat_moments).label("forwards_chat_moments"),
-        func.avg(func.coalesce(WxChannelsPost.completion_rate, 0)).label("avg_completion_rate"),
+        _weighted_rate(WxChannelsPost.completion_rate, WxChannelsPost.plays).label("avg_completion_rate"),
     )
     if account_id is not None:
         stmt = stmt.where(WxChannelsPost.account_id == account_id)
@@ -124,6 +134,6 @@ async def channels_metrics(session: AsyncSession, start_date: date | None = None
         "engagement": sum(int(value or 0) for value in (
             row.recommends, row.likes_thumb, row.comments, row.shares,
         )),
-        "avg_completion_rate": float(row.avg_completion_rate or 0),
+        "avg_completion_rate": float(row.avg_completion_rate) if row.avg_completion_rate is not None else None,
         "avg_plays_per_post": round(plays / posts, 1) if posts else 0,
     }

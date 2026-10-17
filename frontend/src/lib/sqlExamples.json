@@ -1,23 +1,27 @@
 [
   [
-    "按平台统计营业额",
-    "SELECT platform,\n       COUNT(*) AS orders,\n       ROUND(SUM(price)::numeric, 2) AS revenue\nFROM orders\nGROUP BY platform\nORDER BY revenue DESC"
+    "按平台统计营业额（不含关闭/未付款/已删除，已扣退款）",
+    "SELECT platform,\n       COUNT(*) AS orders,\n       ROUND(SUM(price - COALESCE(refunded_amount, 0))::numeric, 2) AS revenue\nFROM orders\nWHERE status_group IN ('completed', 'unknown')\nGROUP BY platform\nORDER BY revenue DESC"
   ],
   [
-    "订单量最高的 10 个 SKU",
-    "SELECT sku,\n       COUNT(*) AS orders,\n       ROUND(SUM(price)::numeric, 2) AS revenue\nFROM orders\nGROUP BY sku\nORDER BY orders DESC\nLIMIT 10"
+    "营业额最高的 10 个 SKU",
+    "SELECT sku,\n       COUNT(*) AS orders,\n       ROUND(SUM(price - COALESCE(refunded_amount, 0))::numeric, 2) AS revenue\nFROM orders\nWHERE status_group IN ('completed', 'unknown')\nGROUP BY sku\nORDER BY revenue DESC\nLIMIT 10"
   ],
   [
-    "各省独立客户数",
-    "SELECT province,\n       COUNT(*) AS orders\nFROM orders\nWHERE province IS NOT NULL\nGROUP BY province\nORDER BY orders DESC\nLIMIT 10"
+    "各省有效订单数",
+    "SELECT province,\n       COUNT(*) AS orders\nFROM orders\nWHERE status_group IN ('completed', 'unknown')\n  AND province IS NOT NULL\nGROUP BY province\nORDER BY orders DESC\nLIMIT 10"
   ],
   [
     "月度营业额趋势",
-    "SELECT DATE_TRUNC('month', order_date) AS month,\n       COUNT(*) AS orders,\n       ROUND(SUM(price)::numeric, 2) AS revenue\nFROM orders\nGROUP BY month\nORDER BY month"
+    "SELECT DATE_TRUNC('month', order_date) AS month,\n       COUNT(*) AS orders,\n       ROUND(SUM(price - COALESCE(refunded_amount, 0))::numeric, 2) AS revenue\nFROM orders\nWHERE status_group IN ('completed', 'unknown')\nGROUP BY month\nORDER BY month"
   ],
   [
-    "各平台平均订单金额",
-    "SELECT platform,\n       COUNT(*) AS orders,\n       ROUND(AVG(price)::numeric, 2) AS average_spend\nFROM orders\nGROUP BY platform\nORDER BY orders DESC"
+    "各平台客单价",
+    "SELECT platform,\n       COUNT(*) AS orders,\n       ROUND(AVG(price - COALESCE(refunded_amount, 0))::numeric, 2) AS average_spend\nFROM orders\nWHERE status_group IN ('completed', 'unknown') AND price IS NOT NULL\nGROUP BY platform\nORDER BY orders DESC"
+  ],
+  [
+    "本月被排除的订单（关闭/未付款/已删除）",
+    "SELECT platform, status_group, raw_status, COUNT(*) AS orders\nFROM orders\nWHERE status_group NOT IN ('completed', 'unknown')\n  AND order_date >= DATE_TRUNC('month', CURRENT_DATE)\nGROUP BY platform, status_group, raw_status\nORDER BY orders DESC"
   ],
   [
     "最近上传批次",

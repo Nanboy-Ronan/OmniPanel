@@ -542,20 +542,6 @@
 .login-actions .button {
   min-height: 44px;
 }
-.legacy-item svg:last-child {
-  margin-left: auto;
-  color: var(--nav-muted);
-}
-.legacy-login {
-  font-size: 12px;
-  display: flex;
-  justify-content: center;
-  gap: 5px;
-  align-items: center;
-  margin-top: 22px;
-  text-decoration: none;
-}
-
 /* Responsive frame */
 .mobile-menu,
 .mobile-close,

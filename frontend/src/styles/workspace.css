@@ -1366,3 +1366,79 @@ th[aria-sort='descending'] .sort-button svg {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* Collector account owners (admin). */
+.owner-intro {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.owner-list {
+  display: grid;
+  padding: 0 20px 12px;
+}
+.owner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--divider);
+  font-size: 13px;
+}
+.owner-row:last-child {
+  border-bottom: 0;
+}
+.owner-row > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.owner-row select {
+  width: min(280px, 55%);
+}
+.owner-warning {
+  color: var(--warning);
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .owner-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .owner-row select {
+    width: 100%;
+  }
+}
+/* Portal display name used by WorkBuddy login re-checks. */
+.portal-names {
+  flex-basis: 100%;
+  font-size: 12px;
+}
+.portal-names > summary {
+  cursor: pointer;
+  color: var(--text-3);
+}
+.portal-names[open] {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.portal-names label {
+  display: grid;
+  gap: 4px;
+  max-width: 360px;
+  margin-top: 4px;
+}
+.portal-names .footnote {
+  margin: 0;
+}
+.portal-names button {
+  justify-self: start;
+}

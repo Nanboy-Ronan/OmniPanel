@@ -16,7 +16,7 @@ CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest())
 
 @pytest.fixture(autouse=True)
 def no_throttling(monkeypatch):
-    async def noop(*args):
+    async def noop(*args, **kwargs):
         pass
     monkeypatch.setattr("app.views.workbuddy_oauth.throttle", noop)
 
@@ -64,7 +64,6 @@ def test_roundtrip_pkce_rotation_replay_and_hash_storage(client, tokens, pg_sync
     assert client.post(BASE + "/token", data={**data, "redirect_uri": REDIRECT + "/"}).status_code == 400
     assert client.post(BASE + "/token", data={**data, "client_id": "other"}).status_code == 400
     first = exchange(client, data)
-    assert client.post(BASE + "/token", data=data).status_code == 400
     assert rpc(client, first["access_token"], "tools/list").status_code == 200
     refresh_data = {"grant_type": "refresh_token", "refresh_token": first["refresh_token"], "client_id": data["client_id"]}
     assert client.post(BASE + "/token", data={**refresh_data, "client_id": "other"}).status_code == 400
@@ -213,3 +212,84 @@ def test_web_oauth_roundtrip(client, tokens, monkeypatch):
     issued = exchange(client, data)
     assert rpc(client, issued['access_token'], 'tools/list').status_code == 200
     assert client.post(BASE + '/token', data=data).status_code == 400
+
+
+def test_replayed_code_revokes_issued_token_and_is_audited(client, tokens, pg_sync_url):
+    data = authorize(client, tokens, scope="metadata:read")
+    issued = exchange(client, data)
+    assert client.post(BASE + "/token", data=data).json()["error"] == "invalid_grant"
+    assert rpc(client, issued["access_token"], "tools/list").status_code == 401
+    refresh = {"grant_type": "refresh_token", "client_id": data["client_id"], "refresh_token": issued["refresh_token"]}
+    assert client.post(BASE + "/token", data=refresh).status_code == 400
+    engine = create_engine(pg_sync_url)
+    with engine.connect() as conn:
+        actions = [r[0] for r in conn.execute(text("SELECT action FROM operation_log ORDER BY id"))]
+        detail = conn.execute(text("SELECT detail FROM operation_log WHERE action='workbuddy_oauth_connected'")).scalar_one()
+    engine.dispose()
+    assert actions.count("workbuddy_oauth_replay_revoked") == 1
+    assert {"workbuddy_oauth_registered", "workbuddy_oauth_consent", "workbuddy_oauth_connected"} <= set(actions)
+    assert '"ip"' in detail and "桌面客户端" in detail
+
+
+def test_refresh_replay_and_revoke_endpoint_are_audited(client, tokens, pg_sync_url):
+    data = authorize(client, tokens)
+    pair = exchange(client, data)
+    refresh = {"grant_type": "refresh_token", "client_id": data["client_id"], "refresh_token": pair["refresh_token"]}
+    exchange(client, refresh)
+    assert client.post(BASE + "/token", data=refresh).status_code == 400
+    other = exchange(client, authorize(client, tokens))
+    client.post(BASE + "/revoke", data={"client_id": data["client_id"], "token": pair["refresh_token"]})
+    engine = create_engine(pg_sync_url)
+    with engine.connect() as conn:
+        actions = [r[0] for r in conn.execute(text("SELECT action FROM operation_log"))]
+    engine.dispose()
+    assert actions.count("workbuddy_oauth_replay_revoked") == 1
+    assert rpc(client, other["access_token"], "tools/list").status_code == 200
+
+
+def test_consent_page_shows_which_client_and_when(client, tokens):
+    _, rid = begin(client)
+    details = client.get(BASE + "/requests/" + rid, headers=jwt_headers(tokens)).json()
+    assert details["client"] == "WorkBuddy 桌面客户端"
+    assert details["requested_at"] and details["expires_at"] > details["requested_at"]
+
+
+def test_token_and_revoke_endpoints_are_throttled(client, monkeypatch):
+    from fastapi import HTTPException
+    from app.views import workbuddy_oauth
+    calls = []
+    async def strict(request, kind, key=None, limiter=None):
+        calls.append((kind, key))
+        raise HTTPException(429)
+    monkeypatch.setattr(workbuddy_oauth, "throttle", strict)
+    assert client.post(BASE + "/token", data={"grant_type": "refresh_token", "client_id": "c1", "refresh_token": "x"}).status_code == 429
+    assert client.post(BASE + "/revoke", data={"client_id": "c1", "token": "x"}).status_code == 429
+    assert calls == [("token", "c1"), ("revoke", None)]
+
+
+def test_retention_keeps_oauth_credential_while_grant_is_live(client, tokens, pg_sync_url):
+    import asyncio
+    from datetime import datetime, timezone
+    from app import db
+    from app.integrations.workbuddy.retention import purge_once
+    data = authorize(client, tokens)
+    pair = exchange(client, data)
+    engine = create_engine(pg_sync_url)
+    with engine.begin() as conn:
+        # Access token long expired, but the 90-day grant still allows refresh.
+        conn.execute(text("UPDATE integration_tokens SET expires_at=now()-interval '31 days'"))
+    async def run():
+        async with db.AsyncSessionLocal() as session:
+            return await purge_once(session, datetime.now(timezone.utc))
+    assert asyncio.run(run())["credentials"] == 0
+    refresh = {"grant_type": "refresh_token", "client_id": data["client_id"], "refresh_token": pair["refresh_token"]}
+    renewed = exchange(client, refresh)
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE integration_tokens SET expires_at=now()-interval '31 days'"))
+        conn.execute(text("UPDATE workbuddy_oauth_grants SET expires_at=now()-interval '31 days'"))
+    assert asyncio.run(run())["credentials"] == 1
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM workbuddy_oauth_grants")).scalar_one() == 0
+        assert conn.execute(text("SELECT count(*) FROM workbuddy_oauth_refresh")).scalar_one() == 0
+    engine.dispose()
+    assert rpc(client, renewed["access_token"], "tools/list").status_code == 401

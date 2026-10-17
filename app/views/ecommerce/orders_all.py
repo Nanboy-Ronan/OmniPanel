@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import date, datetime
 from decimal import Decimal
 
-from ...auth import current_active_user
+from ...auth import current_active_user, current_analyst_user
 from ...config import settings
 from ...db import get_session
 from ... import db as _db_mod
@@ -174,7 +174,8 @@ async def export_orders(
     search: str | None = Query(None, max_length=200),
     platform: str | None = Query(None, pattern="^(youzan|jd|tmall)$"),
     column_filters: str | None = Query(None, max_length=2400),
-    _u=Depends(current_active_user),
+    # Bulk export carries every PII column; viewers can browse but not export.
+    _u=Depends(current_analyst_user),
     session: AsyncSession = Depends(get_session),
 ):
     conditions = _order_filter(search, platform, column_filters)

@@ -78,8 +78,8 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from ..models import WxChannelsPost
-from ._upsert import coalesce_update_set
+from ..models import WxChannelsPost, WxChannelsPostSnapshot
+from ._upsert import coalesce_update_set, write_snapshots
 
 # China Standard Time — createTime (unix seconds) must be read in this zone,
 # not the collector host's local time. See module docstring.
@@ -291,7 +291,7 @@ def parse_channels_api_json(raw: bytes | str, account_id: int) -> list[dict]:
     return rows
 
 
-def upsert_channels_posts(rows: list[dict], account_id: int, session: Session) -> dict:
+def upsert_channels_posts(rows: list[dict], account_id: int, session: Session, *, captured_on=None, source_file_id=None) -> dict:
     """Insert new videos and update existing ones; never remove videos absent from rows.
 
     Matched by video_id (real, stable — see module docstring). On a match
@@ -312,6 +312,8 @@ def upsert_channels_posts(rows: list[dict], account_id: int, session: Session) -
         set_=coalesce_update_set(insert, WxChannelsPost, _UPSERT_UPDATE_COLS)
         | {"updated_at": text("NOW()")},
     )
-    session.execute(stmt)
+    returned = session.execute(stmt.returning(WxChannelsPost.id, WxChannelsPost.video_id)).all()
+    snapshots = write_snapshots(session, WxChannelsPostSnapshot, returned, rows, ("video_id",),
+                                captured_on=captured_on, source_file_id=source_file_id)
     session.commit()
-    return {"total": len(rows), "upserted": len(rows)}
+    return {"total": len(rows), "upserted": len(rows), "snapshots": snapshots}

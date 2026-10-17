@@ -81,6 +81,36 @@ class Target:
         return f"知乎·{_ZHIHU_CONTENT_LABEL.get(self.content_type, self.content_type)}"
 
 
+_SELF_SERVICE_LOGIN_PLATFORMS = {"xhs", "pugongying", "channels"}
+
+
+def _login_repair_hint(target: Target) -> str:
+    if target.platform in _SELF_SERVICE_LOGIN_PLATFORMS:
+        return f"负责人可对 WorkBuddy 说：帮我修复「{target.label}」的采集登录。"
+    return "请联系管理员更新登录；该平台暂不支持 WorkBuddy 自助修复。"
+
+
+def _login_repair_guide(targets: list[Target], settings) -> str:
+    """Put shared instructions before details so WeCom truncation preserves them."""
+    if not targets:
+        return ""
+    lines = []
+    if any(t.platform in _SELF_SERVICE_LOGIN_PLATFORMS for t in targets):
+        base = getattr(settings, "public_base_url", _default_settings.public_base_url).rstrip("/")
+        lines.extend([
+            "登录修复（小红书/蒲公英/视频号）：",
+            "1. 账号负责人或管理员在电脑 WorkBuddy 添加企业技能「采集登录修复」，发送下方对应账号的修复指令。",
+            "2. 打开公司授权页，用企业微信登录，选择通知中的账号并确认。",
+            "3. 在助手弹出的浏览器扫码/短信登录并选对账号，切换「完成登录」标签页，点击「确认已登录目标账号，更新凭证」。",
+            "4. 等待显示修复成功、复检通过；随后等待定时采集。首次准备可能需几分钟，无需运行命令或复制凭证。",
+            "找不到技能或账号：联系管理员安装技能、分配账号负责人。",
+            f"操作说明：{base}/console/?page=workbuddy#collector-login",
+        ])
+    if any(t.platform not in _SELF_SERVICE_LOGIN_PLATFORMS for t in targets):
+        lines.append("知乎/京东：请管理员更新登录，暂不支持 WorkBuddy 自助修复。")
+    return "\n".join(lines) + "\n\n"
+
+
 def build_targets(api, settings=None) -> list[Target]:
     """Enumerate every target that should be collected this run.
 
@@ -200,7 +230,8 @@ def _login_api_client(settings, *, log_prefix: str):
     api_client = APIClient(base_url=settings.collector_api_url)
     login_resp = api_client.login(settings.collector_service_email or "", settings.collector_service_password or "")
     if login_resp.status_code != 200:
-        return None, f"{log_prefix} service-account 登录失败: {login_resp.status_code} {login_resp.text[:300]}"
+        return None, (f"{log_prefix} service-account 登录失败: {login_resp.status_code}。"
+                      "请管理员检查采集服务账号配置；无需同事更新平台采集登录。")
     return api_client, None
 
 
@@ -342,6 +373,7 @@ def run_collect(
         targets = [t for t in targets if t.content_type == only_content_type]
 
     failures: list[str] = []
+    repair_targets: list[Target] = []
     successes: list[str] = []
     budget = getattr(settings, "collector_time_budget_seconds", DEFAULT_TIME_BUDGET_SECONDS)
     deadline = _monotonic() + budget
@@ -360,7 +392,7 @@ def run_collect(
                 break
             _run_one_target(
                 target, settings, api_client, collect_fns, headless, triggered_by,
-                dry_run, deadline, failures, successes, state,
+                dry_run, deadline, failures, successes, state, repair_targets,
             )
     except BaseException as exc:
         # SIGTERM (CollectorInterrupted), KeyboardInterrupt, or a bug outside
@@ -372,15 +404,16 @@ def run_collect(
             except Exception:
                 _logger.exception("could not record interrupted run %s", state["run_id"])
         failures.append(f"采集进程被中断（{type(exc).__name__}），剩余目标未执行")
-        _send_collect_summary(failures, successes, targets, dry_run, settings)
+        _send_collect_summary(failures, successes, targets, dry_run, settings, repair_targets)
         raise
 
-    return _send_collect_summary(failures, successes, targets, dry_run, settings)
+    return _send_collect_summary(failures, successes, targets, dry_run, settings, repair_targets)
 
 
-def _send_collect_summary(failures, successes, targets, dry_run, settings) -> int:
+def _send_collect_summary(failures, successes, targets, dry_run, settings, repair_targets) -> int:
     if failures:
         header = f"[采集告警] 本次运行 {len(failures)}/{len(targets)} 个目标失败：\n"
+        header += _login_repair_guide(repair_targets, settings)
         lines = [f"- {f}" for f in failures]
         if successes:
             lines.append("")
@@ -399,10 +432,11 @@ def _send_collect_summary(failures, successes, targets, dry_run, settings) -> in
 
 def _run_one_target(
     target, settings, api_client, collect_fns, headless, triggered_by,
-    dry_run, deadline, failures, successes, state,
+    dry_run, deadline, failures, successes, state, repair_targets,
 ) -> None:
     if not target.session_file.exists():
-        msg = f"{target.label}: 未找到登录态文件 {target.session_file}，请本地重跑 bootstrap-login 并到管理页上传"
+        repair_targets.append(target)
+        msg = f"{target.label}: 未找到登录态文件。{_login_repair_hint(target)}"
         _logger.warning(msg)
         failures.append(msg)
         return
@@ -440,22 +474,24 @@ def _run_one_target(
         successes.append(f"{target.label}: {rows} 行")
     except SessionExpiredError as exc:
         finish_run(run_id, "session_expired", error_message=str(exc))
-        msg = f"{target.label}: 登录态已过期，请本地重跑 bootstrap-login 并到管理页重传。{exc}"
+        repair_targets.append(target)
+        msg = f"{target.label}: 登录态已过期。{_login_repair_hint(target)}"
         _logger.error(msg)
         failures.append(msg)
 
     except WrongAccountError as exc:
         finish_run(run_id, "wrong_account", error_message=str(exc))
+        repair_targets.append(target)
         msg = (
             f"{target.label}: 登录态有效，但账号不对（很可能选错了子账号）。"
-            f"请重新执行 bootstrap-login 并明确选择正确的账号后重传——直接重跑采集不会修复。{exc}"
+            f"{_login_repair_hint(target)}重新登录时请选对账号，直接重跑采集不会修复。"
         )
         _logger.error(msg)
         failures.append(msg)
 
     except DownloadTimeoutError as exc:
         finish_run(run_id, "download_failed", error_message=str(exc))
-        msg = f"{target.label}: 导出下载超时或失败。{exc}"
+        msg = f"{target.label}: 导出下载超时或失败，请管理员排查导出流程；登录有效时无需重新登录。{exc}"
         _logger.error(msg)
         failures.append(msg)
 
@@ -473,7 +509,7 @@ def _run_one_target(
 
     except UploadFailedError as exc:
         finish_run(run_id, "upload_failed", error_message=str(exc))
-        msg = f"{target.label}: 上传失败。{exc}"
+        msg = f"{target.label}: 上传失败，请管理员排查上传服务；登录有效时无需重新登录。{exc}"
         _logger.error(msg, exc_info=exc)
         failures.append(msg)
 
@@ -481,7 +517,7 @@ def _run_one_target(
         finish_run(run_id, "api_error", error_message=str(exc))
         msg = (
             f"{target.label}: 登录态有效，但数据接口拒绝或未按预期返回（不是登录过期，"
-            f"重新 bootstrap-login 不一定能解决）。请查看采集调试截图/HTML 排查。{exc}"
+            f"无需反复更新登录）。请联系管理员查看采集调试截图/HTML 排查。{exc}"
         )
         _logger.error(msg, exc_info=exc)
         failures.append(msg)
@@ -508,7 +544,7 @@ def run_verify(
     on its own, *earlier* schedule (see docs/collector.md): checking at
     collect time only reports a dead session after that day's data is
     already unrecoverable. Run early enough (e.g. the evening before) and a
-    human still has time to redo bootstrap-login before the next collect
+    human still has time to repair the login before the next collect
     window. Returns 0 if every target's session is valid, 1 otherwise.
     """
     settings = settings or _default_settings
@@ -528,10 +564,12 @@ def run_verify(
     targets = build_targets(api_client, settings)
 
     problems: list[str] = []
+    repair_targets: list[Target] = []
 
     for target in targets:
         if not target.session_file.exists():
-            problems.append(f"{target.label}: 未找到登录态文件 {target.session_file}，请让账号负责人在 WorkBuddy 中说：帮我修复这个账号的采集登录")
+            repair_targets.append(target)
+            problems.append(f"{target.label}: 未找到登录态文件。{_login_repair_hint(target)}")
             continue
 
         run_id = start_run(
@@ -544,14 +582,15 @@ def run_verify(
             valid = verify_fns[target.platform](target.session_file, headless=headless)
         except WrongAccountError as exc:
             finish_run(run_id, "wrong_account", error_message=str(exc))
+            repair_targets.append(target)
             problems.append(
-                f"{target.label}: 登录态存在但账号不对（很可能选错了子账号），"
-                f"请让账号负责人在 WorkBuddy 中发起采集登录修复，并选择正确的账号。{exc}"
+                f"{target.label}: 登录态存在但账号不对（很可能选错了子账号）。"
+                f"{_login_repair_hint(target)}重新登录时请选对账号。"
             )
             continue
         except Exception as exc:
             finish_run(run_id, "error", error_message=str(exc))
-            problems.append(f"{target.label}: 巡检本身出错，请人工检查。{exc}")
+            problems.append(f"{target.label}: 巡检本身出错，尚不能判断登录是否过期，请管理员排查，无需反复更新登录。{exc}")
             continue
 
         if valid:
@@ -559,11 +598,14 @@ def run_verify(
             continue
 
         finish_run(run_id, "session_expired")
-        problems.append(f"{target.label}: 登录态已过期，请让账号负责人在 WorkBuddy 中说：帮我修复这个账号的采集登录")
+        repair_targets.append(target)
+        problems.append(f"{target.label}: 登录态已过期。{_login_repair_hint(target)}")
 
     if problems:
-        header = f"[采集巡检] 发现 {len(problems)} 个登录态异常，请尽快处理，避免影响下次采集：\n"
-        send_wecom_alert(header + "\n".join(f"- {p}" for p in problems))
+        header = f"[采集巡检] 发现 {len(problems)} 个巡检异常，请尽快处理，避免影响下次采集：\n"
+        header += _login_repair_guide(repair_targets, settings)
+        if not send_wecom_alert(header + "\n".join(f"- {p}" for p in problems)):
+            _logger.error("collector verification summary was NOT delivered via WeCom")
         return 1
 
     return 0

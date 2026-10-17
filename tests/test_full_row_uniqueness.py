@@ -18,7 +18,7 @@ if project_root not in sys.path:
 # 2) Now import from our application code
 from app.db import Base
 from app.db.models import Customer, Order
-from app.db.etl import ingest
+from app.db.etl import ingest_upload
 
 
 @pytest.fixture
@@ -85,7 +85,7 @@ def test_full_row_uniqueness(db_session):
     df1_raw = make_raw_dataframe(first_batch)
 
     # Ingest the first raw batch
-    inserted1 = ingest(df1_raw, session)
+    inserted1 = ingest_upload(df1_raw, session, filename="test-upload.csv")["inserted_orders"]
     assert inserted1 == 4
 
     # Verify that 4 orders and 4 customers exist
@@ -108,7 +108,7 @@ def test_full_row_uniqueness(db_session):
     ]
     df2_raw = make_raw_dataframe(second_batch)
 
-    inserted2 = ingest(df2_raw, session)
+    inserted2 = ingest_upload(df2_raw, session, filename="test-upload.csv")["inserted_orders"]
 
     # We expect exactly 2 new rows: AAA005 and AAA006.
     assert inserted2 == 2
@@ -150,8 +150,8 @@ def test_csv_reingest_and_modified_rows(db_session):
 
     1. First ingest should insert all rows from the dataset.
     2. Re-ingesting the unchanged dataset should insert zero new rows.
-    3. After appending a duplicate row and a changed row, only the changed row
-       should be inserted.
+    3. Appending a duplicate row and a price change for the same order ID
+       must not insert another order.
     """
     from sample_dataset import synthetic_youzan_df
 
@@ -159,14 +159,15 @@ def test_csv_reingest_and_modified_rows(db_session):
 
     df_raw = synthetic_youzan_df()
 
-    # First ingestion: all rows with a unique order_id accepted by the legacy
-    # direct ingest path should be new.
-    inserted1 = ingest(df_raw, session)
+    # First ingestion: all rows with a unique order_id accepted by the production
+    # upload path should be new.
+    inserted1 = ingest_upload(df_raw, session, filename="test-upload.csv")["inserted_orders"]
+    assert inserted1 > 0
     expected_rows = inserted1
     assert session.query(Order).count() == expected_rows
 
     # Re-ingest the exact same file – nothing new should be added
-    inserted2 = ingest(df_raw, session)
+    inserted2 = ingest_upload(df_raw, session, filename="test-upload.csv")["inserted_orders"]
     assert inserted2 == 0
     assert session.query(Order).count() == expected_rows
 
@@ -176,13 +177,13 @@ def test_csv_reingest_and_modified_rows(db_session):
     modified["订单实付金额"] = "999.99"
     df_modified = pd.concat([df_raw, duplicate, modified], ignore_index=True)
 
-    inserted3 = ingest(df_modified, session)
+    inserted3 = ingest_upload(df_modified, session, filename="test-upload.csv")["inserted_orders"]
 
     # Both rows use an existing order_id, so neither should be inserted.
     assert inserted3 == 0
     assert session.query(Order).count() == expected_rows
 
-    inserted4 = ingest(df_modified, session)
+    inserted4 = ingest_upload(df_modified, session, filename="test-upload.csv")["inserted_orders"]
 
     # Re-ingesting that same modified set should not add anything else.
     assert inserted4 == 0

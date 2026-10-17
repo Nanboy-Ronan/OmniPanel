@@ -102,10 +102,12 @@ export function prepareReportHtml(html: string, embedded = false): string {
     const start = code.indexOf(`new Chart(${chart.token},`);
     const end = code.indexOf('new Chart(', start + 10);
     const block = start < 0 ? '' : code.slice(start, end < 0 ? undefined : end);
+    const parsed = arrays(block, 'labels')[0]?.filter((v): v is string => typeof v === 'string');
+    // Archived labels win when they line up (e.g. 小红书观看 replaced 小红书曝光 in 2026-10).
     const labels =
-      chart.labels ??
-      arrays(block, 'labels')[0]?.filter((v): v is string => typeof v === 'string') ??
-      [];
+      chart.labels && parsed?.length === chart.labels.length
+        ? parsed
+        : (chart.labels ?? parsed ?? []);
     const data = arrays(block, 'data').slice(0, chart.names.length);
     const holder = doc.createElement('div');
     if (
@@ -125,7 +127,7 @@ export function prepareReportHtml(html: string, embedded = false): string {
       if (chart.id === 'chartPlatformCompare') {
         const note = doc.createElement('p');
         note.textContent =
-          '沿用归档图表中的指标值；多账号平台不代表账号合计。未采集的指标不记为零。';
+          '沿用归档图表中的指标值。2026-10 起各平台为账号合计，小红书为数据概览观看（两周完整时）；更早的报告多账号平台只含首个账号。未采集的指标留空，不记为零。';
         note.style.cssText = 'font-size:12px;color:#60758a;line-height:1.6';
         holder.append(note);
       }

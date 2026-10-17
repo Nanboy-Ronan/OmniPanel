@@ -43,6 +43,16 @@ def _fmt_int(value: Any) -> str:
         return "—"
 
 
+def _fmt_pct100(value: Any) -> str:
+    """For values already in percent (0-100), e.g. 小红书 数据概览 rates and source shares."""
+    if _is_invalid(value):
+        return "—"
+    try:
+        return f"{float(value):.1f}%"
+    except (ValueError, TypeError):
+        return "—"
+
+
 def _fmt_pct(value: Any) -> str:
     if _is_invalid(value):
         return "—"
@@ -93,8 +103,8 @@ def _sparkline(deltas: list[tuple[Any, int]], width: int = 160, height: int = 32
         f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
         f'class="sparkline" aria-hidden="true">'
         f'<polyline points="{points}" fill="none" stroke-width="2" '
-        f'stroke-linecap="round" stroke-linejoin="round" style="stroke:var(--ink-muted)" />'
-        f'<circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="3" style="fill:var(--accent)" />'
+        f'stroke-linecap="round" stroke-linejoin="round" style="stroke:var(--ink-muted, #94a3b8)" />'
+        f'<circle cx="{last_x:.1f}" cy="{last_y:.1f}" r="3" style="fill:var(--accent, #10b981)" />'
         f"</svg>"
     )
 
@@ -102,6 +112,7 @@ def _sparkline(deltas: list[tuple[Any, int]], width: int = 160, height: int = 32
 _env.filters["fmt_num"] = _fmt_num
 _env.filters["fmt_int"] = _fmt_int
 _env.filters["fmt_pct"] = _fmt_pct
+_env.filters["fmt_pct100"] = _fmt_pct100
 _env.filters["fmt_date"] = _fmt_date
 _env.filters["fmt_datetime"] = _fmt_datetime
 _env.filters["sparkline"] = _sparkline

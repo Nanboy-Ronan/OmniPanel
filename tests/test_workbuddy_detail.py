@@ -49,17 +49,25 @@ def test_detail_projection_pagination_and_new_sources(client,tokens,business_dat
     token=issue(client,tokens)['token']
     ids=business_data
     accounts=result(client,token,'list_media_accounts')
-    assert all(r['name']!='off' for r in accounts['data'])
+    # Deactivated accounts stay listed (flagged) so details add up to query_media_metrics totals.
+    assert {(r['source'],r['name'],r.get('is_active')) for r in accounts['data'] if r['source']=='xhs'}=={('xhs','xhs',True),('xhs','off',False)}
+    # 蒲公英 only for accounts with it enabled or with existing notes.
+    assert [r['account_id'] for r in accounts['data'] if r['source']=='pgy']==[ids['xhs']]
     assert 'private' not in json.dumps(accounts)
     args=dict(start_date='2026-10-05',end_date='2026-10-11')
     page=result(client,token,'query_media_posts',source='xhs',limit=2,**args)
-    assert page['total']==3 and page['next_offset']==2
+    assert page['total']==4 and page['next_offset']==2
+    totals=result(client,token,'query_media_metrics',source='xhs',**args)
+    assert totals['data']['posts']==page['total']
     assert result(client,token,'query_media_posts',source='xhs',offset=2,limit=2,**args)['next_offset'] is None
+    page=result(client,token,'query_media_posts',source='xhs',account_id=ids['xhs'],**args)
+    assert page['total']==3
     for source,expected in [('pgy',200),('zhihu',70)]:
         out=result(client,token,'query_media_posts',source=source,**args)
         assert out['data'][0]['reads']==expected
         assert 'private' not in json.dumps(out) and 'blogger_quote' not in json.dumps(out)
-    assert call(client,token,'query_media_posts',{**args,'source':'xhs','account_id':ids['off']})['isError']
+    assert result(client,token,'query_media_posts',source='xhs',account_id=ids['off'],**args)['total']==1
+    assert call(client,token,'query_media_posts',{**args,'source':'xhs','account_id':999999})['isError']
     assert call(client,token,'query_media_posts',{**args,'source':'zhihu','account_id':1})['isError']
     out=result(client,token,'query_media_posts',source='wechat',**args)
     assert len(out['data'])==1 and out['data'][0]['title']=='new article'
@@ -128,3 +136,19 @@ def test_full_report_and_invalid_date_audited(client,tokens,business_data):
     assert call(client,token,'query_media_posts',{'source':'xhs','start_date':'2026-10-11','end_date':'2026-10-05'})['isError']
     rows=client.get('/integrations/workbuddy/queries',headers=jwt_headers(tokens)).json()
     assert rows[0]['outcome']=='error'
+
+
+def test_wechat_article_without_publish_date_is_included(client,tokens,business_data):
+    from app import db
+    from app.db.models import MediaPost, MediaPostMetricDaily
+    async def seed():
+        async with db.AsyncSessionLocal() as s:
+            post=MediaPost(account_id=business_data['wechat'],platform='wechat_official',external_id='undated',title='undated article')
+            s.add(post); await s.flush()
+            s.add(MediaPostMetricDaily(post_id=post.id,metric_date=date(2026,10,11),read_user_count=5))
+            await s.commit()
+    asyncio.run(seed())
+    token=issue(client,tokens)['token']
+    out=result(client,token,'query_wechat_period',account_id=business_data['wechat'],start_date='2026-10-05',end_date='2026-10-11')
+    undated=next(r for r in out['data'] if r['title']=='undated article')
+    assert undated['is_new_in_period'] is False and undated['complete'] is False

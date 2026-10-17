@@ -7,7 +7,7 @@
   "description_en": "Repair owned collector accounts using a local browser and verified credential upload.",
   "source": "omnipanel-collector-login",
   "type": "cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minWorkbuddyVersion": "5.0.0",
   "examples_zh": [
     "帮我修复小红书采集登录",

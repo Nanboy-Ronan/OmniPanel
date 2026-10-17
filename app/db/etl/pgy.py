@@ -9,8 +9,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from ..models import PgyNote
-from ._upsert import coalesce_update_set
+from ..models import PgyNote, PgyNoteSnapshot
+from ._upsert import coalesce_update_set, write_snapshots
 
 _DEDUP_CONSTRAINT = "uq_pgy_notes_account_note_id"
 
@@ -219,7 +219,7 @@ def parse_pgy_xlsx(df_raw: pd.DataFrame) -> list[dict]:
         })
     return rows
 
-def upsert_pgy_notes(rows: list[dict], account_id: int, session: Session) -> dict:
+def upsert_pgy_notes(rows: list[dict], account_id: int, session: Session, *, captured_on=None, source_file_id=None) -> dict:
     if not rows:
         return {"total": 0, "upserted": 0}
 
@@ -232,6 +232,8 @@ def upsert_pgy_notes(rows: list[dict], account_id: int, session: Session) -> dic
         set_=coalesce_update_set(insert, PgyNote, _UPSERT_UPDATE_COLS)
         | {"updated_at": text("NOW()")},
     )
-    session.execute(stmt)
+    returned = session.execute(stmt.returning(PgyNote.id, PgyNote.note_id)).all()
+    snapshots = write_snapshots(session, PgyNoteSnapshot, returned, rows, ("note_id",),
+                                captured_on=captured_on, source_file_id=source_file_id)
     session.commit()
-    return {"total": len(rows), "upserted": len(rows)}
+    return {"total": len(rows), "upserted": len(rows), "snapshots": snapshots}

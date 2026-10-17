@@ -20,6 +20,7 @@ from ...db.models import Order, UploadBatch, UploadRejectedRow
 from ...auth import current_active_user
 from ...utils.cache import analysis_cache
 from ...utils.logger import log_exc, log_operation
+from ...db.raw_archive import archived_upload
 from ...utils.spreadsheet import SpreadsheetTooLarge, check_xlsx_expansion, read_excel_safely
 
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -90,6 +91,14 @@ def _peek_platform(tmp_path: str, filename: str) -> str | None:
         return detect_platform(header_df)
     except Exception:
         return None
+
+
+def _archive(path: str, filename: str, user_id: str, batch_id: int) -> None:
+    with _db_mod.SyncSessionLocal() as sync_sess:
+        with archived_upload(sync_sess, path, source="orders", filename=filename,
+                             uploaded_by=user_id, upload_batch_id=batch_id):
+            pass
+        sync_sess.commit()
 
 
 async def _run_ingestion(
@@ -163,6 +172,10 @@ async def _run_ingestion(
             )
         except Exception as exc:
             log_exc(_logger, "upload_audit_log_failed", exc, batch_id=batch_id)
+        try:
+            await asyncio.to_thread(_archive, tmp_path, filename, user_id, batch_id)
+        except Exception as exc:
+            log_exc(_logger, "upload_archive_failed", exc, batch_id=batch_id)
 
     finally:
         if os.path.exists(tmp_path):

@@ -26,6 +26,7 @@ from ...db.etl.pgy import parse_pgy_xlsx, upsert_pgy_notes
 from ...db.models import XhsAccount, PgyNote
 from ...utils.logger import log_operation
 from ...utils.spreadsheet import read_excel_safely
+from ...db.raw_archive import archived_upload
 from ._upload_file import save_upload
 
 router = APIRouter(prefix="/media/pgy", tags=["pugongying"])
@@ -61,8 +62,10 @@ async def upload_pgy(
             rows = parse_pgy_xlsx(df_raw)
             if not rows:
                 raise ValueError("文件中未解析到有效行，请确认格式正确。")
-            with _db_mod.SyncSessionLocal() as sync_sess:
-                return upsert_pgy_notes(rows, account_id, sync_sess)
+            with _db_mod.SyncSessionLocal() as sync_sess, archived_upload(
+                    sync_sess, path, source="pgy_notes", filename=filename,
+                    account_id=account_id, uploaded_by=str(_user.id)) as raw_file:
+                return upsert_pgy_notes(rows, account_id, sync_sess, source_file_id=raw_file.id)
 
         result = await asyncio.to_thread(_process, tmp_path)
 

@@ -312,6 +312,7 @@ def _collector_source_problems_sync(session_factory, settings, max_age_hours: fl
     """
     from sqlalchemy import extract, func, select
 
+    from .collector.runs import LOGIN_CHECK_TRIGGERS
     from .db.models import CollectorRun
 
     with session_factory() as session:
@@ -325,7 +326,7 @@ def _collector_source_problems_sync(session_factory, settings, max_age_hours: fl
                 CollectorRun.content_type,
                 extract("epoch", func.now() - func.max(CollectorRun.started_at)),
             )
-            .where(CollectorRun.status == "success", CollectorRun.triggered_by != "verify")
+            .where(CollectorRun.status == "success", CollectorRun.triggered_by.not_in(LOGIN_CHECK_TRIGGERS))
             .group_by(CollectorRun.platform, CollectorRun.account_id, CollectorRun.content_type)
         ).all()
     ages = {(r[0], r[1], r[2]): float(r[3]) for r in rows if r[3] is not None}
@@ -635,8 +636,9 @@ async def _weekly_report_check(settings, today: date, alerted_missed: set[date])
     if missed:
         weeks = "、".join(f"{w:%Y-%m-%d}~{w + timedelta(days=6):%m-%d}" for w in missed)
         await _notify_wecom(
-            f"[周报告警] 以下 {len(missed)} 周的周报未生成/未推送（服务停机超过一周）：{weeks}。"
-            "系统不会自动补发旧周报，如需补发请在管理页手动生成。"
+            f"[周报告警] 以下 {len(missed)} 周的周报未生成/未推送：{weeks}。"
+            "可能是服务停机，或生成失败、推送失败/结果未确认后未处理，请在周报页查看各周状态。"
+            "系统不会自动补发旧周报，如需补发请在周报页手动处理。"
         )
         alerted_missed.update(missed)
     await _run_weekly_report_once()

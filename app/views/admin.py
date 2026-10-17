@@ -56,7 +56,7 @@ async def clear_database(
         await session.execute(delete(UploadBatch))
         await session.execute(delete(Order))
         await session.execute(delete(Customer))
-        await session.execute(delete(OperationLog))
+        # operation_log is the audit trail (sign-ins, exports, data changes): never wiped by the app.
 
         await session.commit()
 
@@ -207,11 +207,18 @@ async def update_user_role(
         user = result.scalar_one_or_none()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
+        previous = user.role
         user.role = role
+        revoked = 0
+        if role == "viewer" and previous != "viewer":
+            # WorkBuddy needs analyst/admin; a later re-promotion must not revive old credentials.
+            from ..integrations.workbuddy.auth import revoke_user_credentials
+            revoked = await revoke_user_credentials(session, user.id)
         await session.commit()
 
         await log_operation(
-            str(_user.id), "update_role", {"target_user": user_id, "new_role": role},
+            str(_user.id), "update_role",
+            {"target_user": user_id, "new_role": role, **({"revoked_workbuddy_credentials": revoked} if revoked else {})},
             session=session,
         )
         return {"detail": "Role updated"}
@@ -242,10 +249,16 @@ async def update_user_active(
         if str(user.id) == str(_user.id):
             raise HTTPException(status_code=400, detail="Cannot change your own active status.")
         user.is_active = payload.is_active
+        revoked = 0
+        if not payload.is_active:
+            # Re-enabling an account must not silently revive its WorkBuddy credentials.
+            from ..integrations.workbuddy.auth import revoke_user_credentials
+            revoked = await revoke_user_credentials(session, user.id)
         await session.commit()
         await log_operation(
             str(_user.id), "update_active",
-            {"target_user": user_id, "is_active": payload.is_active},
+            {"target_user": user_id, "is_active": payload.is_active,
+             **({"revoked_workbuddy_credentials": revoked} if revoked else {})},
             session=session,
         )
         return {"detail": "Active status updated"}
@@ -347,12 +360,19 @@ LOG_CATEGORIES: dict[str, tuple[str, ...]] = {
         "register", "wecom_register",
     ),
     "access": ("download", "export_client", "view_customer", "view_order_raw", "sql_query", "nl_sql_query", "workbuddy_query"),
+    "integration": (
+        "workbuddy_token_created", "workbuddy_token_revoked", "workbuddy_token_admin_revoked",
+        "workbuddy_oauth_registered", "workbuddy_oauth_consent", "workbuddy_oauth_connected",
+        "workbuddy_oauth_revoked", "workbuddy_oauth_replay_revoked",
+        "collector_owner_update", "collector_repair_approve", "collector_repair_finish",
+    ),
     "data": (
         "upload", "xhs_upload", "xhs_upload_overview", "zhihu_upload", "pgy_upload", "channels_upload",
-        "wechat_sync", "clear_db", "weekly_report_run",
+        "wechat_sync", "clear_db", "weekly_report_run", "workbuddy_delivery_action",
+        "workbuddy_report_queued", "workbuddy_report_generated", "workbuddy_report_delivery",
         "media_account_create", "xhs_account_create", "xhs_account_update", "xhs_account_delete",
         "channels_account_create", "channels_account_update", "channels_account_delete",
-        "collector_session_upload", "collector_session_delete",
+        "collector_session_upload", "collector_session_delete", "collector_request",
         "saved_query_create", "saved_query_delete",
     ),
     "admin": (
@@ -366,7 +386,7 @@ LOG_CATEGORIES: dict[str, tuple[str, ...]] = {
 async def get_logs(
     response: Response,
     user_id: str | None = None,
-    category: str | None = Query(None, pattern="^(auth|access|data|admin|failed)$"),
+    category: str | None = Query(None, pattern="^(auth|access|integration|data|admin|failed)$"),
     start_date: date | None = None,
     end_date: date | None = None,
     q: str | None = Query(None, max_length=100),

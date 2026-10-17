@@ -30,3 +30,14 @@ def test_helper_does_not_export_unrelated_browser_credentials(monkeypatch):
     context.storage_state.return_value={"cookies":[{"domain":".xiaohongshu.com","value":"a"},{"domain":"evilxiaohongshu.com","value":"b"},{"domain":"dashboard.example.com","value":"platform-token"}],"origins":[{"origin":"https://pro.xiaohongshu.com"},{"origin":"https://other.example.com"}]}
     result=module.restricted_state(context,'xhs')
     assert result == {"cookies":[{"domain":".xiaohongshu.com","value":"a"}],"origins":[{"origin":"https://pro.xiaohongshu.com"}]}
+
+
+def test_helper_only_opens_company_console_links(monkeypatch):
+    import importlib
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / 'integrations/collector-login'))
+    module = importlib.import_module('rpa_collector_login.cli')
+    monkeypatch.setattr(module, 'BASE', 'https://dashboard.example.com')
+    good={"id":"abc","verification_url":"https://dashboard.example.com/console/?repair=abc"}
+    assert module.verification_url(good) == good["verification_url"]
+    for bad in ("https://evil.example/console/?repair=abc","https://dashboard.example.com.evil.example/console/","javascript:alert(1)",None):
+        assert module.verification_url({"id":"abc","verification_url":bad}) == "https://dashboard.example.com/console/?repair=abc"

@@ -4,6 +4,7 @@ from datetime import date
 import enum
 import uuid
 from sqlalchemy import (
+    BigInteger,
     Column,
     Float,
     Index,
@@ -19,6 +20,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     func,
+    text,
 )
 from sqlalchemy.orm import relationship
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
@@ -61,6 +63,8 @@ class WorkBuddyOAuthRequest(Base):
     code_hash = Column(String(64), unique=True)
     decided_at = Column(DateTime(timezone=True))
     consumed_at = Column(DateTime(timezone=True))
+    issued_token_id = Column(UUID(as_uuid=True), ForeignKey("integration_tokens.id", ondelete="SET NULL"))
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class WorkBuddyOAuthGrant(Base):
@@ -84,6 +88,26 @@ class CollectorOwner(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
 
 
+class CollectorRequest(Base):
+    """An on-demand collect of one target, run by the collector's own timer unit
+    (`python -m app.collector run-requests`), never inside the backend."""
+    __tablename__ = "collector_requests"
+    id = Column(Integer, primary_key=True)
+    platform = Column(String(20), nullable=False)
+    account_id = Column(Integer)
+    reason = Column(String(16), nullable=False)  # repair | admin
+    requested_by = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="SET NULL"))
+    status = Column(String(16), nullable=False, server_default="queued")  # queued|running|done|failed|skipped
+    exit_code = Column(Integer)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    started_at = Column(DateTime(timezone=True))
+    finished_at = Column(DateTime(timezone=True))
+    __table_args__ = (
+        Index("uq_collector_requests_open", "platform", text("coalesce(account_id, 0)"), unique=True,
+              postgresql_where=text("status IN ('queued', 'running')")),
+    )
+
+
 class CollectorRepair(Base):
     __tablename__ = "collector_repairs"
     id = Column(String(64), primary_key=True)
@@ -93,6 +117,9 @@ class CollectorRepair(Base):
     platform = Column(String(20))
     account_id = Column(Integer)
     status = Column(String(24), nullable=False, server_default="pending")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Short code the local helper prints; the approver confirms it matches.
+    user_code = Column(String(16))
 
 
 class User(SQLAlchemyBaseUserTableUUID, Base):
@@ -464,6 +491,10 @@ class XhsAccount(Base):
     account_type = Column(String(20), nullable=False, server_default="company")
     is_active = Column(Boolean, nullable=False, server_default="true")
     pgy_enabled = Column(Boolean, nullable=False, server_default="false")
+    # Name the portal shows after login, when it differs from `name` (e.g. an internal note).
+    # The login re-check matches it exactly; NULL means `name`.
+    portal_name = Column(String(200), nullable=True)
+    pgy_portal_name = Column(String(200), nullable=True)  # 蒲公英; NULL falls back to portal_name
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     posts = relationship("XhsPost", back_populates="account", cascade="all, delete-orphan")
@@ -636,6 +667,7 @@ class WxChannelsAccount(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(200), nullable=False, unique=True)
     is_active = Column(Boolean, nullable=False, server_default="true")
+    portal_name = Column(String(200), nullable=True)  # See XhsAccount.portal_name.
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     posts = relationship("WxChannelsPost", back_populates="account", cascade="all, delete-orphan")
@@ -825,6 +857,7 @@ class WorkBuddyReportJob(Base):
     generation_error = Column(String(200), nullable=True)
     delivery_error = Column(String(200), nullable=True)
     delivery_attempts = Column(Integer, nullable=False, server_default="0")
+    prepare_attempts = Column(Integer, nullable=False, server_default="0")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -852,4 +885,160 @@ class WeeklyReportRun(Base):
 
     __table_args__ = (
         Index("ix_weekly_report_runs_week_start", "week_start"),
+    )
+
+
+class RawUploadFile(Base):
+    """An uploaded export file kept as received, so data can be re-parsed or audited later.
+
+    One row per successful import (manual or collector). The file lives under
+    the raw archive directory until retention removes it; the row stays.
+    """
+
+    __tablename__ = "raw_upload_files"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(32), nullable=False)  # e.g. orders, xhs_posts, pgy_notes
+    account_id = Column(Integer, nullable=True)
+    upload_batch_id = Column(Integer, ForeignKey("upload_batches.id", ondelete="SET NULL"), nullable=True)
+    filename = Column(String(500), nullable=False)
+    sha256 = Column(String(64), nullable=False)
+    size_bytes = Column(BigInteger, nullable=False)
+    archive_path = Column(String(1000), nullable=True)  # NULL once retention removed the file
+    uploaded_by = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    purged_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_raw_upload_files_source_created", "source", "created_at"),
+        Index("ix_raw_upload_files_sha256", "sha256"),
+    )
+
+
+# ── Post metric snapshots ─────────────────────────────────────────────────────
+# The *_posts / pgy_notes tables hold each post's latest cumulative metrics and
+# are overwritten on every upload. These append-only tables keep one row per
+# post per capture day (app timezone) with the values exactly as that day's
+# file reported them, so growth over time can be measured. A second upload on
+# the same day replaces that day's row.
+
+
+class XhsPostSnapshot(Base):
+    __tablename__ = "xhs_post_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(Integer, ForeignKey("xhs_posts.id", ondelete="CASCADE"), nullable=False)
+    captured_on = Column(Date, nullable=False)
+    source_file_id = Column(Integer, ForeignKey("raw_upload_files.id", ondelete="SET NULL"), nullable=True)
+    impressions = Column(Integer, nullable=True)
+    views = Column(Integer, nullable=True)
+    cover_click_rate = Column(Float, nullable=True)
+    likes = Column(Integer, nullable=True)
+    comments = Column(Integer, nullable=True)
+    collects = Column(Integer, nullable=True)
+    new_followers = Column(Integer, nullable=True)
+    shares = Column(Integer, nullable=True)
+    avg_watch_time = Column(Float, nullable=True)
+    danmu = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "captured_on", name="uq_xhs_post_snapshots_post_day"),
+        Index("ix_xhs_post_snapshots_captured_on", "captured_on"),
+    )
+
+
+class ZhihuPostSnapshot(Base):
+    __tablename__ = "zhihu_post_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(Integer, ForeignKey("zhihu_posts.id", ondelete="CASCADE"), nullable=False)
+    captured_on = Column(Date, nullable=False)
+    source_file_id = Column(Integer, ForeignKey("raw_upload_files.id", ondelete="SET NULL"), nullable=True)
+    reads = Column(Integer, nullable=True)
+    plays = Column(Integer, nullable=True)
+    likes = Column(Integer, nullable=True)
+    favorites = Column(Integer, nullable=True)
+    comments = Column(Integer, nullable=True)
+    collects = Column(Integer, nullable=True)
+    shares = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "captured_on", name="uq_zhihu_post_snapshots_post_day"),
+        Index("ix_zhihu_post_snapshots_captured_on", "captured_on"),
+    )
+
+
+class WxChannelsPostSnapshot(Base):
+    __tablename__ = "wx_channels_post_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(Integer, ForeignKey("wx_channels_posts.id", ondelete="CASCADE"), nullable=False)
+    captured_on = Column(Date, nullable=False)
+    source_file_id = Column(Integer, ForeignKey("raw_upload_files.id", ondelete="SET NULL"), nullable=True)
+    plays = Column(Integer, nullable=True)
+    recommends = Column(Integer, nullable=True)
+    likes_thumb = Column(Integer, nullable=True)
+    comments = Column(Integer, nullable=True)
+    shares = Column(Integer, nullable=True)
+    new_fans = Column(Integer, nullable=True)
+    forwards_chat_moments = Column(Integer, nullable=True)
+    set_as_ringtone = Column(Integer, nullable=True)
+    set_as_status = Column(Integer, nullable=True)
+    set_as_moments_cover = Column(Integer, nullable=True)
+    wecom_link_clicks = Column(Integer, nullable=True)
+    wecom_link_click_users = Column(Integer, nullable=True)
+    added_to_contacts = Column(Integer, nullable=True)
+    added_to_contacts_users = Column(Integer, nullable=True)
+    avg_watch_duration = Column(Float, nullable=True)
+    completion_rate = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "captured_on", name="uq_wx_channels_post_snapshots_post_day"),
+        Index("ix_wx_channels_post_snapshots_captured_on", "captured_on"),
+    )
+
+
+class PgyNoteSnapshot(Base):
+    """蒲公英 note metrics over time. post_id references pgy_notes.id (not the portal note_id)."""
+
+    __tablename__ = "pgy_note_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(Integer, ForeignKey("pgy_notes.id", ondelete="CASCADE"), nullable=False)
+    captured_on = Column(Date, nullable=False)
+    source_file_id = Column(Integer, ForeignKey("raw_upload_files.id", ondelete="SET NULL"), nullable=True)
+    data_date = Column(Date, nullable=True)
+    blogger_fans = Column(Integer, nullable=True)
+    blogger_quote = Column(Float, nullable=True)
+    service_fee = Column(Float, nullable=True)
+    impressions = Column(Integer, nullable=True)
+    reads = Column(Integer, nullable=True)
+    read_uv = Column(Integer, nullable=True)
+    play_rate_5s = Column(String(20), nullable=True)
+    read_rate_3s = Column(String(20), nullable=True)
+    avg_view_duration = Column(Float, nullable=True)
+    video_completion_rate = Column(String(20), nullable=True)
+    interactions = Column(Integer, nullable=True)
+    interaction_rate = Column(String(20), nullable=True)
+    likes = Column(Integer, nullable=True)
+    collects = Column(Integer, nullable=True)
+    comments = Column(Integer, nullable=True)
+    shares = Column(Integer, nullable=True)
+    follows = Column(Integer, nullable=True)
+    organic_impressions = Column(Integer, nullable=True)
+    organic_reads = Column(Integer, nullable=True)
+    paid_impressions = Column(Integer, nullable=True)
+    paid_reads = Column(Integer, nullable=True)
+    boosted_impressions = Column(Integer, nullable=True)
+    boosted_reads = Column(Integer, nullable=True)
+    cost_per_read = Column(Float, nullable=True)
+    cost_per_interaction = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("post_id", "captured_on", name="uq_pgy_note_snapshots_post_day"),
+        Index("ix_pgy_note_snapshots_captured_on", "captured_on"),
     )

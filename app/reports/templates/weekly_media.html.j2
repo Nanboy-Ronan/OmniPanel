@@ -609,7 +609,29 @@
           <div class="kpi-value">{{ totals_this.collection_user | fmt_int }}</div>
           {{ render_delta(totals_this.collection_user, totals_last.collection_user) }}
         </div>
+        <div class="kpi-card">
+          <div class="kpi-label">在看</div>
+          <div class="kpi-value">{{ totals_this.zaikan_user | fmt_int }}</div>
+          {{ render_delta(totals_this.zaikan_user, totals_last.zaikan_user) }}
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">关注者阅读人数</div>
+          <div class="kpi-value">{{ totals_this.read_subscribe_user | fmt_int }}</div>
+          {{ render_delta(totals_this.read_subscribe_user, totals_last.read_subscribe_user) }}
+        </div>
       </div>
+      {% if section.read_sources %}
+      <h4 style="margin: 16px 0 8px; color: var(--text-muted);">📥 本周阅读来源（各文章快照差合计）</h4>
+      <div class="source-list">
+        {% for src in section.read_sources[:8] %}
+        <div class="source-item">
+          <div class="source-name">{{ src.scene }}</div>
+          <div class="source-bar-bg"><div class="source-bar-fill" style="width: {{ src.share_pct }}%; background: var(--brand-wechat);"></div></div>
+          <div class="source-pct">{{ src.readers | fmt_int }} · {{ src.share_pct | fmt_pct100 }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
 
       <!-- Follower stats if available -->
       {% if section.follower and section.follower.available %}
@@ -644,8 +666,9 @@
               <th>标题</th>
               <th>发布日期</th>
               <th class="num">阅读人数</th>
-              <th class="num">单篇带粉</th>
+              <th class="num">关注者阅读</th>
               <th class="num">完读率</th>
+              <th class="num">送达阅读率</th>
               <th class="num">人均阅读时长</th>
               <th class="num">点赞</th>
               <th class="num">转发</th>
@@ -658,11 +681,12 @@
               <td>{{ a.publish_date | fmt_date }}</td>
               <td class="num">{{ a.counts_this_week.read_user_count | fmt_int }}</td>
               <td class="num">
-                {% if a.new_followers %}
-                <span class="badge badge-wechat">+{{ a.new_followers | fmt_int }}</span>
+                {% if a.subscriber_reads %}
+                {{ a.subscriber_reads | fmt_int }}
                 {% else %}—{% endif %}
               </td>
               <td class="num">{{ a.read_finish_rate | fmt_pct }}</td>
+              <td class="num">{{ a.read_delivery_rate | fmt_pct }}</td>
               <td class="num">{{ a.read_avg_time | fmt_num }}秒</td>
               <td class="num">{{ a.counts_this_week.like_user | fmt_int }}</td>
               <td class="num">{{ a.counts_this_week.share_user_count | fmt_int }}</td>
@@ -729,6 +753,82 @@
         <h3>{{ section.account.name }}</h3>
       </div>
 
+      <!-- Account-level 数据概览 (true daily series) -->
+      {% set am = section.account_metrics %}
+      <h4 style="margin: 0 0 8px; color: var(--text-muted);">📊 账号数据概览（创作者中心逐日数据）</h4>
+      {% if not am.available %}
+      <div class="empty-state">数据概览暂无本周数据，账号级观看与粉丝增减未纳入本周报。</div>
+      {% else %}
+      {% set tw = am.this_week %}
+      {% set lw = am.last_week if am.comparable else none %}
+      {% if not tw.complete %}
+      <div class="caveat-box">⚠️ 本周数据概览仅有 {{ tw.days_present }}/{{ tw.days_expected }} 天（缺 {% for d in tw.missing_dates %}{{ d | fmt_date }}{% if not loop.last %}、{% endif %}{% endfor %}），以下为已有天数合计，不作周环比。</div>
+      {% elif not am.comparable %}
+      <div class="caveat-box">ℹ️ 上周数据概览不完整（{{ am.last_week.days_present }}/{{ am.last_week.days_expected }} 天），本周不作环比。</div>
+      {% endif %}
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-label">账号观看量</div>
+          <div class="kpi-value">{{ tw.totals.view_count | fmt_int }}</div>
+          {{ render_delta(tw.totals.view_count, lw.totals.view_count if lw else none) }}
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">主页访问</div>
+          <div class="kpi-value">{{ tw.totals.home_view_count | fmt_int }}</div>
+          {{ render_delta(tw.totals.home_view_count, lw.totals.home_view_count if lw else none) }}
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">互动（赞/藏/评/分享）</div>
+          <div class="kpi-value">{{ tw.totals.interactions | fmt_int }}</div>
+          {{ render_delta(tw.totals.interactions, lw.totals.interactions if lw else none) }}
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">人均观看时长</div>
+          <div class="kpi-value">{% if tw.avg_view_time is not none %}{{ tw.avg_view_time | fmt_num }}s{% else %}—{% endif %}</div>
+          {{ render_delta(tw.avg_view_time, lw.avg_view_time if lw else none, true) }}
+        </div>
+        <div class="kpi-card" style="background: #f0fdf4;">
+          <div class="kpi-label" style="color:#166534;">新增关注</div>
+          <div class="kpi-value" style="color:#15803d;">+{{ tw.totals.rise_fans_count | fmt_int }}</div>
+          {{ render_delta(tw.totals.rise_fans_count, lw.totals.rise_fans_count if lw else none) }}
+        </div>
+        <div class="kpi-card" style="background: #fef2f2;">
+          <div class="kpi-label" style="color:#991b1b;">取消关注</div>
+          <div class="kpi-value" style="color:#dc2626;">-{{ tw.totals.loss_fans_count | fmt_int }}</div>
+          {{ render_delta(tw.totals.loss_fans_count, lw.totals.loss_fans_count if lw else none) }}
+        </div>
+        <div class="kpi-card" style="background: #eff6ff;">
+          <div class="kpi-label" style="color:#1e40af;">净增关注</div>
+          <div class="kpi-value" style="color:#2563eb;">{{ tw.totals.net_rise_fans_count | fmt_int }}</div>
+          {{ render_delta(tw.totals.net_rise_fans_count, lw.totals.net_rise_fans_count if lw else none) }}
+        </div>
+        {% if tw.full_view_rate is not none %}
+        <div class="kpi-card">
+          <div class="kpi-label">视频完播率（按观看加权）</div>
+          <div class="kpi-value">{{ tw.full_view_rate | fmt_pct100 }}</div>
+          {{ render_delta(tw.full_view_rate, lw.full_view_rate if lw else none, true) }}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <!-- Audience sources breakdown chart & list -->
+      {% if section.audience_sources %}
+      <h4 style="margin: 20px 0 8px; color: var(--text-muted);">👀 观看来源分布（{{ section.audience_snapshot_date | fmt_date }} 采集的近 7 天窗口）</h4>
+      <div class="source-list">
+        {% for src in section.audience_sources %}
+        <div class="source-item">
+          <div class="source-name">{{ src.title }}</div>
+          <div class="source-bar-bg">
+            <div class="source-bar-fill" style="width: {{ src.value_pct }}%; background: var(--brand-xhs);"></div>
+          </div>
+          <div class="source-pct">{{ src.value_pct | fmt_pct100 }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <h4 style="margin: 20px 0 8px; color: var(--text-muted);">📝 本周新发布笔记（截至采集时累计）</h4>
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">本周新发布</div>
@@ -748,54 +848,27 @@
         <div class="kpi-card">
           <div class="kpi-label">本周新发笔记总带粉</div>
           <div class="kpi-value">+{{ section.this_week_summary.total_new_followers | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_new_followers, section.last_week_summary.total_new_followers) }}
+          {{ render_cohort_ref(section.last_week_summary.total_new_followers) }}
         </div>
-      </div>
-
-      <!-- Follower dynamics if collected -->
-      {% if section.follower_dynamics %}
-      {% set fd = section.follower_dynamics %}
-      <h4 style="margin: 16px 0 8px; color: var(--text-muted);">👥 粉丝动态分析（数据概览）</h4>
-      <div class="kpi-grid">
-        <div class="kpi-card" style="background: #f0fdf4;">
-          <div class="kpi-label" style="color:#166534;">本周新增关注</div>
-          <div class="kpi-value" style="color:#15803d;">+{{ fd.this_week.rise_fans | fmt_int }}</div>
-          {{ render_delta(fd.this_week.rise_fans, fd.last_week.rise_fans) }}
-        </div>
-        <div class="kpi-card" style="background: #fef2f2;">
-          <div class="kpi-label" style="color:#991b1b;">本周取消关注</div>
-          <div class="kpi-value" style="color:#dc2626;">-{{ fd.this_week.loss_fans | fmt_int }}</div>
-          {{ render_delta(fd.this_week.loss_fans, fd.last_week.loss_fans) }}
-        </div>
-        <div class="kpi-card" style="background: #eff6ff;">
-          <div class="kpi-label" style="color:#1e40af;">本周净增关注</div>
-          <div class="kpi-value" style="color:#2563eb;">{{ fd.this_week.net_rise_fans | fmt_int }}</div>
-          {{ render_delta(fd.this_week.net_rise_fans, fd.last_week.net_rise_fans) }}
-        </div>
-        {% if fd.this_week.avg_full_view_rate %}
+        {% if section.this_week_summary.total_impressions is not none %}
         <div class="kpi-card">
-          <div class="kpi-label">视频平均完播率</div>
-          <div class="kpi-value">{{ fd.this_week.avg_full_view_rate | fmt_pct }}</div>
+          <div class="kpi-label">笔记曝光量</div>
+          <div class="kpi-value">{{ section.this_week_summary.total_impressions | fmt_int }}</div>
+          {{ render_cohort_ref(section.last_week_summary.total_impressions) }}
         </div>
         {% endif %}
-      </div>
-      {% endif %}
-
-      <!-- Audience sources breakdown chart & list -->
-      {% if section.audience_sources %}
-      <h4 style="margin: 20px 0 8px; color: var(--text-muted);">👀 观看来源分布拆解（近7天）</h4>
-      <div class="source-list">
-        {% for src in section.audience_sources %}
-        <div class="source-item">
-          <div class="source-name">{{ src.title }}</div>
-          <div class="source-bar-bg">
-            <div class="source-bar-fill" style="width: {{ src.value_pct }}%; background: var(--brand-xhs);"></div>
-          </div>
-          <div class="source-pct">{{ src.value_pct | fmt_pct }}</div>
+        {% if section.this_week_summary.cover_click_rate is not none %}
+        <div class="kpi-card">
+          <div class="kpi-label">封面点击率（按曝光加权）</div>
+          <div class="kpi-value">{{ section.this_week_summary.cover_click_rate | fmt_pct100 }}</div>
         </div>
-        {% endfor %}
+        {% endif %}
+        <div class="kpi-card">
+          <div class="kpi-label">笔记互动（赞/评/藏/分享）</div>
+          <div class="kpi-value">{{ section.this_week_summary.total_interactions | fmt_int }}</div>
+          {{ render_cohort_ref(section.last_week_summary.total_interactions) }}
+        </div>
       </div>
-      {% endif %}
 
       <!-- Top Follower-gaining notes -->
       {% if section.top_follower_sources %}
@@ -867,7 +940,7 @@
       {% endif %}
 
       {% if section.follower_source_caveat %}
-      <div class="caveat-box">ℹ️ {{ section.follower_source_caveat }}</div>
+      <div class="caveat-box">ℹ️ {{ section.follower_source_caveat }} {{ section.wow_caveat }}</div>
       {% endif %}
     </div>
     {% endfor %}
@@ -926,6 +999,30 @@
           <div class="kpi-value">{{ section.this_week_summary.total_new_fans | fmt_int }}</div>
           {{ render_cohort_ref(section.last_week_summary.total_new_fans) }}
         </div>
+        <div class="kpi-card">
+          <div class="kpi-label">点赞</div>
+          <div class="kpi-value">{{ section.this_week_summary.total_likes | fmt_int }}</div>
+          {{ render_cohort_ref(section.last_week_summary.total_likes) }}
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">转发聊天 / 朋友圈</div>
+          <div class="kpi-value">{{ section.this_week_summary.total_forwards | fmt_int }}</div>
+          {{ render_cohort_ref(section.last_week_summary.total_forwards) }}
+        </div>
+        {% if section.this_week_summary.total_wecom_link_clicks is not none %}
+        <div class="kpi-card">
+          <div class="kpi-label">企微链接点击 / 人数</div>
+          <div class="kpi-value">{{ section.this_week_summary.total_wecom_link_clicks | fmt_int }} / {{ section.this_week_summary.total_wecom_link_click_users | fmt_int }}</div>
+          {{ render_cohort_ref(section.last_week_summary.total_wecom_link_clicks) }}
+        </div>
+        {% endif %}
+        {% if section.this_week_summary.total_added_to_contacts is not none %}
+        <div class="kpi-card">
+          <div class="kpi-label">添加联系人 次数 / 用户</div>
+          <div class="kpi-value">{{ section.this_week_summary.total_added_to_contacts | fmt_int }} / {{ section.this_week_summary.total_added_to_contacts_users | fmt_int }}</div>
+          {{ render_cohort_ref(section.last_week_summary.total_added_to_contacts) }}
+        </div>
+        {% endif %}
       </div>
 
       <h4 style="margin: 16px 0 8px; color: var(--text-muted);">视频明细与完播分析</h4>
@@ -939,7 +1036,7 @@
               <th class="num">播放量</th>
               <th class="num">完播率</th>
               <th class="num">推荐</th>
-              <th class="num">喜欢</th>
+              <th class="num">点赞</th>
               <th class="num">评论</th>
               <th class="num">分享</th>
               <th class="num">新增粉丝</th>
@@ -1023,6 +1120,23 @@
           <div class="kpi-value">{{ context.zhihu_section.this_week_summary.total_shares | fmt_int }}</div>
           {{ render_cohort_ref(context.zhihu_section.last_week_summary.total_shares) }}
         </div>
+        {% if context.zhihu_section.this_week_summary.total_favorites is not none %}
+        <div class="kpi-card">
+          <div class="kpi-label">总赞同</div>
+          <div class="kpi-value">{{ context.zhihu_section.this_week_summary.total_favorites | fmt_int }}</div>
+          {{ render_cohort_ref(context.zhihu_section.last_week_summary.total_favorites) }}
+        </div>
+        {% endif %}
+        {% if context.zhihu_section.this_week_summary.total_plays %}
+        <div class="kpi-card">
+          <div class="kpi-label">视频播放量</div>
+          <div class="kpi-value">{{ context.zhihu_section.this_week_summary.total_plays | fmt_int }}</div>
+          {{ render_cohort_ref(context.zhihu_section.last_week_summary.total_plays) }}
+        </div>
+        {% endif %}
+      </div>
+      <div class="dim" style="margin-top:8px; font-size:12px;">
+        {% for code, t in context.zhihu_section.this_week_summary.by_type.items() %}{{ t.label }} {{ t.count | fmt_int }} 篇 · 阅读 {{ t.reads | fmt_int }}{% if not loop.last %}　｜　{% endif %}{% endfor %}
       </div>
 
       <h4 style="margin: 16px 0 8px; color: var(--text-muted);">知乎内容明细</h4>
@@ -1083,43 +1197,56 @@
     </div>
 
     {% for section in context.pgy_sections %}
+    {% set pt = section.this_week_summary %}
+    {% set pl = section.last_week_summary %}
     <div class="card">
       <div class="card-header">
         <h3>{{ section.account.name }}</h3>
+        {% if section.data_date %}<span class="dim" style="font-size:12px;">数据导出于 {{ section.data_date | fmt_date }}</span>{% endif %}
       </div>
 
       <div class="kpi-grid">
         <div class="kpi-card">
-          <div class="kpi-label">本周笔记数</div>
-          <div class="kpi-value">{{ section.this_week_summary.count | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.count, section.last_week_summary.count) }}
+          <div class="kpi-label">本周发布合作笔记</div>
+          <div class="kpi-value">{{ pt.count | fmt_int }}</div>
+          {{ render_delta(pt.count, pl.count) }}
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">总曝光量</div>
-          <div class="kpi-value">{{ section.this_week_summary.total_impressions | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_impressions, section.last_week_summary.total_impressions) }}
+          <div class="kpi-label">曝光量</div>
+          <div class="kpi-value">{{ pt.total_impressions | fmt_int }}</div>
+          {{ render_cohort_ref(pl.total_impressions) }}
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">总阅读量</div>
-          <div class="kpi-value">{{ section.this_week_summary.total_reads | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_reads, section.last_week_summary.total_reads) }}
+          <div class="kpi-label">阅读量 / 阅读人数</div>
+          <div class="kpi-value">{{ pt.total_reads | fmt_int }}{% if pt.total_read_uv is not none %} / {{ pt.total_read_uv | fmt_int }}{% endif %}</div>
+          {{ render_cohort_ref(pl.total_reads) }}
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">总互动量</div>
-          <div class="kpi-value">{{ section.this_week_summary.total_interactions | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_interactions, section.last_week_summary.total_interactions) }}
+          <div class="kpi-label">互动量</div>
+          <div class="kpi-value">{{ pt.total_interactions | fmt_int }}</div>
+          {{ render_cohort_ref(pl.total_interactions) }}
         </div>
         <div class="kpi-card">
           <div class="kpi-label">关注增量</div>
-          <div class="kpi-value">{{ section.this_week_summary.total_follows | fmt_int }}</div>
-          {{ render_delta(section.this_week_summary.total_follows, section.last_week_summary.total_follows) }}
+          <div class="kpi-value">{{ pt.total_follows | fmt_int }}</div>
+          {{ render_cohort_ref(pl.total_follows) }}
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">平均阅读单价</div>
-          <div class="kpi-value">¥{{ section.this_week_summary.avg_cost_per_read | fmt_num }}</div>
-          {{ render_delta(section.this_week_summary.avg_cost_per_read, section.last_week_summary.avg_cost_per_read, true, '¥') }}
+          <div class="kpi-label">合作花费（达人报价 + 服务费）</div>
+          <div class="kpi-value">{% if pt.total_spend is not none %}¥{{ pt.total_spend | fmt_num }}{% else %}—{% endif %}</div>
+          <div class="kpi-delta"><span class="dim">{% if pt.total_blogger_quote is not none %}报价 ¥{{ pt.total_blogger_quote | fmt_num }}{% endif %}{% if pt.total_service_fee is not none %} · 服务费 ¥{{ pt.total_service_fee | fmt_num }}{% endif %}{% if pt.missing_cost %} · {{ pt.missing_cost }} 篇缺费用{% endif %}</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">互动成本（CPE）</div>
+          <div class="kpi-value">{% if pt.cpe is not none %}¥{{ pt.cpe | fmt_num }}{% else %}—{% endif %}</div>
+          <div class="kpi-delta"><span class="dim">仅含费用完整的笔记{% if pt.avg_cost_per_read is not none %} · 平台阅读单价均值 ¥{{ pt.avg_cost_per_read | fmt_num }}{% endif %}</span></div>
         </div>
       </div>
+      {% if pt.organic_impressions is not none or pt.paid_impressions is not none or pt.boosted_impressions is not none %}
+      <div class="dim" style="margin-top:8px; font-size:12px; line-height:1.7;">
+        流量构成（曝光 / 阅读）：自然 {{ pt.organic_impressions | fmt_int }} / {{ pt.organic_reads | fmt_int }} · 付费 {{ pt.paid_impressions | fmt_int }} / {{ pt.paid_reads | fmt_int }} · 加热 {{ pt.boosted_impressions | fmt_int }} / {{ pt.boosted_reads | fmt_int }}
+      </div>
+      {% endif %}
 
       <h4 style="margin: 16px 0 8px; color: var(--text-muted);">合作笔记明细</h4>
       {% if section.this_week_notes %}
@@ -1135,6 +1262,7 @@
               <th class="num">互动</th>
               <th class="num">点赞</th>
               <th class="num">收藏</th>
+              <th class="num">花费</th>
               <th class="num">阅读单价</th>
             </tr>
           </thead>
@@ -1142,14 +1270,15 @@
             {% for n in section.this_week_notes %}
             <tr>
               <td class="title">{{ n.note_title }}</td>
-              <td>{{ n.blogger_nickname }}</td>
+              <td>{{ n.blogger_nickname or '—' }}</td>
               <td>{{ n.publish_date | fmt_date }}</td>
               <td class="num">{{ n.impressions | fmt_int }}</td>
               <td class="num">{{ n.reads | fmt_int }}</td>
               <td class="num">{{ n.interactions | fmt_int }}</td>
               <td class="num">{{ n.likes | fmt_int }}</td>
               <td class="num">{{ n.collects | fmt_int }}</td>
-              <td class="num">¥{{ n.cost_per_read | fmt_num }}</td>
+              <td class="num">{% if n.spend is not none %}¥{{ n.spend | fmt_num }}{% else %}—{% endif %}</td>
+              <td class="num">{% if n.cost_per_read is not none %}¥{{ n.cost_per_read | fmt_num }}{% else %}—{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -1159,7 +1288,7 @@
       <div class="empty-state">本周暂无合作笔记数据。</div>
       {% endif %}
 
-      <div class="caveat-box">ℹ️ 数据来自蒲公英平台导出，统计合作笔记的全量数据。</div>
+      <div class="caveat-box">ℹ️ 数据来自蒲公英平台导出，按发布日期统计合作笔记截至导出时的累计表现。{{ section.wow_caveat }}</div>
     </div>
     {% endfor %}
   </section>
@@ -1197,11 +1326,32 @@
           {% if ecom_complete %}{{ render_delta(context.ecommerce_section.this_week_total.order_count, context.ecommerce_section.last_week_total.order_count) }}{% endif %}
         </div>
         <div class="kpi-card">
+          <div class="kpi-label">下单客户数</div>
+          <div class="kpi-value">{{ context.ecommerce_section.this_week_total.customers | fmt_int }}</div>
+          {% if ecom_complete %}{{ render_delta(context.ecommerce_section.this_week_total.customers, context.ecommerce_section.last_week_total.customers) }}{% endif %}
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">客单价</div>
+          <div class="kpi-value">{% if context.ecommerce_section.this_week_total.aov is not none %}¥{{ context.ecommerce_section.this_week_total.aov | fmt_num }}{% else %}—{% endif %}</div>
+          {% if ecom_complete %}{{ render_delta(context.ecommerce_section.this_week_total.aov, context.ecommerce_section.last_week_total.aov, true, '¥') }}{% endif %}
+        </div>
+        <div class="kpi-card">
           <div class="kpi-label">动销 SKU 种类</div>
           <div class="kpi-value">{{ context.ecommerce_section.this_week_total.sku_count | fmt_int }}</div>
           {% if ecom_complete %}{{ render_delta(context.ecommerce_section.this_week_total.sku_count, context.ecommerce_section.last_week_total.sku_count) }}{% endif %}
         </div>
       </div>
+      {% if context.ecommerce_section.daily %}
+      <div class="dim" style="display:flex; align-items:center; gap:10px; margin-top:10px; font-size:12px;">
+        本周每日 GMV {{ context.ecommerce_section.daily | sparkline(240, 36) | safe }}
+      </div>
+      {% endif %}
+      {% set st = context.ecommerce_section.status %}
+      {% if st %}
+      <div class="dim" style="margin-top:8px; font-size:12px; line-height:1.7;">
+        未计入 GMV：关闭/取消/未付款/已删除 {{ st.excluded_orders | fmt_int }} 单（¥{{ st.excluded_amount | fmt_num }}）；已扣除退款 ¥{{ st.refunds | fmt_num }}{% if st.unknown_orders %}；状态未知 {{ st.unknown_orders | fmt_int }} 单仍计入{% endif %}。
+      </div>
+      {% endif %}
 
       <!-- Platform breakdown cards -->
       <h4 style="margin: 20px 0 10px; color: var(--text-muted);">渠道销售拆解</h4>
@@ -1211,7 +1361,8 @@
           <div class="kpi-label">{{ platform.platform }} 渠道</div>
           <div class="kpi-value">¥{{ platform.this_week.gmv | fmt_num }}</div>
           {% if ecom_complete %}{{ render_delta(platform.this_week.gmv, platform.last_week.gmv, true, '¥') }}{% endif %}
-          <div class="dim" style="font-size:11.5px; margin-top:4px;">订单量：{{ platform.this_week.order_count | fmt_int }} 单</div>
+          <div class="dim" style="font-size:11.5px; margin-top:4px;">订单量：{{ platform.this_week.order_count | fmt_int }} 单{% if platform.this_week.customers %} · 客户 {{ platform.this_week.customers | fmt_int }}{% endif %}{% if platform.this_week.aov is not none %} · 客单价 ¥{{ platform.this_week.aov | fmt_num }}{% endif %}</div>
+          {% if platform.stale_through %}<div style="font-size:11.5px; margin-top:4px; color:#92400e;">⚠️ 订单仅上传至 {{ platform.stale_through | fmt_date }}</div>{% endif %}
         </div>
         {% endfor %}
       </div>
@@ -1228,7 +1379,7 @@
             <tr>
               <th style="width: 50px;">排名</th>
               <th>商品名称 / SKU</th>
-              <th class="num">销量</th>
+              <th class="num">数量*</th>
               <th class="num">销售额 (GMV)</th>
             </tr>
           </thead>
@@ -1243,7 +1394,7 @@
                 {% endif %}
               </td>
               <td class="title">{{ sku.sku }}</td>
-              <td class="num">{{ sku.quantity | fmt_int }}件</td>
+              <td class="num">{{ sku.quantity | fmt_int }}</td>
               <td class="num" style="font-weight: 700;">¥{{ sku.gmv | fmt_num }}</td>
             </tr>
             {% endfor %}
@@ -1285,7 +1436,7 @@
       </div>
       {% endif %}
 
-      <div class="caveat-box">ℹ️ 商城数据汇总自有赞、京东、天猫导出的订单。自 2026 年 10 月起，GMV 与订单数不含已关闭、已取消、未付款和京东已删除订单，有赞订单已扣除退款；此前推送的周报未重算。</div>
+      <div class="caveat-box">ℹ️ *数量：有赞导出只有「商品种类数」，京东/天猫为订购数量，合计不等于售出件数。商城数据汇总自有赞、京东、天猫导出的订单。自 2026 年 10 月起，GMV 与订单数不含已关闭、已取消、未付款和京东已删除订单，有赞订单已扣除退款；此前推送的周报未重算。</div>
     </div>
   </section>
   {% endif %}
@@ -1331,11 +1482,11 @@ document.addEventListener("DOMContentLoaded", function() {
           {
             label: '本周',
             data: [
-              {{ context.wechat_sections | map(attribute="totals_this_week.read_user_count") | sum }},
-              {{ context.xhs_sections | map(attribute="this_week_summary.total_views") | sum }},
-              {{ context.channels_sections | map(attribute="this_week_summary.total_plays") | sum }},
-              {{ context.zhihu_section.this_week_summary.total_reads if context.zhihu_section else 0 }},
-              {{ context.pgy_sections | map(attribute="this_week_summary.total_impressions") | sum }}
+              {{ context.wechat_reads.this_week if context.wechat_reads and context.wechat_reads.this_week is not none else 'null' }},
+              {{ context.xhs_views.this_week if context.xhs_views and context.xhs_views.this_week is not none else 'null' }},
+              {{ context.channels_plays.this_week if context.channels_plays and context.channels_plays.this_week is not none else 'null' }},
+              {{ context.zhihu_section.this_week_summary.total_reads if context.zhihu_section else 'null' }},
+              {{ context.pgy_impressions.this_week if context.pgy_impressions and context.pgy_impressions.this_week is not none else 'null' }}
             ],
             backgroundColor: '#3b82f6',
             borderRadius: 6
@@ -1343,11 +1494,11 @@ document.addEventListener("DOMContentLoaded", function() {
           {
             label: '上周',
             data: [
-              {{ context.wechat_sections | map(attribute="totals_last_week.read_user_count") | sum }},
-              {{ context.xhs_sections | map(attribute="last_week_summary.total_views") | sum }},
-              {{ context.channels_sections | map(attribute="last_week_summary.total_plays") | sum }},
-              {{ context.zhihu_section.last_week_summary.total_reads if context.zhihu_section else 0 }},
-              {{ context.pgy_sections | map(attribute="last_week_summary.total_impressions") | sum }}
+              {{ context.wechat_reads.last_week if context.wechat_reads and context.wechat_reads.last_week is not none else 'null' }},
+              {{ context.xhs_views.last_week if context.xhs_views and context.xhs_views.last_week is not none else 'null' }},
+              {{ context.channels_plays.last_week if context.channels_plays and context.channels_plays.last_week is not none else 'null' }},
+              {{ context.zhihu_section.last_week_summary.total_reads if context.zhihu_section else 'null' }},
+              {{ context.pgy_impressions.last_week if context.pgy_impressions and context.pgy_impressions.last_week is not none else 'null' }}
             ],
             backgroundColor: '#cbd5e1',
             borderRadius: 6

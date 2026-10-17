@@ -13,7 +13,7 @@
 
 规则：
 
-1. 只使用给定快照，遵守 definitions、warnings、complete 和 as_of。
+1. 只使用给定快照，遵守每项指标的 definition、complete，以及 warnings 和 as_of。
 2. 不重算或编造 GMV、订单数、环比。只引用平台提供的指标值；快照未给出的
    比率不要自行补充。不得把缺失数据当作零。
 3. 区分累计内容表现与周期新增；不同发布周期的累计播放/阅读不能直接作为
@@ -39,22 +39,24 @@
 
 ## 首次连通测试的合成输入
 
-以下完全为测试数据，可以粘贴到企业后台 Test Run。此结构是我们规划的平台输入，
-不是腾讯 API 请求协议；生产适配器已经实现结构校验和指标引用校验。
+以下完全为测试数据，可以粘贴到企业后台 Test Run。结构与生产
+`app/reports/workbuddy_snapshot.py::build_snapshot` 一致：每个指标自带 `definition`
+和 `complete`，没有单位、上期值或环比字段；上期值以 `.prior.` 前缀的独立指标给出，
+模型不得自行计算比率。此结构不是腾讯 API 请求协议。
 
 ```json
 {
   "snapshot_id": "synthetic-workbuddy-smoke-test",
+  "prompt_version": "weekly-v1",
   "period": {"start": "2026-09-28", "end": "2026-10-04", "timezone": "Asia/Shanghai"},
   "as_of": "2026-10-06T09:00:00+08:00",
   "metrics": [
-    {"metric_id": "commerce.net_gmv", "value": 80000, "unit": "CNY", "prior": 100000, "change_percent": -20, "complete": true},
-    {"metric_id": "commerce.orders", "value": 400, "prior": 500, "change_percent": -20, "complete": true},
-    {"metric_id": "xhs.cohort_views", "value": 12000, "complete": true}
+    {"metric_id": "commerce.current.gmv", "value": 80000, "definition": "剔除关闭、未付款、已删除订单，GMV扣除已记录退款；单位CNY。", "complete": true},
+    {"metric_id": "commerce.prior.gmv", "value": 100000, "definition": "剔除关闭、未付款、已删除订单，GMV扣除已记录退款；单位CNY。", "complete": true},
+    {"metric_id": "xhs.1.views", "value": 12000, "definition": "本周发布内容截至采集时的累计表现；不是本周新增，不能直接生成环比。", "complete": true}
   ],
-  "definitions": {"commerce.net_gmv": "剔除取消、未付款、已删除订单，扣除退款", "xhs.cohort_views": "本周发布笔记截至采集时的累计观看，非当周新增"},
-  "warnings": ["没有商品或渠道分解，不能判定GMV下降原因；没有小红书可比周期。"]
+  "warnings": ["媒体指标来自已有采集记录；缺少记录不能证明业务为零，采集完整性未全面核验。"]
 }
 ```
 
-验收：GMV 为 8 万，下降 20%；不编造下降原因，不生成小红书环比，不发送消息。
+验收：说明 GMV 为 8 万、上期 10 万，不编造下降原因，不生成小红书环比，不发送消息。
