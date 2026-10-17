@@ -13,6 +13,7 @@ Bring orders, content performance, and creator partnerships into one place. Expl
 
 ## Recent updates
 
+- **2026-10-17** — Hardened WorkBuddy (rate limits, revocation, report alerts and regeneration), added a confirmation code and immediate collect to login repair, and kept per-day media metric history with a raw file archive. [Feature commit](https://github.com/Nanboy-Ronan/OmniPanel/commit/c51257a)
 - **2026-10-14** — Added WorkBuddy integration: read-only MCP queries, OAuth authorization, queued weekly reports, and owner-approved collector login repair. [Feature commit](https://github.com/Nanboy-Ronan/OmniPanel/commit/91e7b05)
 - **2026-10-10** — Refreshed interactions, login approval, SQL isolation, audit logging, order/refund rules, and backup recovery. [Feature commit](https://github.com/Nanboy-Ronan/OmniPanel/commit/6c9e41a)
 - **2026-10-05** — Migrated to React + TypeScript, with commerce BI, content and partnership analytics, and database status panels. [Feature commit](https://github.com/Nanboy-Ronan/OmniPanel/commit/02128cb)

@@ -13,6 +13,7 @@
 
 ## 最近更新
 
+- **2026-10-17** — 加固 WorkBuddy 接入（限流、连接吊销、周报告警与重新生成），登录修复新增校验码与修复后立即采集，媒体内容按天保留指标历史并归档原始导入文件。[功能提交](https://github.com/Nanboy-Ronan/OmniPanel/commit/c51257a)
 - **2026-10-14** — 新增 WorkBuddy 企业智能体接入：只读 MCP 查询、OAuth 授权、异步周报，以及负责人确认的采集登录修复。[功能提交](https://github.com/Nanboy-Ronan/OmniPanel/commit/91e7b05)
 - **2026-10-10** — 更新交互界面，强化登录审批、SQL 隔离、操作审计、订单退款口径与备份恢复。[功能提交](https://github.com/Nanboy-Ronan/OmniPanel/commit/6c9e41a)
 - **2026-10-05** — 迁移至 React + TypeScript 工作台，加入商城 BI、内容合作分析与数据库状态面板。[功能提交](https://github.com/Nanboy-Ronan/OmniPanel/commit/02128cb)
